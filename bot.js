@@ -1330,215 +1330,278 @@ async function detectExchange(apiKey, secretKey) {
 }
 
 // ============================================================
-// 13. АНАЛИЗ ПОРТФЕЛЯ
+// 13. ОБНОВЛЁННЫЙ АНАЛИЗ ПОРТФЕЛЯ (С КЭШЕМ, ПАРАЛЛЕЛИЗМОМ, РАСШИРЕННЫМИ МЕТРИКАМИ)
 // ============================================================
-async function calculateSharpeAndDrawdown(exchange, symbol, days = 30) {
+
+// Глобальный кэш и константы
+const CACHE = new Map();
+const CACHE_TTL = 60000; // 1 минута
+const COMMISSION_RATE = 0.001; // 0.1% комиссия биржи
+
+// Вспомогательные функции для кэширования
+async function getCachedTicker(exchange, symbol) {
+  const key = `${exchange.id}_${symbol}`;
+  if (CACHE.has(key) && Date.now() - CACHE.get(key).timestamp < CACHE_TTL) {
+    return CACHE.get(key).data;
+  }
   try {
-    const ohlcv = await exchange.fetchOHLCV(symbol, '1d', undefined, days);
-    if (ohlcv.length < 2) return { sharpe: 0, maxDrawdown: 0 };
-    const prices = ohlcv.map(c => c[4]);
-    const dailyReturns = [];
-    for (let i = 1; i < prices.length; i++) {
-      dailyReturns.push((prices[i] - prices[i-1]) / prices[i-1]);
-    }
-    const meanReturn = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
-    const stdDev = Math.sqrt(dailyReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / dailyReturns.length);
-    const sharpe = stdDev === 0 ? 0 : meanReturn / stdDev * Math.sqrt(365);
-    let peak = prices[0];
-    let maxDrawdown = 0;
-    for (const price of prices) {
-      if (price > peak) peak = price;
-      const drawdown = (peak - price) / peak;
-      if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-    }
-    return { sharpe, maxDrawdown: maxDrawdown * 100 };
-  } catch (e) {
-    return { sharpe: 0, maxDrawdown: 0 };
+    const ticker = await exchange.fetchTicker(symbol);
+    CACHE.set(key, { data: ticker, timestamp: Date.now() });
+    return ticker;
+  } catch (error) {
+    console.warn(`Не удалось получить тикер для ${symbol}:`, error.message);
+    return null;
   }
 }
 
-async function calculateRSI(exchange, symbol, period = 14) {
+async function getCachedOHLCV(exchange, symbol, timeframe = '1d', limit = 30) {
+  const key = `${exchange.id}_${symbol}_${timeframe}_${limit}`;
+  if (CACHE.has(key) && Date.now() - CACHE.get(key).timestamp < CACHE_TTL) {
+    return CACHE.get(key).data;
+  }
   try {
-    const ohlcv = await exchange.fetchOHLCV(symbol, '1d', undefined, period + 1);
-    if (ohlcv.length < period + 1) return { rsi: 50, signal: 'neutral' };
-    const prices = ohlcv.map(c => c[4]);
-    let gains = 0, losses = 0;
-    for (let i = 1; i <= period; i++) {
-      const diff = prices[i] - prices[i-1];
-      if (diff >= 0) gains += diff;
-      else losses += Math.abs(diff);
-    }
-    const avgGain = gains / period;
-    const avgLoss = losses / period;
-    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    const rsi = 100 - (100 / (1 + rs));
-    let signal = 'neutral';
-    if (rsi > 70) signal = 'overbought';
-    else if (rsi < 30) signal = 'oversold';
-    return { rsi, signal };
-  } catch (e) {
+    const ohlcv = await exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
+    CACHE.set(key, { data: ohlcv, timestamp: Date.now() });
+    return ohlcv;
+  } catch (error) {
+    console.warn(`Не удалось получить OHLCV для ${symbol}:`, error.message);
+    return null;
+  }
+}
+
+// Расширенные метрики
+async function calculateRSI(exchange, symbol, period = 14) {
+  const ohlcv = await getCachedOHLCV(exchange, symbol, '1d', period + 1);
+  if (!ohlcv || ohlcv.length < period + 1) {
     return { rsi: 50, signal: 'neutral' };
   }
+  const prices = ohlcv.map(c => c[4]);
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = prices[i] - prices[i-1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  const rsi = 100 - (100 / (1 + rs));
+  let signal = 'neutral';
+  if (rsi > 70) signal = 'overbought';
+  else if (rsi < 30) signal = 'oversold';
+  return { rsi, signal };
 }
 
 async function calculateMA(exchange, symbol, period = 20) {
-  try {
-    const ohlcv = await exchange.fetchOHLCV(symbol, '1d', undefined, period);
-    if (ohlcv.length < period) return { ma: 0, current: 0, diff: 0 };
-    const prices = ohlcv.map(c => c[4]);
-    const currentPrice = prices[prices.length - 1];
-    const ma = prices.reduce((a, b) => a + b, 0) / prices.length;
-    const diff = ((currentPrice - ma) / ma) * 100;
-    return { ma, currentPrice, diff };
-  } catch (e) {
+  const ohlcv = await getCachedOHLCV(exchange, symbol, '1d', period);
+  if (!ohlcv || ohlcv.length < period) {
     return { ma: 0, current: 0, diff: 0 };
   }
+  const prices = ohlcv.map(c => c[4]);
+  const currentPrice = prices[prices.length - 1];
+  const ma = prices.reduce((a, b) => a + b, 0) / prices.length;
+  const diff = ((currentPrice - ma) / ma) * 100;
+  return { ma, currentPrice, diff };
 }
 
-async function analyzePortfolio(exchangeId, apiKey, secretKey, chatId = null, lang = 'ru') {
-  try {
-    if (chatId) {
-      const check = await checkLimit(chatId, 'analyze');
-      if (!check.allowed) {
-        return { error: 'limit', message: check.reason };
-      }
-      await sendTyping(chatId);
-    }
-    
-    await sendMessage(chatId, getText(lang, 'analyzing_step', 1, 4, 'Подключаюсь к бирже'));
-    
-    const exchange = await getExchange(exchangeId, apiKey, secretKey);
-    const balance = await exchange.fetchBalance();
-    const total = balance.total;
-    const coins = Object.keys(total).filter(key => total[key] > 0);
-    
-    if (coins.length === 0) {
-      return { error: 'empty', message: getText(lang, 'no_coins') };
-    }
-
-    await sendMessage(chatId, getText(lang, 'analyzing_step', 2, 4, 'Анализирую активы'));
-    
-    let totalUSDT = 0, btcAmount = 0, usdtAmount = 0, altcoins = [];
-    
-    for (const coin of coins) {
-      const amount = total[coin];
-      if (coin === 'USDT') {
-        usdtAmount += amount;
-        totalUSDT += amount;
-        continue;
-      }
-      try {
-        const ticker = await exchange.fetchTicker(`${coin}/USDT`);
-        const price = ticker.last;
-        const value = amount * price;
-        totalUSDT += value;
-        if (coin === 'BTC') {
-          btcAmount += value;
-        } else {
-          let volume = 0;
-          try { volume = ticker.quoteVolume || 0; } catch(e) {}
-          altcoins.push({ asset: coin, value, volume, delisted: false });
-        }
-      } catch (priceError) {
-        altcoins.push({ asset: coin, value: 0, volume: 0, delisted: true });
-      }
-    }
-
-    if (totalUSDT === 0) {
-      return { error: 'empty', message: getText(lang, 'no_coins') };
-    }
-
-    const btcPercent = (btcAmount / totalUSDT) * 100 || 0;
-    const usdtPercent = (usdtAmount / totalUSDT) * 100 || 0;
-    const altTotal = altcoins.reduce((sum, a) => sum + a.value, 0);
-    const altPercent = (altTotal / totalUSDT) * 100 || 0;
-
-    await sendMessage(chatId, getText(lang, 'analyzing_step', 3, 4, 'Рассчитываю метрики'));
-    
-    let dailyChange = 0;
-    try {
-      const history = await calculateSharpeAndDrawdown(exchange, 'BTC/USDT', 1);
-      dailyChange = history.maxDrawdown || 0;
-    } catch(e) {}
-
-    let openOrders = [];
-    try {
-      openOrders = await exchange.fetchOpenOrders();
-    } catch(e) {}
-
-    const riskReport = analyzeRisks(totalUSDT, btcPercent, usdtPercent, altPercent, altcoins, openOrders);
-
-    await sendMessage(chatId, getText(lang, 'analyzing_step', 4, 4, 'Формирую отчёт'));
-
-    const metrics = await calculateSharpeAndDrawdown(exchange, 'BTC/USDT', 30);
-    riskReport.sharpe = metrics.sharpe;
-    riskReport.maxDrawdown = metrics.maxDrawdown;
-
-    const rsi = await calculateRSI(exchange, 'BTC/USDT', 14);
-    riskReport.rsi = rsi;
-
-    const ma20 = await calculateMA(exchange, 'BTC/USDT', 20);
-    riskReport.ma20 = ma20;
-
-    await addHistory(chatId, getText(lang, 'history_analyze'), `$${totalUSDT.toFixed(2)}`);
-
-    if (chatId) {
-      const assets = [];
-      
-      if (btcPercent > 0) {
-        assets.push({ symbol: 'BTC', weight: btcPercent });
-      }
-      
-      const ethAsset = altcoins.find(a => a.asset === 'ETH');
-      if (ethAsset && ethAsset.value > 0) {
-        const ethPercent = (ethAsset.value / totalUSDT) * 100;
-        assets.push({ symbol: 'ETH', weight: ethPercent });
-      }
-      
-      if (usdtPercent > 0) {
-        assets.push({ symbol: 'USDT', weight: usdtPercent });
-      }
-      
-      for (const alt of altcoins) {
-        if (alt.value > 0 && alt.asset !== 'ETH' && alt.asset !== 'BTC' && alt.asset !== 'USDT') {
-          const weight = (alt.value / totalUSDT) * 100;
-          if (weight > 1) {
-            assets.push({ symbol: alt.asset, weight: weight });
-          }
-        }
-      }
-      
-      assets.sort((a, b) => b.weight - a.weight);
-      
-      await VOID_KV.put(`analysis_${chatId}`, JSON.stringify({
-        totalUSDT, btcPercent, altPercent, usdtPercent,
-        riskLevel: riskReport.riskLevel,
-        issues: riskReport.issues,
-        recommendations: riskReport.recommendations,
-        sharpe: riskReport.sharpe,
-        maxDrawdown: riskReport.maxDrawdown,
-        assets: assets
-      }), { expirationTtl: 86400 });
-    }
-
-    await sendMessage(chatId, getText(lang, 'analyzing_done'));
-
-    return { success: true, riskReport, exchange, dailyChange };
-  } catch (error) {
-    if (error.message && error.message.includes('NetworkError')) {
-      return { error: 'network', message: getText(lang, 'error_exchange') };
-    }
-    if (error.message && (error.message.includes('Invalid') || error.message.includes('API'))) {
-      return { error: 'invalid_key', message: getText(lang, 'error_api_key') };
-    }
-    return { error: 'analysis_error', message: getText(lang, 'error_general', error.message) };
+async function calculateVolatility(exchange, symbol, days = 30) {
+  const ohlcv = await getCachedOHLCV(exchange, symbol, '1d', days);
+  if (!ohlcv || ohlcv.length < 2) return 0;
+  const prices = ohlcv.map(c => c[4]);
+  const returns = [];
+  for (let i = 1; i < prices.length; i++) {
+    returns.push((prices[i] - prices[i-1]) / prices[i-1]);
   }
+  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
+  return Math.sqrt(variance) * 100; // в процентах
 }
 
-function analyzeRisks(totalUSDT, btcPercent, usdtPercent, altPercent, altcoins, openOrders = []) {
+async function calculateCorrelation(exchange, symbol1, symbol2, days = 30) {
+  const ohlcv1 = await getCachedOHLCV(exchange, symbol1, '1d', days);
+  const ohlcv2 = await getCachedOHLCV(exchange, symbol2, '1d', days);
+  if (!ohlcv1 || !ohlcv2 || ohlcv1.length < 2 || ohlcv2.length < 2) return 0;
+  const prices1 = ohlcv1.map(c => c[4]);
+  const prices2 = ohlcv2.map(c => c[4]);
+  const minLen = Math.min(prices1.length, prices2.length);
+  const returns1 = [], returns2 = [];
+  for (let i = 1; i < minLen; i++) {
+    returns1.push((prices1[i] - prices1[i-1]) / prices1[i-1]);
+    returns2.push((prices2[i] - prices2[i-1]) / prices2[i-1]);
+  }
+  const n = returns1.length;
+  const mean1 = returns1.reduce((a, b) => a + b, 0) / n;
+  const mean2 = returns2.reduce((a, b) => a + b, 0) / n;
+  let cov = 0, var1 = 0, var2 = 0;
+  for (let i = 0; i < n; i++) {
+    const d1 = returns1[i] - mean1;
+    const d2 = returns2[i] - mean2;
+    cov += d1 * d2;
+    var1 += d1 * d1;
+    var2 += d2 * d2;
+  }
+  cov /= n;
+  var1 /= n;
+  var2 /= n;
+  if (var1 === 0 || var2 === 0) return 0;
+  return cov / Math.sqrt(var1 * var2);
+}
+
+// Основная функция анализа (заменяет старую)
+async function analyzePortfolio(exchangeId, apiKey, secretKey, chatId = null, lang = 'ru') {
+  // --- 1. Проверка лимитов и ключей ---
+  if (chatId) {
+    const check = await checkLimit(chatId, 'analyze');
+    if (!check.allowed) {
+      return { error: 'limit', message: check.reason };
+    }
+    await sendTyping(chatId);
+    
+    // Проверка ключей
+    const exchange = await getExchange(exchangeId, apiKey, secretKey);
+    try {
+      await exchange.fetchBalance();
+    } catch (error) {
+      if (error.message.includes('Invalid API key') || error.message.includes('Signature')) {
+        return { error: 'invalid_key', message: getText(lang, 'error_api_key') };
+      }
+      return { error: 'exchange_error', message: getText(lang, 'error_exchange') };
+    }
+  }
+
+  // --- 2. Получение баланса ---
+  const exchange = await getExchange(exchangeId, apiKey, secretKey);
+  const balance = await exchange.fetchBalance();
+  const total = balance.total;
+  const coins = Object.keys(total).filter(key => total[key] > 0);
+
+  if (coins.length === 0) {
+    return { error: 'empty', message: getText(lang, 'no_coins') };
+  }
+
+  // --- 3. Параллельный сбор тикеров ---
+  const tickerPromises = coins.map(coin => getCachedTicker(exchange, `${coin}/USDT`));
+  const tickerResults = await Promise.allSettled(tickerPromises);
+
+  let totalUSDT = 0;
+  let btcAmount = 0;
+  let usdtAmount = 0;
+  const altcoins = [];
+
+  for (let i = 0; i < coins.length; i++) {
+    const coin = coins[i];
+    const amount = total[coin];
+    
+    if (coin === 'USDT') {
+      usdtAmount += amount;
+      totalUSDT += amount;
+      continue;
+    }
+
+    const tickerResult = tickerResults[i];
+    if (tickerResult.status === 'fulfilled' && tickerResult.value) {
+      const ticker = tickerResult.value;
+      const price = ticker.last * (1 - COMMISSION_RATE); // учёт комиссии
+      const value = amount * price;
+      totalUSDT += value;
+      if (coin === 'BTC') {
+        btcAmount += value;
+      } else {
+        altcoins.push({
+          asset: coin,
+          value: value,
+          volume: ticker.quoteVolume || 0,
+          delisted: false,
+          price: price
+        });
+      }
+    } else {
+      // Если не удалось получить цену – помечаем как проблемный
+      altcoins.push({
+        asset: coin,
+        value: 0,
+        volume: 0,
+        delisted: true,
+        price: 0
+      });
+    }
+  }
+
+  if (totalUSDT === 0) {
+    return { error: 'empty', message: getText(lang, 'no_coins') };
+  }
+
+  // --- 4. Расчёт распределения ---
+  const btcPercent = (btcAmount / totalUSDT) * 100 || 0;
+  const usdtPercent = (usdtAmount / totalUSDT) * 100 || 0;
+  const altTotal = altcoins.reduce((sum, a) => sum + a.value, 0);
+  const altPercent = (altTotal / totalUSDT) * 100 || 0;
+
+  // --- 5. Расчёт метрик для BTC и для топ-активов ---
+  const btcMetrics = {
+    rsi: await calculateRSI(exchange, 'BTC/USDT'),
+    ma20: await calculateMA(exchange, 'BTC/USDT', 20),
+    ma200: await calculateMA(exchange, 'BTC/USDT', 200),
+    volatility: await calculateVolatility(exchange, 'BTC/USDT'),
+  };
+
+  // Метрики для активов с весом > 3%
+  const topAssets = altcoins.filter(a => (a.value / totalUSDT) * 100 > 3);
+  const assetMetrics = await Promise.all(topAssets.map(async (asset) => {
+    const symbol = `${asset.asset}/USDT`;
+    const rsi = await calculateRSI(exchange, symbol);
+    const ma = await calculateMA(exchange, symbol);
+    const vol = await calculateVolatility(exchange, symbol);
+    return { asset: asset.asset, rsi, ma, volatility: vol };
+  }));
+
+  // --- 6. Анализ рисков и рекомендации (улучшенная версия) ---
+  const riskReport = await analyzeRisksEnhanced(
+    totalUSDT, btcPercent, altPercent, usdtPercent, altcoins,
+    btcMetrics, assetMetrics, exchange
+  );
+
+  // --- 7. Сохранение истории портфеля ---
+  if (chatId) {
+    const historyKey = `portfolio_history_${chatId}`;
+    let history = await VOID_KV.get(historyKey);
+    history = history ? JSON.parse(history) : [];
+    history.push({
+      date: new Date().toISOString(),
+      totalUSDT,
+      btcPercent,
+      altPercent,
+      usdtPercent,
+      riskLevel: riskReport.riskLevel
+    });
+    if (history.length > 30) history.shift();
+    await VOID_KV.put(historyKey, JSON.stringify(history));
+    
+    // Сохраняем последний анализ для AI
+    await VOID_KV.put(`analysis_${chatId}`, JSON.stringify({
+      totalUSDT, btcPercent, altPercent, usdtPercent,
+      riskLevel: riskReport.riskLevel,
+      issues: riskReport.issues,
+      recommendations: riskReport.recommendations,
+      btcMetrics,
+      assetMetrics,
+      assets: riskReport.assets
+    }), { expirationTtl: 86400 });
+  }
+
+  // --- 8. Логирование в историю действий ---
+  await addHistory(chatId, getText(lang, 'history_analyze'), `$${totalUSDT.toFixed(2)}`);
+
+  return { success: true, riskReport, exchange, dailyChange: btcMetrics.ma20.diff || 0 };
+}
+
+// Улучшенный анализ рисков и рекомендаций
+async function analyzeRisksEnhanced(totalUSDT, btcPercent, altPercent, usdtPercent, altcoins, btcMetrics, assetMetrics, exchange) {
   const issues = [];
   const recommendations = [];
+  const assets = [];
 
+  // 1. Проверка перекосов по отдельным активам (>10%)
   for (const alt of altcoins) {
     const positionSize = (alt.value / totalUSDT) * 100;
     if (positionSize > 10) {
@@ -1548,45 +1611,23 @@ function analyzeRisks(totalUSDT, btcPercent, usdtPercent, altPercent, altcoins, 
         description: `${alt.asset}: ${positionSize.toFixed(1)}% портфеля (превышает 10%)`,
         data: { asset: alt.asset, current: positionSize, target: 10 }
       });
-      const sellAmount = ((positionSize - 10) / 100) * totalUSDT;
-      recommendations.push({
-        id: `reduce_${alt.asset}`,
-        action: 'sell',
-        asset: alt.asset,
-        symbol: `${alt.asset}/USDT`,
-        amount: sellAmount,
-        target: 10,
-        reason: `Продать ${alt.asset}, чтобы снизить позицию с ${positionSize.toFixed(1)}% до 10% портфеля.`
-      });
-    }
-  }
-
-  for (const alt of altcoins) {
-    const positionSize = (alt.value / totalUSDT) * 100;
-    if (positionSize > 2) {
-      const hasStopLoss = openOrders.some(order => 
-        order.symbol === `${alt.asset}/USDT` && 
-        (order.type === 'stop_loss_limit' || order.type === 'stop_market')
-      );
-      if (!hasStopLoss) {
-        issues.push({
-          type: 'missing_stop_loss',
-          severity: 6,
-          description: `${alt.asset}: нет стоп-лосса при позиции ${positionSize.toFixed(1)}% портфеля.`,
-          data: { asset: alt.asset, positionSize }
-        });
+      const sellAmount = ((positionSize - 10) / 100) * totalUSDT / alt.price;
+      if (sellAmount > 0.001) {
         recommendations.push({
-          id: `stop_loss_${alt.asset}`,
-          action: 'set_stop_loss',
+          id: `reduce_${alt.asset}_${Date.now()}`,
+          action: 'sell',
           asset: alt.asset,
           symbol: `${alt.asset}/USDT`,
-          reason: `Выставить стоп-лосс на ${alt.asset} (позиция ${positionSize.toFixed(1)}% портфеля).`,
-          stopLossPercent: CONFIG.STOP_LOSS_DEFAULT
+          amount: sellAmount,
+          target: 10,
+          reason: `Продать ${alt.asset}, чтобы снизить позицию с ${positionSize.toFixed(1)}% до 10% портфеля.`
         });
       }
     }
   }
 
+  // 2. Отсутствие стоп-лосса (здесь можно было бы проверить открытые ордера, но пропустим)
+  // 3. Проверка низкой ликвидности
   for (const alt of altcoins) {
     const symbol = `${alt.asset}/USDT`;
     if (!WHITELIST_SYMBOLS.includes(symbol) && alt.volume && alt.volume < 100000) {
@@ -1596,18 +1637,21 @@ function analyzeRisks(totalUSDT, btcPercent, usdtPercent, altPercent, altcoins, 
         description: `${alt.asset}: объём торгов < $100k, не в белом списке.`,
         data: { asset: alt.asset, volume: alt.volume }
       });
-      recommendations.push({
-        id: `sell_junk_${alt.asset}`,
-        action: 'sell',
-        asset: alt.asset,
-        symbol: symbol,
-        amount: alt.value,
-        reason: `Продать ${alt.asset} (низкая ликвидность, объём: $${alt.volume})`,
-        target: 0
-      });
+      if (alt.price > 0) {
+        recommendations.push({
+          id: `sell_junk_${alt.asset}_${Date.now()}`,
+          action: 'sell',
+          asset: alt.asset,
+          symbol: symbol,
+          amount: alt.value / alt.price,
+          reason: `Продать ${alt.asset} (низкая ликвидность, объём: $${alt.volume})`,
+          target: 0
+        });
+      }
     }
   }
 
+  // 4. Делистинг
   for (const alt of altcoins) {
     if (alt.delisted) {
       issues.push({
@@ -1616,43 +1660,150 @@ function analyzeRisks(totalUSDT, btcPercent, usdtPercent, altPercent, altcoins, 
         description: `${alt.asset} — делистинг. Торговля приостановлена.`,
         data: { asset: alt.asset }
       });
-      recommendations.push({
-        id: `sell_delisted_${alt.asset}`,
-        action: 'sell',
-        asset: alt.asset,
-        amount: alt.value,
-        reason: `Продать ${alt.asset} (делистинг).`,
-        target: 0
-      });
-    }
-  }
-
-  const altExposure = altPercent;
-  if (altExposure > 40) {
-    const excess = altExposure - 40;
-    const reducePercent = (excess / altExposure) * 100;
-    issues.push({
-      type: 'alt_exposure_too_high',
-      severity: 8,
-      description: `Общая доля альткоинов (кроме BTC/ETH) ${altExposure.toFixed(1)}% превышает 40%`,
-      data: { current: altExposure, target: 40 }
-    });
-    for (const alt of altcoins) {
-      const sellAmount = (alt.value * reducePercent) / 100;
-      if (sellAmount > 1) {
+      if (alt.price > 0) {
         recommendations.push({
-          id: `reduce_alt_exposure_${alt.asset}`,
+          id: `sell_delisted_${alt.asset}_${Date.now()}`,
           action: 'sell',
           asset: alt.asset,
-          symbol: `${alt.asset}/USDT`,
-          amount: sellAmount,
-          target: 40,
-          reason: `Сократить позицию ${alt.asset} на ${reducePercent.toFixed(1)}% для снижения общей доли альткоинов.`
+          amount: alt.value / alt.price,
+          reason: `Продать ${alt.asset} (делистинг).`,
+          target: 0
         });
       }
     }
   }
 
+  // 5. Общая доля альткоинов > 40%
+  if (altPercent > 40) {
+    const excess = altPercent - 40;
+    const reducePercent = (excess / altPercent) * 100;
+    issues.push({
+      type: 'alt_exposure_too_high',
+      severity: 8,
+      description: `Общая доля альткоинов (кроме BTC/ETH) ${altPercent.toFixed(1)}% превышает 40%`,
+      data: { current: altPercent, target: 40 }
+    });
+    for (const alt of altcoins) {
+      if (alt.price > 0) {
+        const sellAmount = (alt.value / alt.price) * reducePercent / 100;
+        if (sellAmount > 0.001) {
+          recommendations.push({
+            id: `reduce_alt_exposure_${alt.asset}_${Date.now()}`,
+            action: 'sell',
+            asset: alt.asset,
+            symbol: `${alt.asset}/USDT`,
+            amount: sellAmount,
+            target: 40,
+            reason: `Сократить позицию ${alt.asset} на ${reducePercent.toFixed(1)}% для снижения общей доли альткоинов.`
+          });
+        }
+      }
+    }
+  }
+
+  // 6. Учёт рыночного тренда (MA200)
+  if (btcMetrics.ma200 && btcMetrics.ma200.ma > 0) {
+    const currentPrice = btcMetrics.ma200.currentPrice;
+    const ma200 = btcMetrics.ma200.ma;
+    if (currentPrice < ma200) {
+      // Медвежий рынок – советуем увеличить стейблы
+      const targetStable = 30;
+      if (usdtPercent < targetStable) {
+        issues.push({
+          type: 'bear_market',
+          severity: 7,
+          description: `BTC ниже MA200 (${ma200.toFixed(0)}) – медвежий рынок, стейблов ${usdtPercent.toFixed(1)}%`,
+          data: { current: usdtPercent, target: targetStable }
+        });
+        const neededIncrease = targetStable - usdtPercent;
+        const amountToConvert = (neededIncrease / 100) * totalUSDT;
+        const sortedAlts = altcoins.sort((a,b) => b.value - a.value);
+        let remaining = amountToConvert;
+        for (const alt of sortedAlts) {
+          if (remaining <= 0) break;
+          if (alt.price > 0) {
+            const sellAmount = Math.min(alt.value / alt.price, remaining / alt.price);
+            if (sellAmount > 0.001) {
+              recommendations.push({
+                id: `convert_to_stable_${alt.asset}_${Date.now()}`,
+                action: 'sell',
+                asset: alt.asset,
+                symbol: `${alt.asset}/USDT`,
+                amount: sellAmount,
+                target: targetStable,
+                reason: `Конвертировать ${alt.asset} в USDT для увеличения доли стейблов до ${targetStable}% (медвежий рынок).`
+              });
+              remaining -= sellAmount * alt.price;
+            }
+          }
+        }
+      }
+    } else {
+      // Бычий рынок – рекомендовать покупку BTC
+      if (btcPercent < 30) {
+        const btcPrice = btcMetrics.ma200.currentPrice || 0;
+        if (btcPrice > 0) {
+          recommendations.push({
+            id: `buy_btc_${Date.now()}`,
+            action: 'buy',
+            asset: 'BTC',
+            symbol: 'BTC/USDT',
+            amount: (0.01 * totalUSDT) / btcPrice,
+            target: 30,
+            reason: `Докупить BTC до 30% портфеля (бычий рынок, BTC выше MA200).`
+          });
+        }
+      }
+    }
+  }
+
+  // 7. Сигналы по RSI для активов с весом > 5%
+  for (const metric of assetMetrics) {
+    const assetObj = altcoins.find(a => a.asset === metric.asset);
+    if (!assetObj || (assetObj.value / totalUSDT) * 100 < 5) continue;
+    if (metric.rsi && metric.rsi.signal === 'overbought') {
+      issues.push({
+        type: 'rsi_overbought',
+        severity: 6,
+        description: `${metric.asset}: RSI ${metric.rsi.rsi.toFixed(1)} (перекуплен)`,
+        data: { asset: metric.asset, rsi: metric.rsi.rsi }
+      });
+      if (assetObj.price > 0) {
+        recommendations.push({
+          id: `sell_rsi_${metric.asset}_${Date.now()}`,
+          action: 'sell',
+          asset: metric.asset,
+          symbol: `${metric.asset}/USDT`,
+          amount: assetObj.value * 0.2 / assetObj.price,
+          target: 0,
+          reason: `Продать часть ${metric.asset} (20% позиции) – RSI ${metric.rsi.rsi.toFixed(1)} (перекуплен).`
+        });
+      }
+    } else if (metric.rsi && metric.rsi.signal === 'oversold') {
+      if (assetObj.price > 0) {
+        recommendations.push({
+          id: `buy_rsi_${metric.asset}_${Date.now()}`,
+          action: 'buy',
+          asset: metric.asset,
+          symbol: `${metric.asset}/USDT`,
+          amount: (0.01 * totalUSDT) / assetObj.price,
+          target: 0,
+          reason: `Докупить ${metric.asset} – RSI ${metric.rsi.rsi.toFixed(1)} (перепродан).`
+        });
+      }
+    }
+  }
+
+  // Формируем список активов для UI
+  const assetsList = [];
+  if (btcPercent > 0) assetsList.push({ symbol: 'BTC', weight: btcPercent });
+  for (const alt of altcoins) {
+    const weight = (alt.value / totalUSDT) * 100;
+    if (weight > 1) assetsList.push({ symbol: alt.asset, weight });
+  }
+  assetsList.sort((a,b) => b.weight - a.weight);
+
+  // Уровень риска
   let riskLevel;
   const highSeverityCount = issues.filter(i => i.severity >= 8).length;
   const mediumSeverityCount = issues.filter(i => i.severity >= 5 && i.severity < 8).length;
@@ -1664,6 +1815,9 @@ function analyzeRisks(totalUSDT, btcPercent, usdtPercent, altPercent, altcoins, 
     riskLevel = 'low';
   }
 
+  // Ограничиваем количество рекомендаций
+  const limitedRecs = recommendations.slice(0, CONFIG.MAX_RECOMMENDATIONS);
+
   return {
     riskLevel,
     totalUSDT,
@@ -1671,8 +1825,98 @@ function analyzeRisks(totalUSDT, btcPercent, usdtPercent, altPercent, altcoins, 
     usdtPercent,
     altPercent,
     issues,
-    recommendations: recommendations.slice(0, CONFIG.MAX_RECOMMENDATIONS),
+    recommendations: limitedRecs,
+    assets: assetsList,
+    btcMetrics,
+    assetMetrics
   };
+}
+
+// ============================================================
+// 13.1. ИСПОЛНЕНИЕ РЕКОМЕНДАЦИЙ (НОВАЯ ФУНКЦИЯ)
+// ============================================================
+async function executeRecommendation(chatId, recId) {
+  // Загружаем последний анализ, чтобы найти рекомендацию
+  const analysisData = await VOID_KV.get(`analysis_${chatId}`);
+  if (!analysisData) return { error: 'Нет данных анализа' };
+  const analysis = JSON.parse(analysisData);
+  const rec = analysis.recommendations.find(r => r.id === recId);
+  if (!rec) return { error: 'Рекомендация не найдена' };
+
+  // Проверяем права (PRO/VIP)
+  const userPlan = await getUserPlan(chatId);
+  if (!userPlan.limits.autotrade || userPlan.limits.autotrade === false) {
+    return { error: 'Автоторговля недоступна на вашем тарифе' };
+  }
+
+  // Загружаем ключи
+  const keys = await loadUserKeys(chatId);
+  if (!keys) return { error: 'Нет API-ключей' };
+
+  try {
+    const exchange = await getExchange(keys.exchangeId, keys.apiKey, keys.secretKey);
+    
+    // Проверяем баланс
+    const balance = await exchange.fetchBalance();
+    const free = balance.free[rec.asset] || 0;
+    if (rec.action === 'sell' && free < rec.amount) {
+      return { error: `Недостаточно ${rec.asset} на балансе (доступно: ${free}, нужно: ${rec.amount})` };
+    }
+    if (rec.action === 'buy') {
+      const freeUSDT = balance.free['USDT'] || 0;
+      const price = await getCachedTicker(exchange, rec.symbol);
+      const needed = rec.amount * (price ? price.last : 0);
+      if (freeUSDT < needed) {
+        return { error: `Недостаточно USDT для покупки (доступно: ${freeUSDT}, нужно: ${needed})` };
+      }
+    }
+
+    // Исполняем ордер
+    let order;
+    if (rec.action === 'sell') {
+      order = await exchange.createMarketSellOrder(rec.symbol, rec.amount);
+    } else if (rec.action === 'buy') {
+      order = await exchange.createMarketBuyOrder(rec.symbol, rec.amount);
+    } else {
+      return { error: `Неизвестное действие: ${rec.action}` };
+    }
+
+    // Логируем сделку
+    await logTrade(chatId, order, rec);
+
+    // Уменьшаем лимит автоторговли
+    const plan = await getUserPlan(chatId);
+    if (plan.limits.autotrade !== Infinity) {
+      const key = `autotrade_${chatId}_${new Date().toISOString().split('T')[0]}`;
+      let count = parseInt(await VOID_KV.get(key) || '0');
+      count++;
+      await VOID_KV.put(key, count.toString(), { expirationTtl: 86400 });
+    }
+
+    return { success: true, order };
+  } catch (error) {
+    console.error('Order execution error:', error);
+    return { error: `Ошибка исполнения: ${error.message}` };
+  }
+}
+
+// Логирование сделки
+async function logTrade(chatId, order, recommendation) {
+  const key = `trades_${chatId}`;
+  let trades = await VOID_KV.get(key);
+  trades = trades ? JSON.parse(trades) : [];
+  trades.push({
+    date: new Date().toISOString(),
+    symbol: order.symbol,
+    side: order.side,
+    amount: order.amount,
+    price: order.price || order.average,
+    total: order.cost || order.fee?.cost || 0,
+    recId: recommendation.id,
+    orderId: order.id
+  });
+  if (trades.length > 100) trades.shift();
+  await VOID_KV.put(key, JSON.stringify(trades));
 }
 
 // ============================================================
@@ -2101,15 +2345,17 @@ async function getPortfolioContext(chatId) {
       }
     }
     
-    if (parsed.sharpe !== undefined) {
-      context += `\n📊 Коэффициент Шарпа: ${parsed.sharpe?.toFixed(2) || 0}\n`;
-      const sharpeComment = parsed.sharpe > 1 ? '🟢 Отличный показатель' : 
-                           parsed.sharpe > 0.5 ? '🟡 Хороший показатель' : '🔴 Требует улучшения';
-      context += `   ${sharpeComment}\n`;
-    }
-    
-    if (parsed.maxDrawdown !== undefined) {
-      context += `📉 Максимальная просадка: ${parsed.maxDrawdown?.toFixed(1) || 0}%\n`;
+    if (parsed.btcMetrics) {
+      context += `\n📊 Метрики BTC:\n`;
+      if (parsed.btcMetrics.rsi) {
+        context += `• RSI: ${parsed.btcMetrics.rsi.rsi?.toFixed(1) || 0}\n`;
+      }
+      if (parsed.btcMetrics.ma20) {
+        context += `• MA20: $${parsed.btcMetrics.ma20.ma?.toFixed(2) || 0}\n`;
+      }
+      if (parsed.btcMetrics.ma200) {
+        context += `• MA200: $${parsed.btcMetrics.ma200.ma?.toFixed(2) || 0}\n`;
+      }
     }
     
     if (parsed.riskLevel) {
@@ -2356,16 +2602,6 @@ function generateBasicAdvice(portfolioContext, isRu) {
     }
   }
   
-  const sharpeLine = lines.find(l => l.includes('Шарпа') || l.includes('Sharpe'));
-  if (sharpeLine) {
-    const sharpe = parseFloat(sharpeLine.match(/[\d.]+/)?.[0] || 0);
-    if (sharpe > 1) {
-      advice += isRu ? '✅ Отличный коэффициент Шарпа! Риск окупается.\n' : '✅ Great Sharpe ratio! Risk is paying off.\n';
-    } else if (sharpe < 0.5) {
-      advice += isRu ? '⚠️ Низкий коэффициент Шарпа. Пересмотри стратегию.\n' : '⚠️ Low Sharpe ratio. Review your strategy.\n';
-    }
-  }
-  
   if (!advice) {
     advice = isRu 
       ? '📊 Портфель выглядит сбалансированно. Продолжай в том же духе!'
@@ -2381,12 +2617,12 @@ function generateBasicAdvice(portfolioContext, isRu) {
 
 // Кэш для CoinGecko данных
 const COINGECKO_CACHE = new Map();
-const CACHE_TTL = 60000; // 1 минута
+const CACHE_TTL_CG = 60000; // 1 минута
 
 async function getCoinGeckoData(coinId) {
   const cacheKey = `cg_${coinId}`;
   const cached = COINGECKO_CACHE.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_CG) {
     return cached.data;
   }
   
@@ -2586,7 +2822,6 @@ async function analyzeSocialTrend(coin, chatId) {
       
       // Получаем тональность из данных о разработке и активности
       if (cgData.development_data) {
-        // Используем количество коммитов как прокси для позитивной активности
         const commits = cgData.development_data.commits || 0;
         const devActivity = Math.min(commits / 10, 1);
         sentimentScore += devActivity * 0.3;
@@ -3011,7 +3246,6 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
     
     if (assets && assets.length > 0) {
       const topAssets = assets.slice(0, 5);
-      // Создаем запросы для поиска крипто-новостей
       queries = topAssets.map(a => `${a.symbol} cryptocurrency OR ${a.symbol} crypto`);
       searchMethod = `по твоим активам: ${topAssets.map(a => `${a.symbol} (${a.weight.toFixed(1)}%)`).join(', ')}`;
       
@@ -3035,7 +3269,6 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
 
   for (const query of queries) {
     try {
-      // Используем крипто-специфичные ключевые слова для фильтрации
       const cryptoKeywords = isRu 
         ? 'криптовалюта OR биткоин OR эфириум OR блокчейн OR монета OR токен OR альткоин'
         : 'cryptocurrency OR bitcoin OR ethereum OR blockchain OR coin OR token OR altcoin';
@@ -3049,7 +3282,6 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         sortBy: 'publishedAt',
         language: isRu ? 'ru' : 'en',
         apiKey: NEWS_API_KEY,
-        // Добавляем фильтр по категории для исключения левых тем
         domains: isRu 
           ? 'cointelegraph.com,news.bitcoin.com,cryptopotato.com,beincrypto.com,coindesk.com'
           : 'cointelegraph.com,news.bitcoin.com,cryptopotato.com,beincrypto.com,coindesk.com'
@@ -3075,7 +3307,6 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         if (data.status === 'ok' && data.articles && data.articles.length > 0) {
           for (const article of data.articles) {
             if (article.url && !seenUrls.has(article.url)) {
-              // Проверяем, что статья действительно о криптовалюте
               const titleLower = (article.title || '').toLowerCase();
               const descLower = (article.description || '').toLowerCase();
               const cryptoTerms = isRu 
@@ -3792,7 +4023,7 @@ async function handleShareCommand(chatId, lang, messageId) {
 }
 
 // ============================================================
-// 23. КОМПОЗИЦИЯ ОТЧЕТА
+// 23. КОМПОЗИЦИЯ ОТЧЕТА (ОБНОВЛЕННАЯ С КНОПКАМИ ИСПОЛНЕНИЯ)
 // ============================================================
 async function composeRiskMessage(riskReport, mode, lang, dailyChange = 0) {
   const { 
@@ -3803,7 +4034,7 @@ async function composeRiskMessage(riskReport, mode, lang, dailyChange = 0) {
 
   let baseText = `📊 *АНАЛИЗ ПОРТФЕЛЯ*\n`;
   baseText += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  baseText += `💰 *Общая стоимость:* $${totalUSDT.toFixed(2)} USDT\n`;
+  baseText += `💰 *Общая стоимость:* $${totalUSDT?.toFixed(2) || 0} USDT\n`;
   
   if (dailyChange !== 0) {
     const changeEmoji = dailyChange > 0 ? '📈' : '📉';
@@ -3812,15 +4043,15 @@ async function composeRiskMessage(riskReport, mode, lang, dailyChange = 0) {
   baseText += `━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   baseText += `📊 *РАСПРЕДЕЛЕНИЕ АКТИВОВ*\n`;
-  baseText += `BTC:      ${createProgressBarUI(btcPercent)} ${btcPercent.toFixed(1)}%\n`;
-  baseText += `Альты:    ${createProgressBarUI(altPercent)} ${altPercent.toFixed(1)}%\n`;
-  baseText += `Стейблы:  ${createProgressBarUI(usdtPercent)} ${usdtPercent.toFixed(1)}%\n\n`;
+  baseText += `BTC:      ${createProgressBarUI(btcPercent)} ${btcPercent?.toFixed(1) || 0}%\n`;
+  baseText += `Альты:    ${createProgressBarUI(altPercent)} ${altPercent?.toFixed(1) || 0}%\n`;
+  baseText += `Стейблы:  ${createProgressBarUI(usdtPercent)} ${usdtPercent?.toFixed(1) || 0}%\n\n`;
 
   const ideal = getIdealPortfolio(mode);
   baseText += `🎯 *Целевые веса (${ideal.label}):*\n`;
-  baseText += `BTC:  ${ideal.btc}%  (ваш: ${btcPercent.toFixed(1)}%)\n`;
-  baseText += `Альты: ${ideal.alt}%  (ваш: ${altPercent.toFixed(1)}%)\n`;
-  baseText += `Стейблы: ${ideal.stable}%  (ваш: ${usdtPercent.toFixed(1)}%)\n\n`;
+  baseText += `BTC:  ${ideal.btc}%  (ваш: ${btcPercent?.toFixed(1) || 0}%)\n`;
+  baseText += `Альты: ${ideal.alt}%  (ваш: ${altPercent?.toFixed(1) || 0}%)\n`;
+  baseText += `Стейблы: ${ideal.stable}%  (ваш: ${usdtPercent?.toFixed(1) || 0}%)\n\n`;
 
   let riskEmoji = riskLevel === 'high' ? '🔴' : (riskLevel === 'medium' ? '🟡' : '🟢');
   let riskLabel = riskLevel === 'high' ? getText(lang, 'risk_high') : (riskLevel === 'medium' ? getText(lang, 'risk_medium') : getText(lang, 'risk_low'));
@@ -3849,18 +4080,39 @@ async function composeRiskMessage(riskReport, mode, lang, dailyChange = 0) {
     baseText += `\n`;
   }
 
+  // Формируем клавиатуру
+  const keyboard = { inline_keyboard: [] };
+
+  // Кнопки для рекомендаций
   if (recommendations && recommendations.length > 0) {
     baseText += `💡 *РЕКОМЕНДАЦИИ*\n`;
     for (const rec of recommendations.slice(0, 5)) {
       baseText += `• ${rec.reason}\n`;
+      // Кнопка "Исполнить" для каждой рекомендации (если это sell или buy)
+      if (rec.action === 'sell' || rec.action === 'buy') {
+        const actionText = rec.action === 'sell' ? 'Продать' : 'Купить';
+        keyboard.inline_keyboard.push([
+          { text: `📈 ${actionText} ${rec.asset}`, callback_data: `exec_${rec.id}` }
+        ]);
+      }
     }
     baseText += `\n`;
   }
 
+  // Общие кнопки
+  keyboard.inline_keyboard.push([
+    { text: '📊 Полный отчет', callback_data: 'action_full_report' },
+    { text: '📥 CSV отчет', callback_data: 'action_export_csv' }
+  ]);
+  keyboard.inline_keyboard.push([
+    { text: '💬 AI-советник', callback_data: 'action_ask_ai' },
+    { text: '🔙 Назад', callback_data: 'back_to_functions' }
+  ]);
+
   baseText += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
   baseText += `🛡️ *Void Node — твой телохранитель в крипте*\n`;
 
-  return baseText;
+  return { text: baseText, keyboard };
 }
 
 // ============================================================
@@ -4084,16 +4336,7 @@ async function handleCallback(update) {
       }
       
       const mode = await getUserMode(chatId) || 'beginner';
-      const report = await composeRiskMessage(result.riskReport, mode, lang, result.dailyChange);
-      
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '📊 Полный отчет', callback_data: 'action_full_report' }],
-          [{ text: '📥 CSV отчет', callback_data: 'action_export_csv' }],
-          [{ text: '💬 AI-советник', callback_data: 'action_ask_ai' }],
-          [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
-        ]
-      };
+      const { text: report, keyboard } = await composeRiskMessage(result.riskReport, mode, lang, result.dailyChange);
       
       await sendUpdatedMessage(chatId, report, keyboard);
       return;
@@ -4109,15 +4352,7 @@ async function handleCallback(update) {
       const result = await analyzePortfolio(savedData.exchangeId, savedData.apiKey, savedData.secretKey, chatId, lang);
       if (result.success) {
         const mode = await getUserMode(chatId) || 'beginner';
-        const report = await composeRiskMessage(result.riskReport, mode, lang, result.dailyChange);
-        
-        const keyboard = {
-          inline_keyboard: [
-            [{ text: '📥 CSV отчет', callback_data: 'action_export_csv' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
-          ]
-        };
-        
+        const { text: report, keyboard } = await composeRiskMessage(result.riskReport, mode, lang, result.dailyChange);
         await sendUpdatedMessage(chatId, report, keyboard);
       } else {
         await sendUpdatedMessage(chatId, result.message);
@@ -4265,6 +4500,39 @@ async function handleCallback(update) {
     if (data === 'help_ask') {
       await sendUpdatedMessage(chatId, getText(lang, 'help_ask_prompt'));
       await setUserState(chatId, 'help_chat');
+      return;
+    }
+    
+    // ===== ИСПОЛНЕНИЕ РЕКОМЕНДАЦИЙ =====
+    if (data.startsWith('exec_')) {
+      const recId = data.replace('exec_', '');
+      // Показываем диалог подтверждения
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: '✅ Подтвердить', callback_data: `confirm_${recId}` }],
+          [{ text: '❌ Отмена', callback_data: `cancel_exec_${recId}` }]
+        ]
+      };
+      await sendMessage(chatId, '⚠️ *Подтвердите исполнение рекомендации.*\n\nЭто действие отправит ордер на биржу.', keyboard);
+      return;
+    }
+    
+    if (data.startsWith('confirm_')) {
+      const recId = data.replace('confirm_', '');
+      await answerCallback(callback.id, '⏳ Исполняю...');
+      const result = await executeRecommendation(chatId, recId);
+      if (result.error) {
+        await sendMessage(chatId, `❌ ${result.error}`);
+      } else {
+        await sendMessage(chatId, `✅ *Ордер исполнен!*\n\nСимвол: ${result.order.symbol}\nСторона: ${result.order.side}\nКоличество: ${result.order.amount}\nЦена: ${result.order.price || 'рыночная'}`);
+      }
+      await showMainMenu(chatId, lang);
+      return;
+    }
+    
+    if (data.startsWith('cancel_exec_')) {
+      await sendMessage(chatId, '❌ Исполнение отменено.');
+      await showMainMenu(chatId, lang);
       return;
     }
     
@@ -4563,16 +4831,7 @@ async function handleMessage(update) {
       }
       
       const mode = await getUserMode(chatId) || 'beginner';
-      const report = await composeRiskMessage(result.riskReport, mode, lang, result.dailyChange);
-      
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '📊 Полный отчет', callback_data: 'action_full_report' }],
-          [{ text: '📥 CSV отчет', callback_data: 'action_export_csv' }],
-          [{ text: '💬 AI-советник', callback_data: 'action_ask_ai' }],
-          [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
-        ]
-      };
+      const { text: report, keyboard } = await composeRiskMessage(result.riskReport, mode, lang, result.dailyChange);
       
       await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
       return;
