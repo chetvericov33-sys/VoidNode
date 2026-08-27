@@ -17,6 +17,7 @@
     "https-proxy-agent": "^9.1.0",
     "node-fetch": "^3.3.2",
     "socks-proxy-agent": "^10.1.0",
-    "sqlite3": "^6.0.1"
+    "better-sqlite3": "^11.7.0"
   }
 }
+Удалён sqlite3, оставлен better-sqlite3
