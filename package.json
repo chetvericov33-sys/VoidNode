@@ -20,4 +20,3 @@
     "better-sqlite3": "^11.7.0"
   }
 }
-Удалён sqlite3, оставлен better-sqlite3
