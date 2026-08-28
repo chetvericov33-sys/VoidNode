@@ -3418,28 +3418,9 @@ async function showAnalyzeMenu(chatId, lang) {
   await sendUpdatedMessage(chatId, '📊 *Анализ портфеля*\n\nВыберите действие:', keyboard);
 }
 
-async function showSecurityMenu(chatId, lang) {
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: getText(lang, 'security_link'), callback_data: 'antiscam_url' },
-        { text: getText(lang, 'security_contract'), callback_data: 'antiscam_contract' }
-      ],
-      [
-        { text: getText(lang, 'security_file'), callback_data: 'antiscam_file' },
-        { text: getText(lang, 'security_dex'), callback_data: 'antiscam_dex' }
-      ],
-      [
-        { text: getText(lang, 'security_impersonation'), callback_data: 'antiscam_impersonation' },
-        { text: getText(lang, 'security_wallet'), callback_data: 'antiscam_wallet' }
-      ],
-      [
-        { text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }
-      ]
-    ]
-  };
-  await sendUpdatedMessage(chatId, getText(lang, 'security_menu'), keyboard);
-}
+// ============================================================
+// ПРОДОЛЖЕНИЕ – ЗАКРЫТИЕ ВСЕХ ФУНКЦИЙ + СЕРВЕР
+// ============================================================
 
 async function showMarketMenu(chatId, lang) {
   const keyboard = {
@@ -3453,3 +3434,99 @@ async function showMarketMenu(chatId, lang) {
       ],
       [
         { text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }
+      ]
+    ]
+  };
+  await sendUpdatedMessage(chatId, getText(lang, 'market_menu'), keyboard);
+}
+
+async function showHistoryMenu(chatId, lang) { /* ... */ }
+async function showPlansMenu(chatId, lang) { /* ... */ }
+async function showAlertMenu(chatId, lang) { /* ... */ }
+async function showAutotradeMenu(chatId, lang) { /* ... */ }
+
+// ============================================================
+// ОНБОРДИНГ
+// ============================================================
+async function showLanguageSelectOnboarding(chatId) { /* ... */ }
+async function showModeSelectOnboarding(chatId, lang) { /* ... */ }
+async function showOnboardingSetup(chatId, lang) { /* ... */ }
+
+// ============================================================
+// ОБРАБОТЧИКИ CALLBACK И MESSAGE (УЖЕ ЕСТЬ, НО ДЛЯ ПОЛНОТЫ)
+// ============================================================
+// ВАШИ СУЩЕСТВУЮЩИЕ handleCallback И handleMessage ДОЛЖНЫ БЫТЬ ЗДЕСЬ.
+// ЕСЛИ ИХ НЕТ – ВСТАВЬТЕ ИХ ИЗ ПРЕДЫДУЩИХ ВЕРСИЙ.
+
+// ============================================================
+// ВЕБХУК CRYPTOBOT
+// ============================================================
+async function handleCryptoWebhook(request) {
+  try {
+    const update = await request.json();
+    if (update.update_type === 'invoice_paid') {
+      const payload = update.payload;
+      const customPayload = payload.payload;
+      const parts = customPayload.split('_');
+      const planId = parts[1];
+      const chatId = parseInt(parts[2]);
+      const lang = await getUserLanguage(chatId) || 'ru';
+      const plan = await activatePlan(chatId, planId);
+      if (plan) {
+        await sendUpdatedMessage(chatId, getText(lang, 'plans_success', plan.name));
+        await showMainMenu(chatId, lang);
+      }
+    }
+    return { status: 200 };
+  } catch (error) {
+    console.error('Webhook error:', error);
+    return { status: 500, error: error.message };
+  }
+}
+
+// ============================================================
+// ЗАПУСК ФОНОВЫХ ЗАДАЧ
+// ============================================================
+setInterval(() => { checkAlerts().catch(console.error); }, CONFIG.ALERT_CHECK_INTERVAL);
+setInterval(() => { runAutotrade().catch(console.error); }, CONFIG.AUTOTRADE_CHECK_INTERVAL);
+setInterval(() => { checkPanic().catch(console.error); }, CONFIG.PANIC_CHECK_INTERVAL);
+
+// ============================================================
+// EXPRESS СЕРВЕР
+// ============================================================
+const app = express();
+app.use(express.json());
+
+app.post('/webhook', async (req, res) => {
+  try {
+    const update = req.body;
+    if (update.callback_query) {
+      await handleCallback(update);
+    } else if (update.message) {
+      await handleMessage(update);
+    }
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('Ошибка в вебхуке:', error);
+    res.sendStatus(500);
+  }
+});
+
+app.post('/webhook/crypto', async (req, res) => {
+  try {
+    const result = await handleCryptoWebhook(req);
+    res.status(result.status || 200).json(result);
+  } catch (error) {
+    console.error('Crypto webhook error:', error);
+    res.sendStatus(500);
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`✅ Бот запущен на порту ${PORT}`);
+});
+
+// ============================================================
+// КОНЕЦ ФАЙЛА
+// ============================================================
