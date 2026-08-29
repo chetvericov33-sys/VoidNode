@@ -1,22 +1,15 @@
 {
-  "name": "void-bot",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "void-node-bot",
+  "version": "2.0.0",
+  "description": "Void Node — крипто-телохранитель",
+  "main": "bot.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node bot.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "@peculiar/webcrypto": "^1.7.1",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "https-proxy-agent": "^9.1.0",
-    "node-fetch": "^3.3.2",
-    "socks-proxy-agent": "^10.1.0",
-    "better-sqlite3": "^11.7.0"
+    "ccxt": "^4.1.61",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "node-fetch": "^2.6.7"
   }
 }
