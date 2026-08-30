@@ -2923,7 +2923,6 @@ app.post('/webhook/crypto', async (req, res) => {
 // 38. ЗАПУСК СЕРВЕРА
 // ============================================================
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Бот запущен на порту ${PORT}`);
     console.log(`📡 Webhook URL: https://ваш-домен.onrender.com/webhook`);
