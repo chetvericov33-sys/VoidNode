@@ -1727,7 +1727,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
     };
     await sendUpdatedMessage(chatId, result, keyboard, 'Markdown', messageId);
     await addHistory(chatId, getText(lang, 'history_antiscam'), `Контракт: ${address.slice(0, 10)}...`);
-}.   
+}   
 
 // ============================================================
 // БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.0 (ЧАСТЬ 4/4 — ФИНАЛ)
