@@ -2888,6 +2888,10 @@ app.get('/health', (req, res) => {
     });
 });
 
+app.get('/webhook', (req, res) => {
+    res.status(200).send('Webhook is active');
+});
+
 app.post('/webhook', async (req, res) => {
     try {
         const update = req.body;
