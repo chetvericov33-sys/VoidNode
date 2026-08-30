@@ -2892,36 +2892,30 @@ app.get('/webhook', (req, res) => {
     res.status(200).send('Webhook is active');
 });
 
-app.post('/webhook', async (req, res) => {
-    try {
-        const update = req.body;
-        console.log(`📩 Webhook received: ${JSON.stringify(update).slice(0, 200)}...`);
-        if (update.callback_query) {
-            await handleCallback(update);
-            res.sendStatus(200);
-            return;
-        }
-        if (update.message) {
-            await handleMessage(update);
-            res.sendStatus(200);
-            return;
-        }
+app.post('/webhook', async (req, res) => { console.log('✅ Webhook вызван!'); try { const update = req.body; console.log(📩 Webhook received: ${JSON.stringify(update).slice(0, 200)}...);
+    if (update.callback_query) {
+        console.log('🔄 Обработка callback...');
+        await handleCallback(update);
         res.sendStatus(200);
-    } catch (error) {
-        console.error('❌ Webhook error:', error);
-        res.sendStatus(500);
+        return;
     }
+    
+    if (update.message) {
+        console.log(`💬 Сообщение от ${update.message.from?.first_name || 'Unknown'}`);
+        await handleMessage(update);
+        res.sendStatus(200);
+        return;
+    }
+    
+    res.sendStatus(200);
+} catch (error) {
+    console.error('❌ Webhook error:', error);
+    res.sendStatus(500);
+}
 });
 
-app.post('/webhook/crypto', async (req, res) => {
-    try {
-        const result = await handleCryptoWebhook(req);
-        res.status(result.status || 200).json(result);
-    } catch (error) {
-        console.error('❌ Crypto webhook error:', error);
-        res.sendStatus(500);
-    }
-});
+app.post('/webhook', async (req, res) => { console.log('✅ Webhook вызван!'); try { const update = req.body; console.log(📩 Webhook received: ${JSON.stringify(update).slice(0, 200)}...); if (update.callback_query) { console.log('🔄 Обработка callback...'); await handleCallback(update); res.sendStatus(200); return; } if (update.message) { console.log(💬 Сообщение от ${update.message.from?.first_name || 'Unknown'}); await handleMessage(update); res.sendStatus(200); return; } res.sendStatus(200); } catch (error) { console.error('❌ Webhook error:', error); res.sendStatus(500); } });
+app.get('/health', (req, res) => { res.status(200).json({ status: 'ok', timestamp: Date.now(), uptime: process.uptime() }); });
 
 // ============================================================
 // 38. ЗАПУСК СЕРВЕРА
