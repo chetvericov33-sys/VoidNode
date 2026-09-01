@@ -31,7 +31,6 @@ const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 const CRYPTOBOT_TOKEN = process.env.CRYPTOBOT_TOKEN;
 const BOT_USERNAME = process.env.BOT_USERNAME;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
-const PORT = process.env.PORT || 3000;
 
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
