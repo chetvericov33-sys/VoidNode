@@ -23,7 +23,7 @@ const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 if (!BOT_TOKEN) {
-    console.error('BOT_TOKEN не найден в переменных окружения');
+    console.error('BOT_TOKEN не найден');
     process.exit(1);
 }
 if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
@@ -135,11 +135,9 @@ const VOID_KV = new RedisStorage();
 async function getData(key) {
     return await VOID_KV.get(key);
 }
-
 async function setData(key, value, ttl = null) {
     await VOID_KV.put(key, value, ttl);
 }
-
 async function deleteData(key) {
     await VOID_KV.delete(key);
 }
@@ -241,9 +239,7 @@ async function validateExchangeKeys(apiKey, secretKey, exchangeId = 'binance') {
             enableRateLimit: true,
             timeout: 10000
         });
-
         await exchange.fetchBalance();
-
         try {
             await exchange.fetchWithdrawals();
             return {
@@ -272,7 +268,6 @@ const connectAttempts = new Map();
 async function checkConnectAttempts(chatId) {
     const key = 'connect_attempts_' + chatId;
     const attempts = await getData(key) || 0;
-
     if (attempts >= 5) {
         const blockTime = 3600000;
         const lastAttempt = await getData('connect_attempts_time_' + chatId);
@@ -283,7 +278,6 @@ async function checkConnectAttempts(chatId) {
             };
         }
     }
-
     return { blocked: false };
 }
 
@@ -301,18 +295,15 @@ async function recordConnectAttempt(chatId, success) {
 
 function sanitizeInput(text) {
     if (!text) return '';
-
     let sanitized = text
         .replace(/[<>]/g, '')
         .replace(/[{}]/g, '')
         .replace(/[\[\]]/g, '')
         .replace(/[`]/g, '')
         .trim();
-
     if (sanitized.length > 4096) {
         sanitized = sanitized.slice(0, 4096);
     }
-
     return sanitized;
 }
 
@@ -338,10 +329,8 @@ async function checkRateLimit(chatId, action, maxRequests = 10, timeWindow = 600
     const key = 'rate_' + chatId + '_' + action;
     const data = await getData(key);
     const now = Date.now();
-
     let count = 0;
     let firstRequest = now;
-
     if (data) {
         let parsed;
         try {
@@ -352,13 +341,11 @@ async function checkRateLimit(chatId, action, maxRequests = 10, timeWindow = 600
             count = 0;
             firstRequest = now;
         }
-
         if (now - firstRequest > timeWindow) {
             count = 0;
             firstRequest = now;
         }
     }
-
     if (count >= maxRequests) {
         const resetTime = Math.ceil((firstRequest + timeWindow - now) / 1000);
         return {
@@ -366,32 +353,27 @@ async function checkRateLimit(chatId, action, maxRequests = 10, timeWindow = 600
             message: 'Слишком много запросов. Подождите ' + resetTime + ' секунд.'
         };
     }
-
     await setData(key, JSON.stringify({
         count: count + 1,
         firstRequest: firstRequest
     }), Math.ceil(timeWindow / 1000));
-
     return { allowed: true };
 }
 
 function verifyCryptoBotWebhook(body, headers) {
     const signature = headers['crypto-pay-api-signature'];
     if (!signature) return false;
-
     const token = CRYPTOBOT_TOKEN;
     const hash = crypto
         .createHmac('sha256', token)
         .update(JSON.stringify(body))
         .digest('hex');
-
     return hash === signature;
 }
 
 async function checkDuplicatePayment(chatId, planId) {
     const key = 'payment_duplicate_' + chatId + '_' + planId;
     const existing = await getData(key);
-
     if (existing) {
         let data;
         try {
@@ -406,19 +388,16 @@ async function checkDuplicatePayment(chatId, planId) {
             await deleteData(key);
         }
     }
-
     await setData(key, JSON.stringify({
         createdAt: Date.now(),
         planId: planId
     }), 3600);
-
     return { duplicate: false };
 }
 
 async function checkSuspiciousUser(chatId) {
     const accountAgeKey = 'account_age_' + chatId;
     let accountAge = await getData(accountAgeKey);
-
     if (!accountAge) {
         try {
             const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
@@ -437,7 +416,6 @@ async function checkSuspiciousUser(chatId) {
             console.error('Ошибка получения возраста аккаунта:', error);
         }
     }
-
     if (accountAge) {
         const age = typeof accountAge === 'string' ? parseInt(accountAge) : accountAge;
         if (Date.now() - age < 7 * 24 * 60 * 60 * 1000) {
@@ -447,7 +425,6 @@ async function checkSuspiciousUser(chatId) {
             };
         }
     }
-
     return { suspicious: false };
 }
 
@@ -467,19 +444,16 @@ function addExitButton(keyboard, lang) {
             ]
         };
     }
-
     const hasExit = keyboard.inline_keyboard.some(function(row) {
         return row.some(function(btn) {
             return btn.callback_data === 'exit_to_menu';
         });
     });
-
     if (!hasExit) {
         keyboard.inline_keyboard.push([
             [{ text: 'Выйти в меню', callback_data: 'exit_to_menu' }]
         ]);
     }
-
     return keyboard;
 }
 
@@ -568,12 +542,10 @@ async function sendUpdatedMessage(chatId, text, keyboard, parseMode, userMessage
         }
     }
     await deleteUserLastMessage(chatId);
-
     if (keyboard) {
         const lang = await getData('lang_' + chatId) || 'ru';
         keyboard = addExitButton(keyboard, lang);
     }
-
     if (!parseMode) parseMode = 'Markdown';
     const result = await sendMessage(chatId, text, keyboard, parseMode);
     if (result && result.ok) {
@@ -657,11 +629,9 @@ async function sendDocument(chatId, content, filename) {
 async function cleanupOldData() {
     const now = Date.now();
     const keys = await VOID_KV.list('');
-
     for (const key of keys.keys) {
         const data = await getData(key.name);
         if (!data) continue;
-
         try {
             const parsed = typeof data === 'string' ? JSON.parse(data) : data;
             if (parsed.timestamp && now - parsed.timestamp > 90 * 24 * 60 * 60 * 1000) {
@@ -677,7 +647,6 @@ async function cleanupOldData() {
         }
     }
 }
-
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 
 const PLANS = {
@@ -688,22 +657,10 @@ const PLANS = {
         price: 0,
         duration: 7,
         limits: {
-            analyze: 2,
-            antiscam: 3,
-            alerts: 0,
-            social: 3,
-            dex: 2,
-            news: 2,
-            calendar: 2,
-            search_token: 3,
-            panic: false,
-            diary: true,
-            ranking: false,
-            autotrade: false,
-            ai: 0,
-            csv: false,
-            kill_switch: false,
-            priority_support: false
+            analyze: 2, antiscam: 3, alerts: 0, social: 3, dex: 2,
+            news: 2, calendar: 2, search_token: 3, panic: false,
+            diary: true, ranking: false, autotrade: false, ai: 0,
+            csv: false, kill_switch: false, priority_support: false
         },
         features: [
             'Анализ портфеля (2/день)',
@@ -735,22 +692,10 @@ const PLANS = {
         price: 500,
         duration: 30,
         limits: {
-            analyze: 10,
-            antiscam: 15,
-            alerts: 3,
-            social: 10,
-            dex: 10,
-            news: 10,
-            calendar: 10,
-            search_token: 15,
-            panic: false,
-            diary: true,
-            ranking: true,
-            autotrade: false,
-            ai: 5,
-            csv: true,
-            kill_switch: false,
-            priority_support: false
+            analyze: 10, antiscam: 15, alerts: 3, social: 10, dex: 10,
+            news: 10, calendar: 10, search_token: 15, panic: false,
+            diary: true, ranking: true, autotrade: false, ai: 5,
+            csv: true, kill_switch: false, priority_support: false
         },
         features: [
             'Анализ портфеля (10/день)',
@@ -788,22 +733,10 @@ const PLANS = {
         price: 1000,
         duration: 30,
         limits: {
-            analyze: 30,
-            antiscam: 50,
-            alerts: 15,
-            social: Infinity,
-            dex: Infinity,
-            news: Infinity,
-            calendar: Infinity,
-            search_token: Infinity,
-            panic: true,
-            diary: true,
-            ranking: true,
-            autotrade: 3,
-            ai: 20,
-            csv: true,
-            kill_switch: true,
-            priority_support: false
+            analyze: 30, antiscam: 50, alerts: 15, social: Infinity, dex: Infinity,
+            news: Infinity, calendar: Infinity, search_token: Infinity, panic: true,
+            diary: true, ranking: true, autotrade: 3, ai: 20,
+            csv: true, kill_switch: true, priority_support: false
         },
         features: [
             'Анализ портфеля (30/день)',
@@ -847,22 +780,10 @@ const PLANS = {
         price: 1500,
         duration: 30,
         limits: {
-            analyze: Infinity,
-            antiscam: Infinity,
-            alerts: Infinity,
-            social: Infinity,
-            dex: Infinity,
-            news: Infinity,
-            calendar: Infinity,
-            search_token: Infinity,
-            panic: true,
-            diary: true,
-            ranking: true,
-            autotrade: Infinity,
-            ai: Infinity,
-            csv: true,
-            kill_switch: true,
-            priority_support: true
+            analyze: Infinity, antiscam: Infinity, alerts: Infinity, social: Infinity, dex: Infinity,
+            news: Infinity, calendar: Infinity, search_token: Infinity, panic: true,
+            diary: true, ranking: true, autotrade: Infinity, ai: Infinity,
+            csv: true, kill_switch: true, priority_support: true
         },
         features: [
             'Анализ портфеля (Безлимит)',
@@ -1633,10 +1554,8 @@ async function getUserPlan(chatId) {
             return cached.data;
         }
     }
-
     var key = 'plan_' + chatId;
     var data = await getData(key);
-
     var result;
     if (!data) {
         await activateTrial(chatId);
@@ -1653,7 +1572,6 @@ async function getUserPlan(chatId) {
             planCache.set(chatId, { data: result, timestamp: Date.now() });
             return result;
         }
-        
         var plan = PLANS[parsed.planId];
         if (!plan) {
             await activateTrial(chatId);
@@ -1713,7 +1631,6 @@ async function getUserPlan(chatId) {
             };
         }
     }
-
     planCache.set(chatId, { data: result, timestamp: Date.now() });
     return result;
 }
@@ -1736,7 +1653,6 @@ async function activateTrial(chatId) {
             console.error('Ошибка парсинга при активации триала:', e);
         }
     }
-
     await setData(key, JSON.stringify({
         planId: 'TRIAL',
         activatedAt: Date.now(),
@@ -2094,7 +2010,6 @@ function getMainMenuKeyboard(lang) {
 async function showMainMenu(chatId, lang) {
     var userPlan = await getUserPlan(chatId);
     var mode = await getData('mode_' + chatId) || 'beginner';
-    
     var userName = 'Друг';
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
@@ -2111,15 +2026,12 @@ async function showMainMenu(chatId, lang) {
     } catch (error) {
         console.error('Ошибка получения username:', error);
     }
-
     var userId = chatId;
     var planName = userPlan.name || 'Триал';
     var expiresDate = formatDateShort(userPlan.expires);
     var modeDisplay = mode === 'beginner' ? 'Новичок' : 'Опытный';
-    
     var greeting = getText(lang, 'greeting_morning', userName);
     var header = getText(lang, 'main_header', userName, modeDisplay, userId, planName, expiresDate);
-    
     var vipStatus = '';
     var isVip = userPlan.plan === 'VIP' && userPlan.expires > Date.now();
     if (isVip) {
@@ -2131,7 +2043,6 @@ async function showMainMenu(chatId, lang) {
             vipStatus = '\nVIP активен (' + daysLeft + ' дн.)';
         }
     }
-    
     var message = greeting + '\n\n' + header + vipStatus + '\n\nVoid Node — твой крипто-телохранитель\n\nГлавное меню:';
     await sendUpdatedMessage(chatId, message, getMainMenuKeyboard(lang));
 }
@@ -2214,7 +2125,6 @@ async function showAboutMenu(chatId, lang) {
     message += '/connect — подключить биржу\n';
     message += '/news — новости, тренды, календарь\n';
     message += '/help — помощь по боту';
-    
     var keyboard = {
         inline_keyboard: [
             [{ text: 'Выйти в меню', callback_data: 'exit_to_menu' }]
@@ -2311,7 +2221,6 @@ async function showHistoryMenu(chatId, lang) {
 async function showPlansMenu(chatId, lang) {
     var userPlan = await getUserPlan(chatId);
     var expiresDate = formatDateShort(userPlan.expires);
-    
     var message = getText(lang, 'plans_title') + '\n\n';
     message += getText(lang, 'plans_current', userPlan.name, expiresDate) + '\n\n';
     message += '\n';
@@ -2329,7 +2238,6 @@ async function showPlansMenu(chatId, lang) {
     message += '   24/7 приоритетная поддержка\n\n';
     message += 'Оплата через CryptoBot (USDT)\n';
     message += getText(lang, 'plans_select');
-    
     var keyboard = {
         inline_keyboard: [
             [{ text: getText(lang, 'plan_trial_name'), callback_data: 'plan_TRIAL' }],
@@ -2424,7 +2332,6 @@ async function showVipBonusOffer(chatId, lang) {
     message += getText(lang, 'vip_bonus_analytics') + '\n';
     message += getText(lang, 'vip_bonus_alerts') + '\n\n';
     message += getText(lang, 'vip_bonus_offer');
-    
     var keyboard = {
         inline_keyboard: [
             [{ text: getText(lang, 'vip_bonus_connect_btn'), callback_data: 'onboard_connect_vip' }],
@@ -2463,36 +2370,29 @@ async function handlePlanSelection(chatId, planId, lang, messageId) {
         await showMainMenu(chatId, lang);
         return;
     }
-    
     var plan = PLANS[planId];
     if (!plan) {
         await sendUpdatedMessage(chatId, getText(lang, 'plans_not_found'), null, 'Markdown', messageId);
         return;
     }
-    
     var duplicateCheck = await checkDuplicatePayment(chatId, planId);
     if (duplicateCheck.duplicate) {
         await sendUpdatedMessage(chatId, duplicateCheck.message, null, 'Markdown', messageId);
         return;
     }
-    
     var userPlan = await getUserPlan(chatId);
     if (userPlan.plan === planId && userPlan.expires > Date.now()) {
         await sendUpdatedMessage(chatId, getText(lang, 'plans_already', plan.name), null, 'Markdown', messageId);
         return;
     }
-    
     await sendUpdatedMessage(chatId, getText(lang, 'plans_payment_creating'), null, 'Markdown', messageId);
-    
     var invoice = await createCryptoInvoice(chatId, planId, plan.price);
     if (!invoice) {
         await sendUpdatedMessage(chatId, getText(lang, 'plans_payment_error'), null, 'Markdown', messageId);
         return;
     }
-    
     var displayFeatures = lang === 'en' ? plan.features_en : plan.features;
     var usdtAmount = Math.round(plan.price / 90);
-    
     var message = getText(lang, 'plans_payment_title', plan.name) + '\n\n';
     message += plan.price + ' ₽ ≈ ' + usdtAmount + ' USDT\n';
     message += plan.duration + ' ' + getText(lang, 'days') + '\n\n';
@@ -2502,7 +2402,6 @@ async function handlePlanSelection(chatId, planId, lang, messageId) {
     message += getText(lang, 'plans_payment_methods') + ':\n';
     message += '• ' + getText(lang, 'plans_payment_crypto') + '\n\n';
     message += getText(lang, 'plans_payment_note');
-    
     var keyboard = {
         inline_keyboard: [
             [{ text: 'Оплатить ' + plan.price + ' ₽ (USDT)', url: invoice.payUrl }],
@@ -2530,15 +2429,6 @@ function generateCSV(engineResult) {
     return csv;
 }
 
-function createProgressBarUI(value, max, length) {
-    if (max === undefined) max = 100;
-    if (length === undefined) length = 10;
-    var percent = Math.min(value / max, 1);
-    var filled = Math.round(percent * length);
-    var empty = length - filled;
-    return '🟩'.repeat(filled) + '⬜'.repeat(empty);
-}
-
 class SnowballTracker {
     constructor() {
         this.tokens = new Map();
@@ -2551,7 +2441,6 @@ class SnowballTracker {
             maxOrderPercent: 0.02
         };
     }
-    
     initToken(symbol, entryPrice) {
         if (!this.tokens.has(symbol)) {
             this.tokens.set(symbol, {
@@ -2564,17 +2453,14 @@ class SnowballTracker {
         }
         return this.tokens.get(symbol);
     }
-    
     getToken(symbol) {
         return this.tokens.get(symbol);
     }
-    
     getGrowth(symbol, currentPrice) {
         var token = this.tokens.get(symbol);
         if (!token) return null;
         return ((currentPrice - token.entryPrice) / token.entryPrice) * 100;
     }
-    
     shouldExecuteFlow(symbol, currentPrice) {
         var token = this.tokens.get(symbol);
         if (!token) return null;
@@ -2592,12 +2478,10 @@ class SnowballTracker {
 async function runSnowballStrategy(chatId) {
     var keysUser = await loadUserKeys(chatId);
     if (!keysUser) return { error: 'Нет API-ключей' };
-    
     try {
         var exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
         var balance = await exchange.fetchBalance();
         var total = balance.total;
-        
         var tokens = [];
         for (var symbol in total) {
             if (symbol === 'USDT' || total[symbol] < 0.0001) continue;
@@ -2618,18 +2502,14 @@ async function runSnowballStrategy(chatId) {
                 }
             } catch (e) {}
         }
-        
         if (tokens.length < 2) {
             return { error: 'Нужно минимум 2 токена для стратегии' };
         }
-        
         tokens.sort(function(a, b) { return b.change24h - a.change24h; });
         var growToken = tokens[0];
-        
         if (growToken.change24h < 2) {
             return { error: 'Нет токена с достаточным ростом (>2% за 24ч)' };
         }
-        
         var junkToken = tokens[tokens.length - 1];
         if (junkToken.change24h > 0) {
             var nonGrowing = tokens.filter(function(t) { return t.change24h < 2; });
@@ -2639,11 +2519,9 @@ async function runSnowballStrategy(chatId) {
                 return { error: 'Все токены растут' };
             }
         }
-        
         var tracker = new SnowballTracker();
         tracker.initToken(growToken.symbol, growToken.price);
         tracker.initToken(junkToken.symbol, junkToken.price);
-        
         var growth = tracker.getGrowth(growToken.symbol, growToken.price);
         if (growth >= 30) {
             var tokenBalance = balance.free[growToken.symbol] || 0;
@@ -2657,16 +2535,13 @@ async function runSnowballStrategy(chatId) {
                 return { success: true, message: message };
             }
         }
-        
         var junkBalance = balance.free[junkToken.symbol] || 0;
         if (junkBalance < 0.001) {
             return { error: 'Недостаточно ' + junkToken.symbol + ' для продажи' };
         }
-        
         var sellAmount = junkBalance * 0.5;
         var sellOrder = await exchange.createMarketSellOrder(junkToken.symbol + '/USDT', sellAmount);
         var usdtReceived = sellOrder.cost || 0;
-        
         var buyAmount = usdtReceived / growToken.price;
         if (buyAmount > 0.0001) {
             await exchange.createMarketBuyOrder(growToken.symbol + '/USDT', buyAmount);
@@ -2679,7 +2554,6 @@ async function runSnowballStrategy(chatId) {
             await addHistory(chatId, 'Снежный ком — переток', growToken.symbol + ' ← ' + junkToken.symbol + ' ($' + usdtReceived.toFixed(2) + ')');
             return { success: true, message: message };
         }
-        
         return { success: false, error: 'Не удалось выполнить переток' };
     } catch (error) {
         console.error('Snowball strategy error:', error);
@@ -2696,53 +2570,41 @@ async function checkPanic() {
         if (!config) continue;
         var parsedConfig = typeof config === 'string' ? JSON.parse(config) : config;
         if (!parsedConfig.active) continue;
-
         var keysUser = await loadUserKeys(chatId);
         if (!keysUser) continue;
-
         try {
             var exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
             var balance = await exchange.fetchBalance();
             var coins = Object.keys(balance.total).filter(function(c) { return c !== 'USDT' && balance.total[c] > 0; });
-            
             if (coins.length === 0) continue;
-            
             var panicTriggered = false;
             var droppedCoins = [];
-            
             for (var i = 0; i < coins.length; i++) {
                 var coin = coins[i];
                 try {
                     var ticker = await exchange.fetchTicker(coin + '/USDT');
                     if (!ticker) continue;
                     var currentPrice = ticker.last;
-                    
                     var priceKey = 'panic_price_' + chatId + '_' + coin;
                     var previousPrice = await getData(priceKey);
-                    
                     if (previousPrice) {
                         var prev = parseFloat(previousPrice);
                         var drop = ((prev - currentPrice) / prev) * 100;
-                        
                         if (drop >= 5) {
                             panicTriggered = true;
                             droppedCoins.push({ coin: coin, drop: drop, currentPrice: currentPrice, prev: prev });
                         }
                     }
-                    
                     await setData(priceKey, currentPrice.toString(), 3600);
                 } catch (e) {
                     console.error('Ошибка проверки ' + coin + ':', e.message);
                 }
             }
-            
             if (panicTriggered) {
                 var coinsList = droppedCoins.map(function(c) { return '• ' + c.coin + ': -' + c.drop.toFixed(1) + '%'; }).join('\n');
-                
                 var message = 'ХОЛОДНЫЙ ДУШ СРАБОТАЛ!\n\n' +
                     'Обнаружено падение >5% по нескольким активам:\n\n' + coinsList + '\n\n' +
                     'Рекомендация: конвертировать ВСЕ активы в USDT для защиты капитала.';
-                
                 var keyboard = {
                     inline_keyboard: [
                         [{ text: 'Конвертировать всё в USDT', callback_data: 'panic_convert_all' }],
@@ -2750,9 +2612,8 @@ async function checkPanic() {
                     ]
                 };
                 await sendMessage(chatId, message, keyboard);
-                
-                await setData(key.name, JSON.stringify({ 
-                    active: true, 
+                await setData(key.name, JSON.stringify({
+                    active: true,
                     lastCheck: Date.now(),
                     triggered: true,
                     droppedCoins: droppedCoins
@@ -2770,22 +2631,18 @@ async function handlePanicConvertAll(chatId) {
         await sendMessage(chatId, 'Нет ключей для конвертации.');
         return;
     }
-    
     try {
         var exchange = await connectExchange(keys.exchangeId, keys.apiKey, keys.secretKey);
         var balance = await exchange.fetchBalance();
         var converted = 0;
         var details = [];
-        
         var coins = Object.keys(balance.total).filter(function(c) { return c !== 'USDT' && balance.total[c] > 0; });
-        
         for (var i = 0; i < coins.length; i++) {
             var coin = coins[i];
             try {
                 var amount = balance.total[coin];
                 var ticker = await exchange.fetchTicker(coin + '/USDT');
                 var value = amount * ticker.last;
-                
                 await exchange.createMarketSellOrder(coin + '/USDT', amount);
                 converted++;
                 details.push('• ' + coin + ': ' + amount.toFixed(4) + ' ≈ $' + value.toFixed(2));
@@ -2793,456 +2650,22 @@ async function handlePanicConvertAll(chatId) {
                 details.push('• ' + coin + ': Ошибка: ' + e.message);
             }
         }
-        
         var message = 'ХОЛОДНЫЙ ДУШ — КОНВЕРТАЦИЯ ВЫПОЛНЕНА!\n\n' +
             'Продано ' + converted + ' активов в USDT\n\n' +
             details.join('\n') + '\n\n' +
             'Портфель в безопасности.';
-        
         await sendMessage(chatId, message);
         await deleteData('panic_' + chatId);
-        
         var priceKeys = await VOID_KV.list('panic_price_' + chatId + '_');
         for (var j = 0; j < priceKeys.keys.length; j++) {
             await deleteData(priceKeys.keys[j].name);
         }
-        
     } catch (error) {
         console.error('Panic convert error:', error);
         await sendMessage(chatId, 'Ошибка конвертации: ' + error.message);
     }
 }
 
-class VipReminderService {
-    constructor() {
-        this.checkInterval = 60 * 60 * 1000;
-    }
-
-    async checkAllUsers() {
-        var keys = await VOID_KV.list('plan_');
-        var now = Date.now();
-
-        for (var k = 0; k < keys.keys.length; k++) {
-            var key = keys.keys[k];
-            var chatId = parseInt(key.name.replace('plan_', ''));
-            var data = await getData(key.name);
-            if (!data) continue;
-
-            var plan;
-            try {
-                plan = typeof data === 'string' ? JSON.parse(data) : data;
-            } catch (e) {
-                continue;
-            }
-            
-            if (plan.planId !== 'VIP' || !plan.vipTrial) continue;
-            if (plan.expires < now) continue;
-
-            var timeLeft = plan.expires - now;
-            var lang = await getData('lang_' + chatId) || 'ru';
-            var isRu = lang === 'ru';
-            
-            var notifiedKey = 'vip_notified_' + chatId;
-            var alreadyNotified = await getData(notifiedKey);
-
-            if (timeLeft <= 24 * 60 * 60 * 1000 && timeLeft > 23 * 60 * 60 * 1000 && !alreadyNotified) {
-                var expiresDate = formatDateShort(plan.expires);
-                var message = isRu
-                    ? 'Привет! Твой VIP-доступ заканчивается завтра (' + expiresDate + ').\n\nТы уже видел, как холодный душ спасает портфель.\nТы знаешь, как автоторговля приносит прибыль.\n\nЯ не хочу, чтобы ты терял эти возможности.\nПродли доступ сейчас — и оставайся под защитой.\n\n/subscribe — выбери свой тариф'
-                    : 'Hey! Your VIP access expires tomorrow (' + expiresDate + ').\n\nYou\'ve already seen how panic mode saves your portfolio.\nYou know how autotrading brings profit.\n\nI don\'t want you to lose these opportunities.\nRenew now — and stay protected.\n\n/subscribe — choose your plan';
-                
-                var keyboard = {
-                    inline_keyboard: [
-                        [{ text: isRu ? 'Выбрать тариф' : 'Choose plan', callback_data: 'menu_plans' }],
-                        [{ text: isRu ? 'Анализ портфеля' : 'Portfolio analysis', callback_data: 'action_analyze' }]
-                    ]
-                };
-                
-                await sendMessage(chatId, message, keyboard);
-                await setData(notifiedKey, 'true', 86400);
-                await addHistory(chatId, 'VIP-напоминание', 'До окончания: 24 часа');
-            }
-        }
-    }
-}
-
-var vipReminder = new VipReminderService();
-
-async function loadUserKeys(chatId) {
-    var key = 'user_' + chatId;
-    var data = await getData(key);
-    if (!data) return null;
-    try {
-        var parsed = typeof data === 'string' ? JSON.parse(data) : data;
-        var decryptedApiKey = decrypt(parsed.apiKey);
-        var decryptedSecretKey = decrypt(parsed.secretKey);
-        return {
-            apiKey: decryptedApiKey,
-            secretKey: decryptedSecretKey,
-            exchangeId: parsed.exchangeId,
-            connectedAt: parsed.connectedAt
-        };
-    } catch (e) {
-        return null;
-    }
-}
-
-async function executeRecommendation(chatId, recId) {
-    var analysisData = await getData('analysis_' + chatId);
-    if (!analysisData) return { error: 'Нет данных анализа' };
-    var analysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
-    var rec = analysis.recommendations.find(function(r) { return r.id === recId; });
-    if (!rec) return { error: 'Рекомендация не найдена' };
-
-    var userPlan = await getUserPlan(chatId);
-    if (!userPlan.limits.autotrade || userPlan.limits.autotrade === false) {
-        return { error: 'Автоторговля недоступна на вашем тарифе' };
-    }
-
-    var orderLimitKey = 'orders_' + chatId + '_' + new Date().toISOString().split('T')[0];
-    var ordersToday = parseInt(await getData(orderLimitKey) || '0');
-    if (ordersToday >= CONFIG.MAX_ORDERS_PER_DAY) {
-        return { error: 'Достигнут лимит ордеров на сегодня (' + CONFIG.MAX_ORDERS_PER_DAY + ')' };
-    }
-
-    var keys = await loadUserKeys(chatId);
-    if (!keys) return { error: 'Нет API-ключей' };
-
-    try {
-        var exchange = await connectExchange(keys.exchangeId, keys.apiKey, keys.secretKey);
-        var balance = await exchange.fetchBalance();
-        var free = balance.free[rec.asset] || 0;
-
-        if (rec.action === 'sell' && free < rec.amount) {
-            return { error: 'Недостаточно ' + rec.asset + ' на балансе (доступно: ' + free + ', нужно: ' + rec.amount + ')' };
-        }
-        if (rec.action === 'buy') {
-            var freeUSDT = balance.free['USDT'] || 0;
-            var ticker = await exchange.fetchTicker(rec.symbol || rec.asset + '/USDT');
-            var price = ticker ? ticker.last : 0;
-            var needed = rec.amount * price;
-            if (freeUSDT < needed) {
-                return { error: 'Недостаточно USDT для покупки (доступно: ' + freeUSDT + ', нужно: ' + needed + ')' };
-            }
-        }
-
-        var order;
-        if (rec.action === 'sell') {
-            order = await exchange.createMarketSellOrder(rec.symbol, rec.amount);
-        } else if (rec.action === 'buy') {
-            order = await exchange.createMarketBuyOrder(rec.symbol, rec.amount);
-        } else {
-            return { error: 'Неизвестное действие: ' + rec.action };
-        }
-
-        await new Promise(function(r) { setTimeout(r, 3000); });
-        var orderStatus = await exchange.fetchOrder(order.id);
-        if (orderStatus.status !== 'closed') {
-            return { error: 'Ордер не исполнился. Текущий статус: ' + orderStatus.status };
-        }
-
-        await setData(orderLimitKey, (ordersToday + 1).toString(), 86400);
-        return { success: true, order: orderStatus };
-    } catch (error) {
-        console.error('Order execution error:', error);
-        return { error: 'Ошибка исполнения: ' + error.message };
-    }
-}
-
-async function composeReport(engineResult, mode, lang, dailyChange) {
-    if (dailyChange === undefined) dailyChange = 0;
-    var totalUSDT = engineResult.totalUSDT;
-    var btcPercent = engineResult.btcPercent;
-    var altPercent = engineResult.altPercent;
-    var usdtPercent = engineResult.usdtPercent;
-    var riskLevel = engineResult.riskLevel;
-    var issues = engineResult.issues || [];
-    var recommendations = engineResult.recommendations || [];
-    var signals = engineResult.signals || [];
-    var btcMetrics = engineResult.btcMetrics;
-    var riskScore = engineResult.riskScore;
-    var assets = engineResult.assets || [];
-    var thresholds = engineResult.thresholds;
-
-    var baseText = 'АНАЛИЗ ПОРТФЕЛЯ\n';
-    baseText += '\n';
-    baseText += 'Общая стоимость: $' + (totalUSDT?.toFixed(2) || 0) + ' USDT\n';
-    if (dailyChange !== 0) {
-        baseText += ' Изменение (24ч): ' + (dailyChange > 0 ? '+' : '') + dailyChange.toFixed(2) + '%\n';
-    }
-    baseText += '\n\n';
-
-    var modeLabel = mode === 'beginner' ? 'Новичок' : 'Опытный';
-    baseText += 'Режим: ' + modeLabel + '\n';
-    if (thresholds) {
-        baseText += 'Риск-профиль:\n';
-        baseText += 'Стоп-лосс: ' + thresholds.stopLoss + '%\n';
-        baseText += 'Тейк-профит: ' + thresholds.takeProfit + '%\n';
-        baseText += 'Макс. позиция: ' + thresholds.maxPosition + '%\n';
-        baseText += 'Макс. доля альтов: ' + thresholds.maxAltExposure + '%\n\n';
-    }
-
-    baseText += 'РАСПРЕДЕЛЕНИЕ АКТИВОВ\n';
-    baseText += 'BTC:      ' + createProgressBarUI(btcPercent) + ' ' + (btcPercent?.toFixed(1) || 0) + '%\n';
-    baseText += 'Альты:    ' + createProgressBarUI(altPercent) + ' ' + (altPercent?.toFixed(1) || 0) + '%\n';
-    baseText += 'Стейблы:  ' + createProgressBarUI(usdtPercent) + ' ' + (usdtPercent?.toFixed(1) || 0) + '%\n\n';
-
-    var ideal = getIdealPortfolio(mode);
-    baseText += 'Целевые веса (' + ideal.label + '):\n';
-    baseText += 'BTC:  ' + ideal.btc + '%  (ваш: ' + (btcPercent?.toFixed(1) || 0) + '%)\n';
-    baseText += 'Альты: ' + ideal.alt + '%  (ваш: ' + (altPercent?.toFixed(1) || 0) + '%)\n';
-    baseText += 'Стейблы: ' + ideal.stable + '%  (ваш: ' + (usdtPercent?.toFixed(1) || 0) + '%)\n\n';
-
-    var riskLabel = riskLevel === 'high' ? getText(lang, 'risk_high') : (riskLevel === 'medium' ? getText(lang, 'risk_medium') : getText(lang, 'risk_low'));
-    baseText += ' Риск: ' + riskLabel + ' (' + (riskScore || 0) + ' баллов)\n\n';
-
-    if (btcMetrics) {
-        baseText += 'ФИНАНСОВЫЕ МЕТРИКИ BTC\n';
-        if (btcMetrics.sharpe !== undefined) {
-            baseText += ' Коэф. Шарпа: ' + btcMetrics.sharpe.toFixed(2) + '\n';
-        }
-        if (btcMetrics.sortino !== undefined) {
-            baseText += ' Коэф. Сортино: ' + btcMetrics.sortino.toFixed(2) + '\n';
-        }
-        if (btcMetrics.var !== undefined) {
-            baseText += ' VaR (95%): ' + btcMetrics.var.toFixed(2) + '%\n';
-        }
-        baseText += '\n';
-    }
-
-    if (signals && signals.length > 0) {
-        baseText += 'СИГНАЛЫ\n';
-        for (var i = 0; i < signals.length; i++) {
-            var s = signals[i];
-            baseText += ' ' + s.text + '\n';
-        }
-        baseText += '\n';
-    }
-
-    if (issues && issues.length > 0) {
-        baseText += 'ПРОБЛЕМЫ\n';
-        for (var j = 0; j < issues.length; j++) {
-            var issue = issues[j];
-            baseText += ' ' + issue.text + '\n';
-        }
-        baseText += '\n';
-    }
-
-    var keyboard = { inline_keyboard: [] };
-
-    if (recommendations && recommendations.length > 0) {
-        baseText += 'РЕКОМЕНДАЦИИ\n';
-        for (var r = 0; r < recommendations.slice(0, 5).length; r++) {
-            var rec = recommendations.slice(0, 5)[r];
-            var confidence = rec.action === 'sell' ? (rec.rsi_signal === 'overbought' ? 70 : 55) : (rec.rsi_signal === 'oversold' ? 70 : 55);
-
-            baseText += '• ' + rec.reason + '\n';
-            baseText += '   Уверенность: ' + confidence + '%\n';
-            if (rec.action === 'sell' || rec.action === 'buy') {
-                var actionText = rec.action === 'sell' ? 'Продать' : 'Купить';
-                keyboard.inline_keyboard.push([
-                    { text: actionText + ' ' + rec.asset, callback_data: 'exec_' + rec.id }
-                ]);
-            }
-        }
-        baseText += '\n';
-    }
-
-    keyboard.inline_keyboard.push([
-        { text: 'Полный отчет', callback_data: 'action_full_report' },
-        { text: 'CSV отчет', callback_data: 'action_export_csv' }
-    ]);
-    keyboard.inline_keyboard.push([
-        { text: 'AI-советник', callback_data: 'action_ask_ai' },
-        { text: 'Ребаланс', callback_data: 'action_rebalance' },
-        { text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }
-    ]);
-
-    baseText += '\nVoid Node — твой телохранитель в крипте\n';
-    baseText += '\nЭто не финансовая рекомендация.';
-
-    return { text: baseText, keyboard: keyboard };
-}
-
-async function runAutotrade() {
-    var keys = await VOID_KV.list('autotrade_');
-    for (var k = 0; k < keys.keys.length; k++) {
-        var key = keys.keys[k];
-        var chatId = parseInt(key.name.replace('autotrade_', ''));
-        var data = await getData(key.name);
-        if (!data) continue;
-        var config = typeof data === 'string' ? JSON.parse(data) : data;
-        if (!config.active) continue;
-
-        var mode = await getData('mode_' + chatId) || 'beginner';
-        var thresholds = getRiskThresholds(mode);
-
-        var keysUser = await loadUserKeys(chatId);
-        if (!keysUser) continue;
-
-        try {
-            var exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
-            var balance = await exchange.fetchBalance();
-            var total = balance.total;
-            var coins = Object.keys(total).filter(function(c) { return c !== 'USDT' && total[c] > 0; });
-
-            if (config.level === 4) {
-                console.log('Запуск "Снежного кома" для ' + chatId);
-                await runSnowballStrategy(chatId);
-                continue;
-            }
-
-            if (config.level === 1) {
-                for (var i = 0; i < coins.length; i++) {
-                    var coin = coins[i];
-                    try {
-                        var ticker = await exchange.fetchTicker(coin + '/USDT');
-                        if (!ticker) continue;
-                        var price = ticker.last;
-                        var stopLoss = thresholds.stopLoss;
-                        var stop5 = price * (1 - stopLoss / 100);
-                        var stop10 = price * 0.90;
-                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin], stop5, { stopPrice: stop5 });
-                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin] * 0.5, stop10, { stopPrice: stop10 });
-                    } catch (e) {}
-                }
-            } else if (config.level === 2) {
-                for (var i = 0; i < coins.length; i++) {
-                    var coin = coins[i];
-                    try {
-                        var ticker = await exchange.fetchTicker(coin + '/USDT');
-                        if (!ticker) continue;
-                        var change = ticker.percentage || 0;
-                        var volume = ticker.quoteVolume || 0;
-                        if (volume < 50000 && change < 0) {
-                            await exchange.createMarketSellOrder(coin + '/USDT', total[coin]);
-                        } else if (change > 5) {
-                            var amount = (0.01 * balance.total.USDT) / ticker.last;
-                            if (amount > 0.001) await exchange.createMarketBuyOrder(coin + '/USDT', amount);
-                        }
-                    } catch (e) {}
-                }
-            } else if (config.level === 3) {
-                var settingsKey = 'autotrade_settings_' + chatId;
-                var settings = await getData(settingsKey);
-                settings = settings ? (typeof settings === 'string' ? JSON.parse(settings) : settings) : {};
-                for (var i = 0; i < coins.length; i++) {
-                    var coin = coins[i];
-                    try {
-                        var ticker = await exchange.fetchTicker(coin + '/USDT');
-                        if (!ticker) continue;
-                        var price = ticker.last;
-                        var symbol = coin + '/USDT';
-                        if (!settings[symbol]) settings[symbol] = { stop: price * 0.95, entry: price };
-                        if (price > settings[symbol].entry * 1.05) {
-                            var newStop = price * 0.95;
-                            await exchange.cancelAllOrders(symbol);
-                            await exchange.createOrder(symbol, 'stop_loss_limit', 'sell', total[coin], newStop, { stopPrice: newStop });
-                            settings[symbol].stop = newStop;
-                        }
-                        if (price > settings[symbol].entry * 1.2) {
-                            var profitAmount = total[coin] * 0.3;
-                            await exchange.createMarketSellOrder(symbol, profitAmount);
-                            settings[symbol].entry = price;
-                        }
-                    } catch (e) {}
-                }
-                await setData(settingsKey, JSON.stringify(settings));
-            }
-        } catch (error) {
-            console.error('Autotrade error for ' + chatId + ':', error);
-        }
-    }
-}
-
-async function autoRebalance(chatId) {
-    var savedData = await getData('user_' + chatId);
-    if (!savedData) {
-        return { error: 'Нет ключей биржи' };
-    }
-    var user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
-    var apiKey = decrypt(user.apiKey);
-    var secretKey = decrypt(user.secretKey);
-    var mode = await getData('mode_' + chatId) || 'beginner';
-    var ideal = getIdealPortfolio(mode);
-    var thresholds = getRiskThresholds(mode);
-
-    try {
-        var exchange = await connectExchange(apiKey, secretKey, user.exchangeId);
-        var balance = await exchange.fetchBalance();
-        var total = balance.total;
-        var coins = Object.keys(total).filter(function(key) { return total[key] > 0; });
-        var totalUSDT = 0;
-        var assets = [];
-        for (var i = 0; i < coins.length; i++) {
-            var coin = coins[i];
-            if (coin === 'USDT') {
-                totalUSDT += total[coin];
-                continue;
-            }
-            try {
-                var ticker = await exchange.fetchTicker(coin + '/USDT');
-                var value = total[coin] * ticker.last;
-                totalUSDT += value;
-                assets.push({ symbol: coin, value: value });
-            } catch (e) {}
-        }
-        for (var a = 0; a < assets.length; a++) {
-            assets[a].weight = (assets[a].value / totalUSDT) * 100;
-        }
-        var btcWeight = assets.find(function(a) { return a.symbol === 'BTC'; })?.weight || 0;
-        var altWeight = assets.filter(function(a) { return a.symbol !== 'BTC' && a.symbol !== 'USDT'; }).reduce(function(sum, a) { return sum + a.weight; }, 0);
-
-        var trades = [];
-        var message = '';
-
-        if (btcWeight > ideal.btc + 5) {
-            var excess = (btcWeight - ideal.btc) / 100 * totalUSDT;
-            var btcPrice = assets.find(function(a) { return a.symbol === 'BTC'; })?.value / (total[balance.total.BTC] || 1) || 0;
-            var amount = excess / btcPrice;
-            if (amount > 0.001) {
-                await exchange.createMarketSellOrder('BTC/USDT', amount);
-                trades.push('Продано ' + amount.toFixed(4) + ' BTC (' + excess.toFixed(2) + ' USDT)');
-            }
-        } else if (btcWeight < ideal.btc - 5) {
-            var needed = (ideal.btc - btcWeight) / 100 * totalUSDT;
-            var btcPrice = assets.find(function(a) { return a.symbol === 'BTC'; })?.value / (total[balance.total.BTC] || 1) || 0;
-            var amount = needed / btcPrice;
-            if (amount > 0.001 && balance.total.USDT > needed) {
-                await exchange.createMarketBuyOrder('BTC/USDT', amount);
-                trades.push('Куплено ' + amount.toFixed(4) + ' BTC (' + needed.toFixed(2) + ' USDT)');
-            }
-        }
-
-        if (altWeight > thresholds.maxAltExposure) {
-            var excess = (altWeight - thresholds.maxAltExposure) / 100 * totalUSDT;
-            for (var j = 0; j < assets.length; j++) {
-                var asset = assets[j];
-                if (asset.symbol === 'BTC' || asset.symbol === 'USDT') continue;
-                var sellAmount = (asset.value / altWeight) * excess / (asset.value / (total[asset.symbol] || 1));
-                if (sellAmount > 0.001) {
-                    await exchange.createMarketSellOrder(asset.symbol + '/USDT', sellAmount);
-                    trades.push('Продано ' + sellAmount.toFixed(4) + ' ' + asset.symbol + ' (' + (sellAmount * asset.value / (total[asset.symbol] || 1)).toFixed(2) + ' USDT)');
-                }
-            }
-        }
-
-        if (trades.length === 0) {
-            return { error: false, message: 'Портфель уже сбалансирован. Никаких действий не требуется.' };
-        }
-
-        message = 'Выполнено действий: ' + trades.length + '\n\n' +
-                  trades.slice(0, 5).join('\n') +
-                  (trades.length > 5 ? '\n... и еще ' + (trades.length - 5) + ' действий' : '');
-
-        await addHistory(chatId, 'Ребаланс портфеля', trades.length + ' действий');
-        return { error: false, message: message };
-
-    } catch (error) {
-        console.error('Rebalance error:', error);
-        return { error: 'Ошибка ребаланса: ' + error.message };
-    }
-}
 class NewsManager {
     constructor() {
         this.updateInterval = 15 * 60 * 1000;
@@ -3255,7 +2678,6 @@ class NewsManager {
         var cacheKey = 'news_cache_' + chatId;
         var now = Date.now();
         var lastUpdate = this.lastUpdate.get(chatId) || 0;
-
         if (!forceUpdate && now - lastUpdate < this.updateInterval) {
             var cached = await getData(cacheKey);
             if (cached) {
@@ -3275,14 +2697,12 @@ class NewsManager {
                 } catch (e) {}
             }
         }
-
         if (this.isUpdating.get(chatId)) {
             return {
                 error: true,
                 message: 'Новости обновляются, подождите...'
             };
         }
-
         this.isUpdating.set(chatId, true);
         try {
             var result = await this._fetchAndCacheNews(chatId, lang);
@@ -3304,13 +2724,11 @@ class NewsManager {
     async backgroundUpdate() {
         var keys = await VOID_KV.list('news_cache_');
         var now = Date.now();
-
         for (var k = 0; k < keys.keys.length; k++) {
             var key = keys.keys[k];
             var chatId = parseInt(key.name.replace('news_cache_', ''));
             var data = await getData(key.name);
             if (!data) continue;
-
             try {
                 var parsed = typeof data === 'string' ? JSON.parse(data) : data;
                 if (now - parsed.timestamp > this.updateInterval) {
@@ -3332,7 +2750,6 @@ class NewsManager {
         if (silent === undefined) silent = false;
         var isRu = lang === 'ru';
         var analysisData = await getData('analysis_' + chatId);
-
         var assets = [];
         if (analysisData) {
             try {
@@ -3342,16 +2759,13 @@ class NewsManager {
                 console.error('Analysis parse error:', e);
             }
         }
-
         if (assets.length === 0) {
             var defaultAssets = ['BTC', 'ETH', 'SOL', 'BNB', 'ADA'];
             assets = defaultAssets.map(function(symbol) { return { symbol: symbol, weight: 20 }; });
         }
-
         var topAssets = assets.slice(0, 5);
         var allArticles = [];
         var seenUrls = new Set();
-
         var newsPromises = topAssets.map(async function(asset) {
             try {
                 var query = asset.symbol;
@@ -3380,7 +2794,6 @@ class NewsManager {
                 return [];
             }
         });
-
         var allArticlesArrays = await Promise.all(newsPromises);
         for (var i = 0; i < allArticlesArrays.length; i++) {
             var articles = allArticlesArrays[i];
@@ -3402,13 +2815,11 @@ class NewsManager {
                 }
             }
         }
-
         allArticles.sort(function(a, b) {
             var relevanceDiff = (b.relevance || 0) - (a.relevance || 0);
             if (Math.abs(relevanceDiff) > 0.01) return relevanceDiff;
             return new Date(b.publishedAt) - new Date(a.publishedAt);
         });
-
         var topArticles = allArticles.slice(0, 7);
         var result = {
             articles: topArticles,
@@ -3417,7 +2828,6 @@ class NewsManager {
             count: topArticles.length,
             totalAssets: topAssets.length
         };
-
         await setData('news_cache_' + chatId, JSON.stringify(result), 900);
         return result;
     }
@@ -3435,234 +2845,33 @@ class NewsManager {
 
 var newsManager = new NewsManager();
 
-class NewsManager {
-    constructor() {
-        this.updateInterval = 15 * 60 * 1000;
-        this.lastUpdate = new Map();
-        this.isUpdating = new Map();
-    }
-
-    async getPersonalizedNews(chatId, lang, forceUpdate) {
-        if (forceUpdate === undefined) forceUpdate = false;
-        var cacheKey = 'news_cache_' + chatId;
-        var now = Date.now();
-        var lastUpdate = this.lastUpdate.get(chatId) || 0;
-
-        if (!forceUpdate && now - lastUpdate < this.updateInterval) {
-            var cached = await getData(cacheKey);
-            if (cached) {
-                try {
-                    var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
-                    if (now - parsed.timestamp < this.updateInterval + 5 * 60 * 1000) {
-                        return {
-                            articles: parsed.articles,
-                            assets: parsed.assets,
-                            timestamp: parsed.timestamp,
-                            count: parsed.count,
-                            totalAssets: parsed.totalAssets,
-                            fromCache: true,
-                            age: Math.round((now - parsed.timestamp) / 60000)
-                        };
-                    }
-                } catch (e) {}
-            }
-        }
-
-        if (this.isUpdating.get(chatId)) {
-            return {
-                error: true,
-                message: 'Новости обновляются, подождите...'
-            };
-        }
-
-        this.isUpdating.set(chatId, true);
-        try {
-            var result = await this._fetchAndCacheNews(chatId, lang);
-            this.lastUpdate.set(chatId, now);
-            return {
-                articles: result.articles,
-                assets: result.assets,
-                timestamp: result.timestamp,
-                count: result.count,
-                totalAssets: result.totalAssets,
-                fromCache: false,
-                age: 0
-            };
-        } finally {
-            this.isUpdating.set(chatId, false);
-        }
-    }
-
-    async backgroundUpdate() {
-        var keys = await VOID_KV.list('news_cache_');
-        var now = Date.now();
-
-        for (var k = 0; k < keys.keys.length; k++) {
-            var key = keys.keys[k];
-            var chatId = parseInt(key.name.replace('news_cache_', ''));
-            var data = await getData(key.name);
-            if (!data) continue;
-
-            try {
-                var parsed = typeof data === 'string' ? JSON.parse(data) : data;
-                if (now - parsed.timestamp > this.updateInterval) {
-                    var lang = await getData('lang_' + chatId) || 'ru';
-                    await this._fetchAndCacheNews(chatId, lang, true);
-                    console.log('Новости обновлены для ' + chatId);
-                }
-            } catch (e) {}
-        }
-    }
-
-    async refreshNews(chatId, lang) {
-        var result = await this._fetchAndCacheNews(chatId, lang, false);
-        this.lastUpdate.set(chatId, Date.now());
-        return result;
-    }
-
-    async _fetchAndCacheNews(chatId, lang, silent) {
-        if (silent === undefined) silent = false;
-        var isRu = lang === 'ru';
-        var analysisData = await getData('analysis_' + chatId);
-
-        var assets = [];
-        if (analysisData) {
-            try {
-                var analysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
-                assets = analysis.assets || [];
-            } catch (e) {
-                console.error('Analysis parse error:', e);
-            }
-        }
-
-        if (assets.length === 0) {
-            var defaultAssets = ['BTC', 'ETH', 'SOL', 'BNB', 'ADA'];
-            assets = defaultAssets.map(function(symbol) { return { symbol: symbol, weight: 20 }; });
-        }
-
-        var topAssets = assets.slice(0, 5);
-        var allArticles = [];
-        var seenUrls = new Set();
-
-        var newsPromises = topAssets.map(async function(asset) {
-            try {
-                var query = asset.symbol;
-                var cacheKey = 'news_asset_' + query + '_' + (isRu ? 'ru' : 'en');
-                var cached = await getData(cacheKey);
-                if (cached) {
-                    var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
-                    if (Date.now() - parsed.timestamp < 300000) {
-                        return parsed.articles;
-                    }
-                }
-                var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=3&apiKey=' + NEWS_API_KEY;
-                var response = await fetchWithRetry(url);
-                var data = await response.json();
-                var articles = [];
-                if (data.status === 'ok' && data.articles) {
-                    articles = data.articles;
-                    await setData(cacheKey, JSON.stringify({
-                        articles: articles,
-                        timestamp: Date.now()
-                    }), 300);
-                }
-                return articles;
-            } catch (error) {
-                console.error('News error for ' + asset.symbol + ':', error);
-                return [];
-            }
-        });
-
-        var allArticlesArrays = await Promise.all(newsPromises);
-        for (var i = 0; i < allArticlesArrays.length; i++) {
-            var articles = allArticlesArrays[i];
-            var asset = topAssets[i];
-            for (var j = 0; j < articles.length; j++) {
-                var article = articles[j];
-                if (article.url && !seenUrls.has(article.url)) {
-                    seenUrls.add(article.url);
-                    allArticles.push({
-                        title: article.title,
-                        description: article.description,
-                        url: article.url,
-                        source: article.source,
-                        publishedAt: article.publishedAt,
-                        asset: asset.symbol,
-                        weight: asset.weight || 0,
-                        relevance: (asset.weight || 0) / 100
-                    });
-                }
-            }
-        }
-
-        allArticles.sort(function(a, b) {
-            var relevanceDiff = (b.relevance || 0) - (a.relevance || 0);
-            if (Math.abs(relevanceDiff) > 0.01) return relevanceDiff;
-            return new Date(b.publishedAt) - new Date(a.publishedAt);
-        });
-
-        var topArticles = allArticles.slice(0, 7);
-        var result = {
-            articles: topArticles,
-            assets: topAssets,
-            timestamp: Date.now(),
-            count: topArticles.length,
-            totalAssets: topAssets.length
-        };
-
-        await setData('news_cache_' + chatId, JSON.stringify(result), 900);
-        return result;
-    }
-
-    getStats(chatId) {
-        var lastUpdate = this.lastUpdate.get(chatId);
-        var isUpdating = this.isUpdating.get(chatId) || false;
-        return {
-            lastUpdate: lastUpdate || 0,
-            isUpdating: isUpdating,
-            age: lastUpdate ? Math.round((Date.now() - lastUpdate) / 60000) : null
-        };
-    }
-}
-
 async function handleNewsCommand(chatId, coin, lang, messageId) {
     var check = await checkLimit(chatId, 'news');
     if (!check.allowed) {
         await sendUpdatedMessage(chatId, check.reason, null, 'Markdown', messageId);
         return;
     }
-
     await sendTyping(chatId);
-
     if (coin && coin.trim().length > 0) {
         await handleNewsSingleCoin(chatId, coin, lang, messageId);
         return;
     }
-
     var result = await newsManager.getPersonalizedNews(chatId, lang);
-
     if (result.error) {
         await sendUpdatedMessage(chatId, result.message, null, 'Markdown', messageId);
         return;
     }
-
     var isRu = lang === 'ru';
-    var report = isRu ?
-        'НОВОСТИ ДЛЯ ТВОЕГО ПОРТФЕЛЯ\n' :
-        'NEWS FOR YOUR PORTFOLIO\n';
-
+    var report = isRu ? 'НОВОСТИ ДЛЯ ТВОЕГО ПОРТФЕЛЯ\n' : 'NEWS FOR YOUR PORTFOLIO\n';
     if (result.fromCache) {
         report += 'Обновлено ' + result.age + ' мин. назад\n';
     } else {
         report += 'Только что обновлено\n';
     }
-
     report += 'По твоим активам: ' + result.assets.map(function(a) { return a.symbol; }).join(', ') + '\n\n';
-
     if (result.articles.length === 0) {
         report += 'Новостей не найдено\n';
         report += 'Попробуй обновить через 5-10 минут';
-
         var keyboard = {
             inline_keyboard: [
                 [{ text: 'Обновить', callback_data: 'menu_news' }],
@@ -3673,7 +2882,6 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
         return;
     }
-
     for (var i = 0; i < result.articles.slice(0, 7).length; i++) {
         var article = result.articles.slice(0, 7)[i];
         var title = article.title?.length > 80 ? article.title.slice(0, 77) + '...' : article.title || 'Новость';
@@ -3681,7 +2889,6 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         var date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString(isRu ? 'ru-RU' : 'en-US') : '';
         var description = article.description?.length > 120 ? article.description.slice(0, 117) + '...' : article.description || '';
         var assetTag = article.asset ? ' ' + article.asset : '';
-
         report += title + assetTag + '\n';
         report += '   ' + source;
         if (date) report += ' | ' + date;
@@ -3691,10 +2898,8 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         }
         report += '   ' + (isRu ? 'Читать полностью' : 'Read more') + ': ' + article.url + '\n\n';
     }
-
     report += '\nНайдено: ' + result.articles.length + ' новостей\n';
     report += '/news — ' + (isRu ? 'обновить' : 'refresh');
-
     var keyboard = {
         inline_keyboard: [
             [{ text: 'Обновить', callback_data: 'menu_news' }],
@@ -4261,13 +3466,404 @@ async function autoCheckContract(chatId, address, lang, messageId) {
     await addHistory(chatId, getText(lang, 'history_antiscam'), 'Контракт: ' + address.slice(0, 10) + '...');
 }
 
+class VipReminderService {
+    constructor() {
+        this.checkInterval = 60 * 60 * 1000;
+    }
+
+    async checkAllUsers() {
+        var keys = await VOID_KV.list('plan_');
+        var now = Date.now();
+
+        for (var k = 0; k < keys.keys.length; k++) {
+            var key = keys.keys[k];
+            var chatId = parseInt(key.name.replace('plan_', ''));
+            var data = await getData(key.name);
+            if (!data) continue;
+
+            var plan;
+            try {
+                plan = typeof data === 'string' ? JSON.parse(data) : data;
+            } catch (e) {
+                continue;
+            }
+            if (plan.planId !== 'VIP' || !plan.vipTrial) continue;
+            if (plan.expires < now) continue;
+
+            var timeLeft = plan.expires - now;
+            var lang = await getData('lang_' + chatId) || 'ru';
+            var isRu = lang === 'ru';
+            var notifiedKey = 'vip_notified_' + chatId;
+            var alreadyNotified = await getData(notifiedKey);
+
+            if (timeLeft <= 24 * 60 * 60 * 1000 && timeLeft > 23 * 60 * 60 * 1000 && !alreadyNotified) {
+                var expiresDate = formatDateShort(plan.expires);
+                var message = isRu
+                    ? 'Привет! Твой VIP-доступ заканчивается завтра (' + expiresDate + ').\n\nТы уже видел, как холодный душ спасает портфель.\nТы знаешь, как автоторговля приносит прибыль.\n\nЯ не хочу, чтобы ты терял эти возможности.\nПродли доступ сейчас — и оставайся под защитой.\n\n/subscribe — выбери свой тариф'
+                    : 'Hey! Your VIP access expires tomorrow (' + expiresDate + ').\n\nYou\'ve already seen how panic mode saves your portfolio.\nYou know how autotrading brings profit.\n\nI don\'t want you to lose these opportunities.\nRenew now — and stay protected.\n\n/subscribe — choose your plan';
+                var keyboard = {
+                    inline_keyboard: [
+                        [{ text: isRu ? 'Выбрать тариф' : 'Choose plan', callback_data: 'menu_plans' }],
+                        [{ text: isRu ? 'Анализ портфеля' : 'Portfolio analysis', callback_data: 'action_analyze' }]
+                    ]
+                };
+                await sendMessage(chatId, message, keyboard);
+                await setData(notifiedKey, 'true', 86400);
+                await addHistory(chatId, 'VIP-напоминание', 'До окончания: 24 часа');
+            }
+        }
+    }
+}
+
+var vipReminder = new VipReminderService();
+
+async function loadUserKeys(chatId) {
+    var key = 'user_' + chatId;
+    var data = await getData(key);
+    if (!data) return null;
+    try {
+        var parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        var decryptedApiKey = decrypt(parsed.apiKey);
+        var decryptedSecretKey = decrypt(parsed.secretKey);
+        return {
+            apiKey: decryptedApiKey,
+            secretKey: decryptedSecretKey,
+            exchangeId: parsed.exchangeId,
+            connectedAt: parsed.connectedAt
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+async function executeRecommendation(chatId, recId) {
+    var analysisData = await getData('analysis_' + chatId);
+    if (!analysisData) return { error: 'Нет данных анализа' };
+    var analysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
+    var rec = analysis.recommendations.find(function(r) { return r.id === recId; });
+    if (!rec) return { error: 'Рекомендация не найдена' };
+    var userPlan = await getUserPlan(chatId);
+    if (!userPlan.limits.autotrade || userPlan.limits.autotrade === false) {
+        return { error: 'Автоторговля недоступна на вашем тарифе' };
+    }
+    var orderLimitKey = 'orders_' + chatId + '_' + new Date().toISOString().split('T')[0];
+    var ordersToday = parseInt(await getData(orderLimitKey) || '0');
+    if (ordersToday >= CONFIG.MAX_ORDERS_PER_DAY) {
+        return { error: 'Достигнут лимит ордеров на сегодня (' + CONFIG.MAX_ORDERS_PER_DAY + ')' };
+    }
+    var keys = await loadUserKeys(chatId);
+    if (!keys) return { error: 'Нет API-ключей' };
+    try {
+        var exchange = await connectExchange(keys.exchangeId, keys.apiKey, keys.secretKey);
+        var balance = await exchange.fetchBalance();
+        var free = balance.free[rec.asset] || 0;
+        if (rec.action === 'sell' && free < rec.amount) {
+            return { error: 'Недостаточно ' + rec.asset + ' на балансе (доступно: ' + free + ', нужно: ' + rec.amount + ')' };
+        }
+        if (rec.action === 'buy') {
+            var freeUSDT = balance.free['USDT'] || 0;
+            var ticker = await exchange.fetchTicker(rec.symbol || rec.asset + '/USDT');
+            var price = ticker ? ticker.last : 0;
+            var needed = rec.amount * price;
+            if (freeUSDT < needed) {
+                return { error: 'Недостаточно USDT для покупки (доступно: ' + freeUSDT + ', нужно: ' + needed + ')' };
+            }
+        }
+        var order;
+        if (rec.action === 'sell') {
+            order = await exchange.createMarketSellOrder(rec.symbol, rec.amount);
+        } else if (rec.action === 'buy') {
+            order = await exchange.createMarketBuyOrder(rec.symbol, rec.amount);
+        } else {
+            return { error: 'Неизвестное действие: ' + rec.action };
+        }
+        await new Promise(function(r) { setTimeout(r, 3000); });
+        var orderStatus = await exchange.fetchOrder(order.id);
+        if (orderStatus.status !== 'closed') {
+            return { error: 'Ордер не исполнился. Текущий статус: ' + orderStatus.status };
+        }
+        await setData(orderLimitKey, (ordersToday + 1).toString(), 86400);
+        return { success: true, order: orderStatus };
+    } catch (error) {
+        console.error('Order execution error:', error);
+        return { error: 'Ошибка исполнения: ' + error.message };
+    }
+}
+
+async function composeReport(engineResult, mode, lang, dailyChange) {
+    if (dailyChange === undefined) dailyChange = 0;
+    var totalUSDT = engineResult.totalUSDT;
+    var btcPercent = engineResult.btcPercent;
+    var altPercent = engineResult.altPercent;
+    var usdtPercent = engineResult.usdtPercent;
+    var riskLevel = engineResult.riskLevel;
+    var issues = engineResult.issues || [];
+    var recommendations = engineResult.recommendations || [];
+    var signals = engineResult.signals || [];
+    var btcMetrics = engineResult.btcMetrics;
+    var riskScore = engineResult.riskScore;
+    var assets = engineResult.assets || [];
+    var thresholds = engineResult.thresholds;
+    var baseText = 'АНАЛИЗ ПОРТФЕЛЯ\n';
+    baseText += '\n';
+    baseText += 'Общая стоимость: $' + (totalUSDT?.toFixed(2) || 0) + ' USDT\n';
+    if (dailyChange !== 0) {
+        baseText += ' Изменение (24ч): ' + (dailyChange > 0 ? '+' : '') + dailyChange.toFixed(2) + '%\n';
+    }
+    baseText += '\n\n';
+    var modeLabel = mode === 'beginner' ? 'Новичок' : 'Опытный';
+    baseText += 'Режим: ' + modeLabel + '\n';
+    if (thresholds) {
+        baseText += 'Риск-профиль:\n';
+        baseText += 'Стоп-лосс: ' + thresholds.stopLoss + '%\n';
+        baseText += 'Тейк-профит: ' + thresholds.takeProfit + '%\n';
+        baseText += 'Макс. позиция: ' + thresholds.maxPosition + '%\n';
+        baseText += 'Макс. доля альтов: ' + thresholds.maxAltExposure + '%\n\n';
+    }
+    baseText += 'РАСПРЕДЕЛЕНИЕ АКТИВОВ\n';
+    baseText += 'BTC:      ' + createProgressBarUI(btcPercent) + ' ' + (btcPercent?.toFixed(1) || 0) + '%\n';
+    baseText += 'Альты:    ' + createProgressBarUI(altPercent) + ' ' + (altPercent?.toFixed(1) || 0) + '%\n';
+    baseText += 'Стейблы:  ' + createProgressBarUI(usdtPercent) + ' ' + (usdtPercent?.toFixed(1) || 0) + '%\n\n';
+    var ideal = getIdealPortfolio(mode);
+    baseText += 'Целевые веса (' + ideal.label + '):\n';
+    baseText += 'BTC:  ' + ideal.btc + '%  (ваш: ' + (btcPercent?.toFixed(1) || 0) + '%)\n';
+    baseText += 'Альты: ' + ideal.alt + '%  (ваш: ' + (altPercent?.toFixed(1) || 0) + '%)\n';
+    baseText += 'Стейблы: ' + ideal.stable + '%  (ваш: ' + (usdtPercent?.toFixed(1) || 0) + '%)\n\n';
+    var riskLabel = riskLevel === 'high' ? getText(lang, 'risk_high') : (riskLevel === 'medium' ? getText(lang, 'risk_medium') : getText(lang, 'risk_low'));
+    baseText += ' Риск: ' + riskLabel + ' (' + (riskScore || 0) + ' баллов)\n\n';
+    if (btcMetrics) {
+        baseText += 'ФИНАНСОВЫЕ МЕТРИКИ BTC\n';
+        if (btcMetrics.sharpe !== undefined) {
+            baseText += ' Коэф. Шарпа: ' + btcMetrics.sharpe.toFixed(2) + '\n';
+        }
+        if (btcMetrics.sortino !== undefined) {
+            baseText += ' Коэф. Сортино: ' + btcMetrics.sortino.toFixed(2) + '\n';
+        }
+        if (btcMetrics.var !== undefined) {
+            baseText += ' VaR (95%): ' + btcMetrics.var.toFixed(2) + '%\n';
+        }
+        baseText += '\n';
+    }
+    if (signals && signals.length > 0) {
+        baseText += 'СИГНАЛЫ\n';
+        for (var i = 0; i < signals.length; i++) {
+            var s = signals[i];
+            baseText += ' ' + s.text + '\n';
+        }
+        baseText += '\n';
+    }
+    if (issues && issues.length > 0) {
+        baseText += 'ПРОБЛЕМЫ\n';
+        for (var j = 0; j < issues.length; j++) {
+            var issue = issues[j];
+            baseText += ' ' + issue.text + '\n';
+        }
+        baseText += '\n';
+    }
+    var keyboard = { inline_keyboard: [] };
+    if (recommendations && recommendations.length > 0) {
+        baseText += 'РЕКОМЕНДАЦИИ\n';
+        for (var r = 0; r < recommendations.slice(0, 5).length; r++) {
+            var rec = recommendations.slice(0, 5)[r];
+            var confidence = rec.action === 'sell' ? (rec.rsi_signal === 'overbought' ? 70 : 55) : (rec.rsi_signal === 'oversold' ? 70 : 55);
+            baseText += '• ' + rec.reason + '\n';
+            baseText += '   Уверенность: ' + confidence + '%\n';
+            if (rec.action === 'sell' || rec.action === 'buy') {
+                var actionText = rec.action === 'sell' ? 'Продать' : 'Купить';
+                keyboard.inline_keyboard.push([
+                    { text: actionText + ' ' + rec.asset, callback_data: 'exec_' + rec.id }
+                ]);
+            }
+        }
+        baseText += '\n';
+    }
+    keyboard.inline_keyboard.push([
+        { text: 'Полный отчет', callback_data: 'action_full_report' },
+        { text: 'CSV отчет', callback_data: 'action_export_csv' }
+    ]);
+    keyboard.inline_keyboard.push([
+        { text: 'AI-советник', callback_data: 'action_ask_ai' },
+        { text: 'Ребаланс', callback_data: 'action_rebalance' },
+        { text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }
+    ]);
+    baseText += '\nVoid Node — твой телохранитель в крипте\n';
+    baseText += '\nЭто не финансовая рекомендация.';
+    return { text: baseText, keyboard: keyboard };
+}
+
+async function runAutotrade() {
+    var keys = await VOID_KV.list('autotrade_');
+    for (var k = 0; k < keys.keys.length; k++) {
+        var key = keys.keys[k];
+        var chatId = parseInt(key.name.replace('autotrade_', ''));
+        var data = await getData(key.name);
+        if (!data) continue;
+        var config = typeof data === 'string' ? JSON.parse(data) : data;
+        if (!config.active) continue;
+        var mode = await getData('mode_' + chatId) || 'beginner';
+        var thresholds = getRiskThresholds(mode);
+        var keysUser = await loadUserKeys(chatId);
+        if (!keysUser) continue;
+        try {
+            var exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
+            var balance = await exchange.fetchBalance();
+            var total = balance.total;
+            var coins = Object.keys(total).filter(function(c) { return c !== 'USDT' && total[c] > 0; });
+            if (config.level === 4) {
+                console.log('Запуск "Снежного кома" для ' + chatId);
+                await runSnowballStrategy(chatId);
+                continue;
+            }
+            if (config.level === 1) {
+                for (var i = 0; i < coins.length; i++) {
+                    var coin = coins[i];
+                    try {
+                        var ticker = await exchange.fetchTicker(coin + '/USDT');
+                        if (!ticker) continue;
+                        var price = ticker.last;
+                        var stopLoss = thresholds.stopLoss;
+                        var stop5 = price * (1 - stopLoss / 100);
+                        var stop10 = price * 0.90;
+                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin], stop5, { stopPrice: stop5 });
+                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin] * 0.5, stop10, { stopPrice: stop10 });
+                    } catch (e) {}
+                }
+            } else if (config.level === 2) {
+                for (var i = 0; i < coins.length; i++) {
+                    var coin = coins[i];
+                    try {
+                        var ticker = await exchange.fetchTicker(coin + '/USDT');
+                        if (!ticker) continue;
+                        var change = ticker.percentage || 0;
+                        var volume = ticker.quoteVolume || 0;
+                        if (volume < 50000 && change < 0) {
+                            await exchange.createMarketSellOrder(coin + '/USDT', total[coin]);
+                        } else if (change > 5) {
+                            var amount = (0.01 * balance.total.USDT) / ticker.last;
+                            if (amount > 0.001) await exchange.createMarketBuyOrder(coin + '/USDT', amount);
+                        }
+                    } catch (e) {}
+                }
+            } else if (config.level === 3) {
+                var settingsKey = 'autotrade_settings_' + chatId;
+                var settings = await getData(settingsKey);
+                settings = settings ? (typeof settings === 'string' ? JSON.parse(settings) : settings) : {};
+                for (var i = 0; i < coins.length; i++) {
+                    var coin = coins[i];
+                    try {
+                        var ticker = await exchange.fetchTicker(coin + '/USDT');
+                        if (!ticker) continue;
+                        var price = ticker.last;
+                        var symbol = coin + '/USDT';
+                        if (!settings[symbol]) settings[symbol] = { stop: price * 0.95, entry: price };
+                        if (price > settings[symbol].entry * 1.05) {
+                            var newStop = price * 0.95;
+                            await exchange.cancelAllOrders(symbol);
+                            await exchange.createOrder(symbol, 'stop_loss_limit', 'sell', total[coin], newStop, { stopPrice: newStop });
+                            settings[symbol].stop = newStop;
+                        }
+                        if (price > settings[symbol].entry * 1.2) {
+                            var profitAmount = total[coin] * 0.3;
+                            await exchange.createMarketSellOrder(symbol, profitAmount);
+                            settings[symbol].entry = price;
+                        }
+                    } catch (e) {}
+                }
+                await setData(settingsKey, JSON.stringify(settings));
+            }
+        } catch (error) {
+            console.error('Autotrade error for ' + chatId + ':', error);
+        }
+    }
+}
+
+async function autoRebalance(chatId) {
+    var savedData = await getData('user_' + chatId);
+    if (!savedData) {
+        return { error: 'Нет ключей биржи' };
+    }
+    var user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
+    var apiKey = decrypt(user.apiKey);
+    var secretKey = decrypt(user.secretKey);
+    var mode = await getData('mode_' + chatId) || 'beginner';
+    var ideal = getIdealPortfolio(mode);
+    var thresholds = getRiskThresholds(mode);
+    try {
+        var exchange = await connectExchange(apiKey, secretKey, user.exchangeId);
+        var balance = await exchange.fetchBalance();
+        var total = balance.total;
+        var coins = Object.keys(total).filter(function(key) { return total[key] > 0; });
+        var totalUSDT = 0;
+        var assets = [];
+        for (var i = 0; i < coins.length; i++) {
+            var coin = coins[i];
+            if (coin === 'USDT') {
+                totalUSDT += total[coin];
+                continue;
+            }
+            try {
+                var ticker = await exchange.fetchTicker(coin + '/USDT');
+                var value = total[coin] * ticker.last;
+                totalUSDT += value;
+                assets.push({ symbol: coin, value: value });
+            } catch (e) {}
+        }
+        for (var a = 0; a < assets.length; a++) {
+            assets[a].weight = (assets[a].value / totalUSDT) * 100;
+        }
+        var btcWeight = assets.find(function(a) { return a.symbol === 'BTC'; })?.weight || 0;
+        var altWeight = assets.filter(function(a) { return a.symbol !== 'BTC' && a.symbol !== 'USDT'; }).reduce(function(sum, a) { return sum + a.weight; }, 0);
+        var trades = [];
+        var message = '';
+        if (btcWeight > ideal.btc + 5) {
+            var excess = (btcWeight - ideal.btc) / 100 * totalUSDT;
+            var btcPrice = assets.find(function(a) { return a.symbol === 'BTC'; })?.value / (total[balance.total.BTC] || 1) || 0;
+            var amount = excess / btcPrice;
+            if (amount > 0.001) {
+                await exchange.createMarketSellOrder('BTC/USDT', amount);
+                trades.push('Продано ' + amount.toFixed(4) + ' BTC (' + excess.toFixed(2) + ' USDT)');
+            }
+        } else if (btcWeight < ideal.btc - 5) {
+            var needed = (ideal.btc - btcWeight) / 100 * totalUSDT;
+            var btcPrice = assets.find(function(a) { return a.symbol === 'BTC'; })?.value / (total[balance.total.BTC] || 1) || 0;
+            var amount = needed / btcPrice;
+            if (amount > 0.001 && balance.total.USDT > needed) {
+                await exchange.createMarketBuyOrder('BTC/USDT', amount);
+                trades.push('Куплено ' + amount.toFixed(4) + ' BTC (' + needed.toFixed(2) + ' USDT)');
+            }
+        }
+        if (altWeight > thresholds.maxAltExposure) {
+            var excess = (altWeight - thresholds.maxAltExposure) / 100 * totalUSDT;
+            for (var j = 0; j < assets.length; j++) {
+                var asset = assets[j];
+                if (asset.symbol === 'BTC' || asset.symbol === 'USDT') continue;
+                var sellAmount = (asset.value / altWeight) * excess / (asset.value / (total[asset.symbol] || 1));
+                if (sellAmount > 0.001) {
+                    await exchange.createMarketSellOrder(asset.symbol + '/USDT', sellAmount);
+                    trades.push('Продано ' + sellAmount.toFixed(4) + ' ' + asset.symbol + ' (' + (sellAmount * asset.value / (total[asset.symbol] || 1)).toFixed(2) + ' USDT)');
+                }
+            }
+        }
+        if (trades.length === 0) {
+            return { error: false, message: 'Портфель уже сбалансирован. Никаких действий не требуется.' };
+        }
+        message = 'Выполнено действий: ' + trades.length + '\n\n' +
+                  trades.slice(0, 5).join('\n') +
+                  (trades.length > 5 ? '\n... и еще ' + (trades.length - 5) + ' действий' : '');
+        await addHistory(chatId, 'Ребаланс портфеля', trades.length + ' действий');
+        return { error: false, message: message };
+    } catch (error) {
+        console.error('Rebalance error:', error);
+        return { error: 'Ошибка ребаланса: ' + error.message };
+    }
+}
+
 async function handleCallback(update) {
     var callback = update.callback_query;
     var chatId = callback.message.chat.id;
     var messageId = callback.message.message_id;
     var data = callback.data;
     var lang = await getData('lang_' + chatId) || 'ru';
-
     var buttonSpamKey = 'btn_spam_' + chatId;
     var lastButtonClick = await getData(buttonSpamKey);
     if (lastButtonClick && Date.now() - parseInt(lastButtonClick) < 500) {
@@ -4275,24 +3871,20 @@ async function handleCallback(update) {
         return;
     }
     await setData(buttonSpamKey, Date.now().toString(), 5);
-
     await deleteUserMessage(chatId, messageId);
     await answerCallback(callback.id);
-
     try {
         if (data === 'exit_to_menu') {
             await setData('state_' + chatId, 'idle');
             await showMainMenu(chatId, lang);
             return;
         }
-
         if (data === 'back_to_menu') { await showMainMenu(chatId, lang); return; }
         if (data === 'back_to_functions') { await showFunctionsMenu(chatId, lang); return; }
         if (data === 'back_to_settings') { await showSettingsMenuNew(chatId, lang); return; }
         if (data === 'back_to_plans') { await showPlansMenu(chatId, lang); return; }
         if (data === 'back_to_analyze') { await showAnalyzeMenu(chatId, lang); return; }
         if (data === 'back_to_market') { await showMarketMenu(chatId, lang); return; }
-
         if (data === 'menu_functions') { await showFunctionsMenu(chatId, lang); return; }
         if (data === 'menu_settings_new') { await showSettingsMenuNew(chatId, lang); return; }
         if (data === 'menu_plans') { await showPlansMenu(chatId, lang); return; }
@@ -4312,7 +3904,6 @@ async function handleCallback(update) {
             await setData('state_' + chatId, 'waiting_for_keys');
             return;
         }
-
         if (data === 'lang_ru' || data === 'lang_en') {
             var newLang = data === 'lang_ru' ? 'ru' : 'en';
             await setData('lang_' + chatId, newLang);
@@ -4327,7 +3918,6 @@ async function handleCallback(update) {
             await showSettingsMenuNew(chatId, lang);
             return;
         }
-
         if (data === 'onboard_lang_ru' || data === 'onboard_lang_en') {
             var newLang = data === 'onboard_lang_ru' ? 'ru' : 'en';
             await setData('lang_' + chatId, newLang);
@@ -4353,7 +3943,6 @@ async function handleCallback(update) {
             await showMainMenu(chatId, lang);
             return;
         }
-
         if (data === 'help_q1') { await sendUpdatedMessage(chatId, getText(lang, 'help_answer_q1'), null, 'Markdown'); return; }
         if (data === 'help_q2') { await sendUpdatedMessage(chatId, getText(lang, 'help_answer_q2'), null, 'Markdown'); return; }
         if (data === 'help_q3') { await sendUpdatedMessage(chatId, getText(lang, 'help_answer_q3'), null, 'Markdown'); return; }
@@ -4367,13 +3956,11 @@ async function handleCallback(update) {
             await sendUpdatedMessage(chatId, getText(lang, 'help_contact_moderator_message'), null, 'Markdown');
             return;
         }
-
         if (data.startsWith('plan_')) {
             var planId = data.replace('plan_', '');
             await handlePlanSelection(chatId, planId, lang, null);
             return;
         }
-
         if (data.startsWith('antiscam_')) {
             await setData('state_' + chatId, data);
             var prompts = {
@@ -4387,7 +3974,6 @@ async function handleCallback(update) {
             await sendUpdatedMessage(chatId, prompts[data] + '\n\nДля отмены отправь /cancel');
             return;
         }
-
         if (data.startsWith('trend_')) {
             await handleTrendClick(chatId, data, lang, null);
             return;
@@ -4406,7 +3992,6 @@ async function handleCallback(update) {
             await setData('state_' + chatId, 'waiting_for_contract_search');
             return;
         }
-
         if (data === 'alert_menu') {
             await showAlertMenu(chatId, lang);
             return;
@@ -4440,7 +4025,6 @@ async function handleCallback(update) {
             await sendUpdatedMessage(chatId, text, null, 'Markdown');
             return;
         }
-
         if (data === 'autotrade_menu') {
             await showAutotradeMenu(chatId, lang);
             return;
@@ -4467,7 +4051,7 @@ async function handleCallback(update) {
             if (result.error) {
                 await sendUpdatedMessage(chatId, 'Ошибка: ' + result.error, null, 'Markdown');
             } else {
-                await setData('autotrade_' + chatId, JSON.stringify({ 
+                await setData('autotrade_' + chatId, JSON.stringify({
                     level: 4, active: true, lastCheck: Date.now(), type: 'snowball'
                 }));
                 await sendUpdatedMessage(chatId, 'Стратегия "Снежный ком" запущена!', null, 'Markdown');
@@ -4479,7 +4063,6 @@ async function handleCallback(update) {
             await sendUpdatedMessage(chatId, getText(lang, 'autotrade_stopped'), null, 'Markdown');
             return;
         }
-
         if (data.startsWith('exec_')) {
             var recId = data.replace('exec_', '');
             var keyboard = {
@@ -4507,7 +4090,6 @@ async function handleCallback(update) {
             await showMainMenu(chatId, lang);
             return;
         }
-
         if (data === 'action_rebalance') {
             var savedData = await getData('user_' + chatId);
             if (!savedData) {
@@ -4540,7 +4122,6 @@ async function handleCallback(update) {
             await showMainMenu(chatId, lang);
             return;
         }
-
         if (data === 'action_analyze') {
             var savedData = await getData('user_' + chatId);
             if (!savedData) {
@@ -4608,7 +4189,6 @@ async function handleCallback(update) {
             }
             return;
         }
-
         if (data === 'action_export_csv') {
             var savedData = await getData('user_' + chatId);
             if (!savedData) {
@@ -4660,30 +4240,25 @@ async function handleCallback(update) {
             }
             return;
         }
-
         if (data === 'action_history_refresh') {
             await showHistoryMenu(chatId, lang);
             return;
         }
-
         if (data === 'action_disconnect') {
             await deleteData('user_' + chatId);
             await sendUpdatedMessage(chatId, getText(lang, 'connect_disconnected'), null, 'Markdown');
             await showMainMenu(chatId, lang);
             return;
         }
-
         if (data === 'action_ask_ai') {
             await sendUpdatedMessage(chatId, getText(lang, 'ai_mode'), null, 'Markdown');
             await setData('state_' + chatId, 'ai_chat');
             return;
         }
-
         if (data === 'panic_convert_all') {
             await handlePanicConvertAll(chatId);
             return;
         }
-
         if (data === 'confirm_reset_all') {
             var keys = [
                 'user_' + chatId, 'plan_' + chatId, 'history_' + chatId,
@@ -4704,7 +4279,6 @@ async function handleCallback(update) {
             await showMainMenu(chatId, lang);
             return;
         }
-
     } catch (error) {
         console.error('Callback error:', error);
         await notifyAdmin(error, { chatId: chatId, function: 'handleCallback', data: data });
@@ -4716,28 +4290,22 @@ async function handleMessage(update) {
     var chatId = update.message.chat.id;
     var text = update.message.text || '';
     var messageId = update.message.message_id;
-    var userName = update.message.from.first_name || 'Друг';
     var lang = await getData('lang_' + chatId) || 'ru';
     var state = await getData('state_' + chatId) || 'idle';
-
     try {
         if (!update.message) {
             console.warn('Невалидный webhook: отсутствует message');
             return;
         }
-
         if (update.message.forward_from) {
             return;
         }
-
         var cleanText = sanitizeInput(text);
-
         var rateCheck = await checkRateLimit(chatId, 'messages', 20, 60000);
         if (!rateCheck.allowed) {
             await sendUpdatedMessage(chatId, rateCheck.message, null, 'Markdown', messageId);
             return;
         }
-
         var spamKey = 'spam_' + chatId;
         var lastMessage = await getData(spamKey);
         if (lastMessage && Date.now() - parseInt(lastMessage) < 1000) {
@@ -4745,7 +4313,6 @@ async function handleMessage(update) {
             return;
         }
         await setData(spamKey, Date.now().toString(), 5);
-
         if (cleanText && (cleanText.includes('http://') || cleanText.includes('https://'))) {
             await autoCheckLinks(chatId, cleanText, lang, messageId);
         }
@@ -4753,7 +4320,6 @@ async function handleMessage(update) {
             await autoCheckContract(chatId, cleanText, lang, messageId);
             return;
         }
-
         if (state === 'waiting_for_keys' || state === 'waiting_for_keys_vip') {
             if (cleanText === '/cancel') {
                 await setData('state_' + chatId, 'idle');
@@ -4772,20 +4338,17 @@ async function handleMessage(update) {
                 var secretKey = parts[1].trim();
                 await sendTyping(chatId);
                 await sendUpdatedMessage(chatId, 'Проверяю ключи...', null, 'Markdown', messageId);
-
                 var attemptsCheck = await checkConnectAttempts(chatId);
                 if (attemptsCheck.blocked) {
                     await sendUpdatedMessage(chatId, attemptsCheck.reason, null, 'Markdown', messageId);
                     return;
                 }
-
                 var validation = await validateExchangeKeys(apiKey, secretKey);
                 if (!validation.valid) {
                     await recordConnectAttempt(chatId, false);
                     await sendUpdatedMessage(chatId, validation.error, null, 'Markdown', messageId);
                     return;
                 }
-
                 var encryptedApiKey = encrypt(apiKey);
                 var encryptedSecretKey = encrypt(secretKey);
                 await setData('user_' + chatId, JSON.stringify({
@@ -4794,7 +4357,6 @@ async function handleMessage(update) {
                     exchangeId: 'binance'
                 }));
                 await recordConnectAttempt(chatId, true);
-
                 if (state === 'waiting_for_keys_vip') {
                     await activateVipTrial(chatId);
                     await setData('state_' + chatId, 'idle');
@@ -4817,7 +4379,6 @@ async function handleMessage(update) {
                     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
                     return;
                 }
-
                 await setData('state_' + chatId, 'idle');
                 await sendUpdatedMessage(chatId, getText(lang, 'connect_success', 'Binance'), null, 'Markdown', messageId);
                 await showMainMenu(chatId, lang);
@@ -4826,7 +4387,6 @@ async function handleMessage(update) {
             }
             return;
         }
-
         var antiscamStates = ['antiscam_url', 'antiscam_contract', 'antiscam_dex', 'antiscam_file', 'antiscam_impersonation', 'antiscam_wallet'];
         if (antiscamStates.indexOf(state) !== -1) {
             if (cleanText === '/cancel') {
@@ -4838,7 +4398,6 @@ async function handleMessage(update) {
             await handleAntiScamInput(chatId, cleanText, lang, update, messageId);
             return;
         }
-
         if (state === 'waiting_for_trend_search') {
             if (cleanText === '/cancel') {
                 await setData('state_' + chatId, 'idle');
@@ -4849,7 +4408,6 @@ async function handleMessage(update) {
             await handleTrendSearchInput(chatId, cleanText, lang, messageId);
             return;
         }
-
         if (state === 'waiting_for_contract_search') {
             if (cleanText === '/cancel') {
                 await setData('state_' + chatId, 'idle');
@@ -4867,7 +4425,6 @@ async function handleMessage(update) {
             await setData('state_' + chatId, 'idle');
             return;
         }
-
         if (state === 'alert_price') {
             var parts = cleanText.split(' ');
             if (parts.length === 2) {
@@ -4883,12 +4440,12 @@ async function handleMessage(update) {
                         await setData('state_' + chatId, 'idle');
                         return;
                     }
-                    var alert = { 
-                        id: Date.now().toString(), 
-                        type: 'price', 
-                        params: { symbol: symbol, target: target, direction: 'above' }, 
-                        active: true, 
-                        createdAt: Date.now() 
+                    var alert = {
+                        id: Date.now().toString(),
+                        type: 'price',
+                        params: { symbol: symbol, target: target, direction: 'above' },
+                        active: true,
+                        createdAt: Date.now()
                     };
                     parsedAlerts.push(alert);
                     await setData('alerts_' + chatId, JSON.stringify(parsedAlerts));
@@ -4913,7 +4470,6 @@ async function handleMessage(update) {
             await sendUpdatedMessage(chatId, 'Неверный формат. Используйте BTC 70000 или BTC 65000 below', null, 'Markdown', messageId);
             return;
         }
-
         if (state === 'alert_change') {
             var parts = cleanText.split(' ');
             if (parts.length === 2) {
@@ -4933,7 +4489,6 @@ async function handleMessage(update) {
             await sendUpdatedMessage(chatId, 'Неверный формат. Используйте BTC 5', null, 'Markdown', messageId);
             return;
         }
-
         if (state === 'ai_chat') {
             if (cleanText === '/exit' || cleanText === 'выход' || cleanText === 'Exit') {
                 await setData('state_' + chatId, 'idle');
@@ -4953,7 +4508,6 @@ async function handleMessage(update) {
             await setData('state_' + chatId, 'ai_chat');
             return;
         }
-
         if (cleanText === '/start') {
             var onboarded = await getData('onboarded_' + chatId);
             if (!onboarded) {
@@ -4963,7 +4517,6 @@ async function handleMessage(update) {
             await showMainMenu(chatId, lang);
             return;
         }
-
         if (cleanText === '/help') { await showHelpMenu(chatId, lang); return; }
         if (cleanText === '/history') { await showHistoryMenu(chatId, lang); return; }
         if (cleanText === '/settings') { await showSettingsMenuNew(chatId, lang); return; }
@@ -4979,7 +4532,6 @@ async function handleMessage(update) {
             await showMainMenu(chatId, lang);
             return;
         }
-
         if (cleanText === '/portfolio') {
             var savedData = await getData('user_' + chatId);
             if (!savedData) {
@@ -5038,7 +4590,6 @@ async function handleMessage(update) {
             }
             return;
         }
-
         if (cleanText === '/reset') {
             var keyboard = {
                 inline_keyboard: [
@@ -5046,14 +4597,13 @@ async function handleMessage(update) {
                     [{ text: 'Отмена', callback_data: 'cancel_reset' }]
                 ]
             };
-            await sendMessage(chatId, 
+            await sendMessage(chatId,
                 'ВНИМАНИЕ!\n\nТы собираешься СБРОСИТЬ ВСЕ ДАННЫЕ:\n' +
                 'API-ключи будут удалены\nИстория будет очищена\nНастройки будут сброшены\nОповещения удалены\nАвтоторговля остановлена\n\nЭто действие НЕОБРАТИМО!',
                 keyboard
             );
             return;
         }
-
         if (cleanText === '/analyze') {
             var savedData = await getData('user_' + chatId);
             if (!savedData) {
@@ -5121,7 +4671,6 @@ async function handleMessage(update) {
             }
             return;
         }
-
         if (cleanText.startsWith('/news ')) {
             var coin = cleanText.replace('/news ', '').trim();
             await handleNewsCommand(chatId, coin, lang, messageId);
@@ -5131,20 +4680,16 @@ async function handleMessage(update) {
             await handleNewsCommand(chatId, null, lang, messageId);
             return;
         }
-
         if (cleanText.startsWith('/trend ')) {
             var coin = cleanText.replace('/trend ', '').trim().toUpperCase();
             await handleTrendClick(chatId, 'trend_' + coin, lang, messageId);
             return;
         }
-
         if (cleanText.startsWith('http://') || cleanText.startsWith('https://') || (cleanText.startsWith('0x') && cleanText.length >= 42)) {
             await handleAntiScamInput(chatId, cleanText, lang, update, messageId);
             return;
         }
-
         await sendUpdatedMessage(chatId, getText(lang, 'default_response', cleanText), null, 'Markdown', messageId);
-
     } catch (error) {
         console.error('Message error:', error);
         await notifyAdmin(error, { chatId: chatId, function: 'handleMessage', text: text });
@@ -5155,19 +4700,16 @@ async function handleMessage(update) {
 async function handleCryptoWebhook(request) {
     try {
         var update = request.body;
-
         if (!verifyCryptoBotWebhook(update, request.headers)) {
             console.warn('Недействительная подпись webhook CryptoBot');
             return { status: 401, error: 'Invalid signature' };
         }
-
         if (update.update_type === 'invoice_paid') {
             var payload = update.payload;
             var parts = payload.split('_');
             var planId = parts[1];
             var chatId = parseInt(parts[2]);
             var lang = await getData('lang_' + chatId) || 'ru';
-
             var plan = await activatePlan(chatId, planId);
             if (plan) {
                 await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
@@ -5175,7 +4717,6 @@ async function handleCryptoWebhook(request) {
                 await addHistory(chatId, 'Оплата', plan.name + ' активирован');
             }
         }
-
         return { status: 200 };
     } catch (error) {
         console.error('Webhook error:', error);
@@ -5205,17 +4746,14 @@ async function checkAlerts() {
         var alerts = await getData(key.name);
         if (!alerts) continue;
         var parsedAlerts = typeof alerts === 'string' ? JSON.parse(alerts) : alerts;
-
         var keysUser = await loadUserKeys(chatId);
         if (!keysUser) {
             console.warn('Нет ключей для ' + chatId + ', пропускаем оповещения');
             continue;
         }
-
         try {
             var exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
             var updated = false;
-
             for (var i = 0; i < parsedAlerts.length; i++) {
                 var alert = parsedAlerts[i];
                 if (!alert.active) continue;
@@ -5223,7 +4761,6 @@ async function checkAlerts() {
                     var ticker = await exchange.fetchTicker(alert.params.symbol + '/USDT');
                     if (!ticker) continue;
                     var price = ticker.last;
-
                     if (alert.type === 'price') {
                         if (alert.params.direction === 'above' && price >= alert.params.target) {
                             await sendMessage(chatId,
@@ -5261,7 +4798,6 @@ async function checkAlerts() {
                     console.error('Ошибка проверки оповещения ' + alert.id + ' для ' + chatId + ':', e.message);
                 }
             }
-
             if (updated) {
                 await setData(key.name, JSON.stringify(parsedAlerts));
             }
@@ -5279,28 +4815,23 @@ async function checkExpiringPlans() {
     var keys = await VOID_KV.list('plan_');
     var now = Date.now();
     var threeDays = 3 * 24 * 60 * 60 * 1000;
-
     for (var k = 0; k < keys.keys.length; k++) {
         var key = keys.keys[k];
         var chatId = parseInt(key.name.replace('plan_', ''));
         var data = await getData(key.name);
         if (!data) continue;
-        
         var plan;
         try {
             plan = typeof data === 'string' ? JSON.parse(data) : data;
         } catch (e) {
             continue;
         }
-
         if (plan.planId === 'TRIAL' || plan.vipTrial) continue;
         if (!plan.expires) continue;
-
         var timeLeft = plan.expires - now;
         if (timeLeft < threeDays && timeLeft > 0) {
             var lang = await getData('lang_' + chatId) || 'ru';
             var expiresDate = formatDateShort(plan.expires);
-
             var notifiedKey = 'expire_notified_' + chatId;
             var alreadyNotified = await getData(notifiedKey);
             if (!alreadyNotified) {
@@ -5338,7 +4869,6 @@ runTaskWithRecovery(checkPanic, 'checkPanic', CONFIG.PANIC_CHECK_INTERVAL);
 runTaskWithRecovery(runNewsBackgroundUpdate, 'runNewsBackgroundUpdate', 15 * 60 * 1000);
 runTaskWithRecovery(runVipReminderCheck, 'runVipReminderCheck', 60 * 60 * 1000);
 runTaskWithRecovery(checkExpiringPlans, 'checkExpiringPlans', 24 * 60 * 60 * 1000);
-
 setInterval(cleanPlanCache, 600000);
 
 var app = express();
@@ -5368,21 +4898,18 @@ app.post('/webhook', async function(req, res) {
     try {
         var update = req.body;
         console.log('Webhook received: ' + JSON.stringify(update).slice(0, 200) + '...');
-
         if (update.callback_query) {
             console.log('Обработка callback...');
             await handleCallback(update);
             res.sendStatus(200);
             return;
         }
-
         if (update.message) {
             console.log('Сообщение от ' + (update.message.from?.first_name || 'Unknown'));
             await handleMessage(update);
             res.sendStatus(200);
             return;
         }
-
         res.sendStatus(200);
     } catch (error) {
         console.error('Webhook error:', error);
