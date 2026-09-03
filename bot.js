@@ -2009,6 +2009,7 @@ function getMainMenuKeyboard(lang) {
 
 async function showMainMenu(chatId, lang) {
     try {
+        console.log('showMainMenu вызван для ' + chatId);
         var userPlan = await getUserPlan(chatId);
         var mode = await getData('mode_' + chatId) || 'beginner';
         var userName = 'Друг';
@@ -2045,10 +2046,12 @@ async function showMainMenu(chatId, lang) {
             }
         }
         var message = greeting + '\n\n' + header + vipStatus + '\n\nVoid Node — твой крипто-телохранитель\n\nГлавное меню:';
+        console.log('Отправляю меню для ' + chatId);
         await sendUpdatedMessage(chatId, message, getMainMenuKeyboard(lang));
+        console.log('Меню отправлено для ' + chatId);
     } catch (error) {
         console.error('showMainMenu error:', error);
-        await sendMessage(chatId, '⚠️ Ошибка загрузки меню. Попробуйте позже.');
+        await sendMessage(chatId, '⚠️ Ошибка загрузки меню. Попробуйте позже.\n\nЕсли ошибка повторяется, напишите /reset для сброса данных.');
     }
 }
 
@@ -3884,7 +3887,10 @@ async function handleCallback(update) {
             await showMainMenu(chatId, lang);
             return;
         }
-        if (data === 'back_to_menu') { await showMainMenu(chatId, lang); return; }
+        if (data === 'back_to_menu') {
+            await showMainMenu(chatId, lang);
+            return;
+        }
         if (data === 'back_to_functions') { await showFunctionsMenu(chatId, lang); return; }
         if (data === 'back_to_settings') { await showSettingsMenuNew(chatId, lang); return; }
         if (data === 'back_to_plans') { await showPlansMenu(chatId, lang); return; }
@@ -4514,11 +4520,15 @@ async function handleMessage(update) {
             return;
         }
         if (cleanText === '/start') {
+            console.log('Команда /start от ' + chatId);
             var onboarded = await getData('onboarded_' + chatId);
+            console.log('onboarded для ' + chatId + ' = ' + onboarded);
             if (!onboarded) {
+                console.log('Запускаем онбординг для ' + chatId);
                 await showLanguageSelectOnboarding(chatId);
                 return;
             }
+            console.log('Показываем главное меню для ' + chatId);
             await showMainMenu(chatId, lang);
             return;
         }
