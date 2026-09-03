@@ -3244,6 +3244,196 @@ async function autoRebalance(chatId) {
     }
 }
 
+class NewsManager {
+    constructor() {
+        this.updateInterval = 15 * 60 * 1000;
+        this.lastUpdate = new Map();
+        this.isUpdating = new Map();
+    }
+
+    async getPersonalizedNews(chatId, lang, forceUpdate) {
+        if (forceUpdate === undefined) forceUpdate = false;
+        var cacheKey = 'news_cache_' + chatId;
+        var now = Date.now();
+        var lastUpdate = this.lastUpdate.get(chatId) || 0;
+
+        if (!forceUpdate && now - lastUpdate < this.updateInterval) {
+            var cached = await getData(cacheKey);
+            if (cached) {
+                try {
+                    var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
+                    if (now - parsed.timestamp < this.updateInterval + 5 * 60 * 1000) {
+                        return {
+                            articles: parsed.articles,
+                            assets: parsed.assets,
+                            timestamp: parsed.timestamp,
+                            count: parsed.count,
+                            totalAssets: parsed.totalAssets,
+                            fromCache: true,
+                            age: Math.round((now - parsed.timestamp) / 60000)
+                        };
+                    }
+                } catch (e) {}
+            }
+        }
+
+        if (this.isUpdating.get(chatId)) {
+            return {
+                error: true,
+                message: 'Новости обновляются, подождите...'
+            };
+        }
+
+        this.isUpdating.set(chatId, true);
+        try {
+            var result = await this._fetchAndCacheNews(chatId, lang);
+            this.lastUpdate.set(chatId, now);
+            return {
+                articles: result.articles,
+                assets: result.assets,
+                timestamp: result.timestamp,
+                count: result.count,
+                totalAssets: result.totalAssets,
+                fromCache: false,
+                age: 0
+            };
+        } finally {
+            this.isUpdating.set(chatId, false);
+        }
+    }
+
+    async backgroundUpdate() {
+        var keys = await VOID_KV.list('news_cache_');
+        var now = Date.now();
+
+        for (var k = 0; k < keys.keys.length; k++) {
+            var key = keys.keys[k];
+            var chatId = parseInt(key.name.replace('news_cache_', ''));
+            var data = await getData(key.name);
+            if (!data) continue;
+
+            try {
+                var parsed = typeof data === 'string' ? JSON.parse(data) : data;
+                if (now - parsed.timestamp > this.updateInterval) {
+                    var lang = await getData('lang_' + chatId) || 'ru';
+                    await this._fetchAndCacheNews(chatId, lang, true);
+                    console.log('Новости обновлены для ' + chatId);
+                }
+            } catch (e) {}
+        }
+    }
+
+    async refreshNews(chatId, lang) {
+        var result = await this._fetchAndCacheNews(chatId, lang, false);
+        this.lastUpdate.set(chatId, Date.now());
+        return result;
+    }
+
+    async _fetchAndCacheNews(chatId, lang, silent) {
+        if (silent === undefined) silent = false;
+        var isRu = lang === 'ru';
+        var analysisData = await getData('analysis_' + chatId);
+
+        var assets = [];
+        if (analysisData) {
+            try {
+                var analysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
+                assets = analysis.assets || [];
+            } catch (e) {
+                console.error('Analysis parse error:', e);
+            }
+        }
+
+        if (assets.length === 0) {
+            var defaultAssets = ['BTC', 'ETH', 'SOL', 'BNB', 'ADA'];
+            assets = defaultAssets.map(function(symbol) { return { symbol: symbol, weight: 20 }; });
+        }
+
+        var topAssets = assets.slice(0, 5);
+        var allArticles = [];
+        var seenUrls = new Set();
+
+        var newsPromises = topAssets.map(async function(asset) {
+            try {
+                var query = asset.symbol;
+                var cacheKey = 'news_asset_' + query + '_' + (isRu ? 'ru' : 'en');
+                var cached = await getData(cacheKey);
+                if (cached) {
+                    var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
+                    if (Date.now() - parsed.timestamp < 300000) {
+                        return parsed.articles;
+                    }
+                }
+                var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=3&apiKey=' + NEWS_API_KEY;
+                var response = await fetchWithRetry(url);
+                var data = await response.json();
+                var articles = [];
+                if (data.status === 'ok' && data.articles) {
+                    articles = data.articles;
+                    await setData(cacheKey, JSON.stringify({
+                        articles: articles,
+                        timestamp: Date.now()
+                    }), 300);
+                }
+                return articles;
+            } catch (error) {
+                console.error('News error for ' + asset.symbol + ':', error);
+                return [];
+            }
+        });
+
+        var allArticlesArrays = await Promise.all(newsPromises);
+        for (var i = 0; i < allArticlesArrays.length; i++) {
+            var articles = allArticlesArrays[i];
+            var asset = topAssets[i];
+            for (var j = 0; j < articles.length; j++) {
+                var article = articles[j];
+                if (article.url && !seenUrls.has(article.url)) {
+                    seenUrls.add(article.url);
+                    allArticles.push({
+                        title: article.title,
+                        description: article.description,
+                        url: article.url,
+                        source: article.source,
+                        publishedAt: article.publishedAt,
+                        asset: asset.symbol,
+                        weight: asset.weight || 0,
+                        relevance: (asset.weight || 0) / 100
+                    });
+                }
+            }
+        }
+
+        allArticles.sort(function(a, b) {
+            var relevanceDiff = (b.relevance || 0) - (a.relevance || 0);
+            if (Math.abs(relevanceDiff) > 0.01) return relevanceDiff;
+            return new Date(b.publishedAt) - new Date(a.publishedAt);
+        });
+
+        var topArticles = allArticles.slice(0, 7);
+        var result = {
+            articles: topArticles,
+            assets: topAssets,
+            timestamp: Date.now(),
+            count: topArticles.length,
+            totalAssets: topAssets.length
+        };
+
+        await setData('news_cache_' + chatId, JSON.stringify(result), 900);
+        return result;
+    }
+
+    getStats(chatId) {
+        var lastUpdate = this.lastUpdate.get(chatId);
+        var isUpdating = this.isUpdating.get(chatId) || false;
+        return {
+            lastUpdate: lastUpdate || 0,
+            isUpdating: isUpdating,
+            age: lastUpdate ? Math.round((Date.now() - lastUpdate) / 60000) : null
+        };
+    }
+}
+
 var newsManager = new NewsManager();
 
 class NewsManager {
