@@ -1,6 +1,6 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.2 (ИСПРАВЛЕННАЯ)
-// ЧАСТЬ 1 ИЗ 5: ИМПОРТЫ, КОНФИГУРАЦИЯ, REDIS, БЕЗОПАСНОСТЬ
+// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
+// ЧАСТЬ 1/6: ИМПОРТЫ, КОНФИГУРАЦИЯ, REDIS, ШИФРОВАНИЕ, БЕЗОПАСНОСТЬ
 // ============================================================
 
 require('dotenv').config();
@@ -9,9 +9,6 @@ const ccxt = require('ccxt');
 const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 
-// ============================================================
-// 1. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
-// ============================================================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'my-super-secret-key-32bytes!!';
@@ -31,9 +28,6 @@ if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
     process.exit(1);
 }
 
-// ============================================================
-// 2. КОНФИГУРАЦИЯ
-// ============================================================
 const CONFIG = {
     MAX_POSITION_SIZE: 0.1,
     STOP_LOSS_DEFAULT: 5,
@@ -60,7 +54,7 @@ const CONFIG = {
 };
 
 // ============================================================
-// 3. REDIS ХРАНИЛИЩЕ С FALLBACK-МЕХАНИЗМОМ
+// 2. REDIS ХРАНИЛИЩЕ С FALLBACK
 // ============================================================
 class RedisStorage {
     constructor() {
@@ -110,7 +104,6 @@ class RedisStorage {
         }
     }
 
-    // ВОЗВРАЩАЕТ МАССИВ, А НЕ { keys: [] }
     async list(prefix = '') {
         try {
             if (this.isRedisAvailable) {
@@ -132,10 +125,10 @@ async function setData(key, value, ttl = null) { await VOID_KV.put(key, value, t
 async function deleteData(key) { await VOID_KV.delete(key); }
 
 // ============================================================
-// 4. ФУНКЦИИ БЕЗОПАСНОСТИ
+// 3. ФУНКЦИИ БЕЗОПАСНОСТИ
 // ============================================================
 
-// 4.1. ВАЛИДАЦИЯ API-КЛЮЧЕЙ
+// 3.1. ВАЛИДАЦИЯ API-КЛЮЧЕЙ
 async function validateExchangeKeys(apiKey, secretKey, exchangeId = 'binance') {
     try {
         const exchange = new ccxt[exchangeId]({
@@ -160,7 +153,7 @@ async function validateExchangeKeys(apiKey, secretKey, exchangeId = 'binance') {
     }
 }
 
-// 4.2. ОГРАНИЧЕНИЕ ПОПЫТОК ПОДКЛЮЧЕНИЯ
+// 3.2. ОГРАНИЧЕНИЕ ПОПЫТОК ПОДКЛЮЧЕНИЯ
 async function checkConnectAttempts(chatId) {
     const key = 'connect_attempts_' + chatId;
     const attempts = parseInt(await getData(key) || '0');
@@ -185,7 +178,7 @@ async function recordConnectAttempt(chatId, success) {
     }
 }
 
-// 4.3. САНИТИЗАЦИЯ ВВОДА
+// 3.3. САНИТИЗАЦИЯ ВВОДА
 function sanitizeInput(text) {
     if (!text) return '';
     let sanitized = text
@@ -210,7 +203,7 @@ function isValidUrl(string) {
     } catch (_) { return false; }
 }
 
-// 4.4. RATE LIMITING
+// 3.4. RATE LIMITING
 async function checkRateLimit(chatId, action, maxRequests = 10, timeWindow = 60000) {
     const key = 'rate_' + chatId + '_' + action;
     const data = await getData(key);
@@ -232,7 +225,7 @@ async function checkRateLimit(chatId, action, maxRequests = 10, timeWindow = 600
     return { allowed: true };
 }
 
-// 4.5. ВЕРИФИКАЦИЯ WEBHOOK CRYPTOBOT
+// 3.5. ВЕРИФИКАЦИЯ WEBHOOK CRYPTOBOT
 function verifyCryptoBotWebhook(body, headers) {
     const signature = headers['crypto-pay-api-signature'];
     if (!signature) return false;
@@ -242,7 +235,7 @@ function verifyCryptoBotWebhook(body, headers) {
     return hash === signature;
 }
 
-// 4.6. ЗАЩИТА ОТ ДУБЛИРУЮЩИХ ПЛАТЕЖЕЙ
+// 3.6. ЗАЩИТА ОТ ДУБЛИРУЮЩИХ ПЛАТЕЖЕЙ
 async function checkDuplicatePayment(chatId, planId) {
     const key = 'payment_duplicate_' + chatId + '_' + planId;
     const existing = await getData(key);
@@ -258,7 +251,7 @@ async function checkDuplicatePayment(chatId, planId) {
     return { duplicate: false };
 }
 
-// 4.7. ПРОВЕРКА ПОДОЗРИТЕЛЬНЫХ АККАУНТОВ
+// 3.7. ПРОВЕРКА ПОДОЗРИТЕЛЬНЫХ АККАУНТОВ
 async function checkSuspiciousUser(chatId) {
     const key = 'account_age_' + chatId;
     let accountAge = await getData(key);
@@ -283,7 +276,7 @@ async function checkSuspiciousUser(chatId) {
     return { suspicious: false };
 }
 
-// 4.8. АВТОМАТИЧЕСКАЯ ОЧИСТКА ДАННЫХ
+// 3.8. АВТОМАТИЧЕСКАЯ ОЧИСТКА ДАННЫХ
 async function cleanupOldData() {
     const now = Date.now();
     const keys = await VOID_KV.list('');
@@ -305,7 +298,7 @@ async function cleanupOldData() {
 }
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 
-// 4.9. ФОРМАТ ДАТЫ "ДД.ММ.ГГ"
+// 3.9. ФОРМАТ ДАТЫ "ДД.ММ.ГГ"
 function formatDateShort(date) {
     const d = new Date(date);
     const day = String(d.getDate()).padStart(2, '0');
@@ -314,7 +307,7 @@ function formatDateShort(date) {
     return day + '.' + month + '.' + year;
 }
 
-// 4.10. УВЕДОМЛЕНИЯ АДМИНИСТРАТОРА
+// 3.10. УВЕДОМЛЕНИЯ АДМИНИСТРАТОРА
 const errorCache = new Map();
 async function notifyAdmin(error, context = {}) {
     if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ваш_telegram_id') return;
@@ -334,7 +327,7 @@ async function notifyAdmin(error, context = {}) {
 }
 
 // ============================================================
-// 5. ШИФРОВАНИЕ (AES-256-GCM)
+// 4. ШИФРОВАНИЕ (AES-256-GCM)
 // ============================================================
 function encrypt(text) {
     try {
@@ -362,6 +355,79 @@ function decrypt(encoded) {
         return decrypted;
     } catch (error) { console.error('❌ Ошибка дешифрования:', error); return null; }
 }
+
+// ============================================================
+// 5. ФУНКЦИИ ОТПРАВКИ СООБЩЕНИЙ
+// ============================================================
+async function sendMessage(chatId, text, keyboard = null, parseMode = 'Markdown') {
+    if (!text) return null;
+    try {
+        const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+        const body = {
+            chat_id: chatId,
+            text: text,
+            parse_mode: parseMode,
+            disable_web_page_preview: true
+        };
+        if (keyboard) body.reply_markup = keyboard;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return response;
+    } catch (error) {
+        console.error('❌ Send message error:', error);
+        return null;
+    }
+}
+
+async function sendUpdatedMessage(chatId, text, keyboard = null, parseMode = 'Markdown', userMessageId = null) {
+    if (userMessageId) {
+        try {
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage?chat_id=${chatId}&message_id=${userMessageId}`);
+        } catch (e) {}
+    }
+    const result = await sendMessage(chatId, text, keyboard, parseMode);
+    return result;
+}
+
+async function sendTyping(chatId) {
+    try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction?chat_id=${chatId}&action=typing`);
+    } catch (e) {}
+}
+
+async function answerCallback(callbackId, text = null, showAlert = false) {
+    try {
+        const url = `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`;
+        const body = { callback_query_id: callbackId, show_alert: showAlert };
+        if (text) body.text = text;
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {}
+}
+
+async function sendDocument(chatId, content, filename) {
+    try {
+        const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`;
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+        const blob = new Blob([content], { type: 'text/csv' });
+        formData.append('document', blob, filename);
+        await fetch(url, { method: 'POST', body: formData });
+    } catch (error) {
+        console.error('❌ Send document error:', error);
+    }
+}
+
+// ============================================================
+// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
+// ЧАСТЬ 2/6: БИРЖЕВЫЕ ФУНКЦИИ, ТАРИФЫ, ЛОКАЛИЗАЦИЯ
+// ============================================================
 
 // ============================================================
 // 6. БИРЖЕВЫЕ ФУНКЦИИ
@@ -392,13 +458,13 @@ function detectExchange(apiKey) {
 }
 
 // ============================================================
-// 7. ПЛАНЫ (ТАРИФЫ)
+// 7. ПЛАНЫ (ТАРИФЫ) — ПОЛНЫЙ ОБЪЕКТ
 // ============================================================
 const PLANS = {
     TRIAL: {
         id: 'TRIAL',
-        name: 'Триал',
-        name_en: 'Trial',
+        name: '🔰 Триал',
+        name_en: '🔰 Trial',
         price: 0,
         duration: 7,
         limits: {
@@ -408,32 +474,32 @@ const PLANS = {
             csv: false, kill_switch: false, priority_support: false
         },
         features: [
-            'Анализ портфеля (2/день)',
-            'Антискам-центр (3/день)',
-            'Соц.тренды (3/день)',
-            'DEX проверка (2/день)',
-            'Новости + AI (2/день)',
-            'Календарь трейдера (2/день)',
-            'Поиск токена (3/день)',
-            'Дневник настроения',
-            'Полный отчет'
+            '📊 Анализ портфеля (2/день)',
+            '🛡️ Антискам-центр (3/день)',
+            '📈 Соц.тренды (3/день)',
+            '🔍 DEX проверка (2/день)',
+            '📰 Новости + AI (2/день)',
+            '📅 Календарь трейдера (2/день)',
+            '🔎 Поиск токена (3/день)',
+            '📝 Дневник настроения',
+            '📊 Полный отчет'
         ],
         features_en: [
-            'Portfolio analysis (2/day)',
-            'Anti-scam center (3/day)',
-            'Social trends (3/day)',
-            'DEX check (2/day)',
-            'News + AI (2/day)',
-            'Trader calendar (2/day)',
-            'Token search (3/day)',
-            'Mood diary',
-            'Full report'
+            '📊 Portfolio analysis (2/day)',
+            '🛡️ Anti-scam center (3/day)',
+            '📈 Social trends (3/day)',
+            '🔍 DEX check (2/day)',
+            '📰 News + AI (2/day)',
+            '📅 Trader calendar (2/day)',
+            '🔎 Token search (3/day)',
+            '📝 Mood diary',
+            '📊 Full report'
         ]
     },
     START: {
         id: 'START',
-        name: 'Старт',
-        name_en: 'Start',
+        name: '⭐ Старт',
+        name_en: '⭐ Start',
         price: 500,
         duration: 30,
         limits: {
@@ -443,38 +509,38 @@ const PLANS = {
             csv: true, kill_switch: false, priority_support: false
         },
         features: [
-            'Анализ портфеля (10/день)',
-            'Антискам-центр (15/день)',
-            'Оповещения (3 шт)',
-            'Соц.тренды (10/день)',
-            'DEX проверка (10/день)',
-            'Новости + AI (10/день)',
-            'Календарь трейдера (10/день)',
-            'Поиск токена (15/день)',
-            'Дневник настроения',
-            'Рейтинг',
-            'AI-советник (5/день)',
-            'Полный отчет + CSV'
+            '📊 Анализ портфеля (10/день)',
+            '🛡️ Антискам-центр (15/день)',
+            '🔔 Оповещения (3 шт)',
+            '📈 Соц.тренды (10/день)',
+            '🔍 DEX проверка (10/день)',
+            '📰 Новости + AI (10/день)',
+            '📅 Календарь трейдера (10/день)',
+            '🔎 Поиск токена (15/день)',
+            '📝 Дневник настроения',
+            '🏆 Рейтинг',
+            '💬 AI-советник (5/день)',
+            '📊 Полный отчет + CSV'
         ],
         features_en: [
-            'Portfolio analysis (10/day)',
-            'Anti-scam center (15/day)',
-            'Alerts (3)',
-            'Social trends (10/day)',
-            'DEX check (10/day)',
-            'News + AI (10/day)',
-            'Trader calendar (10/day)',
-            'Token search (15/day)',
-            'Mood diary',
-            'Ranking',
-            'AI advisor (5/day)',
-            'Full report + CSV'
+            '📊 Portfolio analysis (10/day)',
+            '🛡️ Anti-scam center (15/day)',
+            '🔔 Alerts (3)',
+            '📈 Social trends (10/day)',
+            '🔍 DEX check (10/day)',
+            '📰 News + AI (10/day)',
+            '📅 Trader calendar (10/day)',
+            '🔎 Token search (15/day)',
+            '📝 Mood diary',
+            '🏆 Ranking',
+            '💬 AI advisor (5/day)',
+            '📊 Full report + CSV'
         ]
     },
     PRO: {
         id: 'PRO',
-        name: 'PRO',
-        name_en: 'PRO',
+        name: '🚀 PRO',
+        name_en: '🚀 PRO',
         price: 1000,
         duration: 30,
         limits: {
@@ -484,44 +550,44 @@ const PLANS = {
             csv: true, kill_switch: true, priority_support: false
         },
         features: [
-            'Анализ портфеля (30/день)',
-            'Антискам-центр (50/день)',
-            'Оповещения (15 шт)',
-            'Соц.тренды (Безлимит)',
-            'DEX проверка (Безлимит)',
-            'Новости + AI (Безлимит)',
-            'Календарь трейдера (Безлимит)',
-            'Поиск токена (Безлимит)',
-            'Холодный душ',
-            'Дневник настроения',
-            'Рейтинг',
-            'Автоторговля (3/день)',
-            'AI-советник (20/день)',
-            'Полный отчет + CSV',
-            'Kill Switch'
+            '📊 Анализ портфеля (30/день)',
+            '🛡️ Антискам-центр (50/день)',
+            '🔔 Оповещения (15 шт)',
+            '📈 Соц.тренды (Безлимит)',
+            '🔍 DEX проверка (Безлимит)',
+            '📰 Новости + AI (Безлимит)',
+            '📅 Календарь трейдера (Безлимит)',
+            '🔎 Поиск токена (Безлимит)',
+            '❄️ Холодный душ',
+            '📝 Дневник настроения',
+            '🏆 Рейтинг',
+            '🚀 Автоторговля (3/день)',
+            '💬 AI-советник (20/день)',
+            '📊 Полный отчет + CSV',
+            '🆘 Kill Switch'
         ],
         features_en: [
-            'Portfolio analysis (30/day)',
-            'Anti-scam center (50/day)',
-            'Alerts (15)',
-            'Social trends (Unlimited)',
-            'DEX check (Unlimited)',
-            'News + AI (Unlimited)',
-            'Trader calendar (Unlimited)',
-            'Token search (Unlimited)',
-            'Panic mode',
-            'Mood diary',
-            'Ranking',
-            'Autotrading (3/day)',
-            'AI advisor (20/day)',
-            'Full report + CSV',
-            'Kill Switch'
+            '📊 Portfolio analysis (30/day)',
+            '🛡️ Anti-scam center (50/day)',
+            '🔔 Alerts (15)',
+            '📈 Social trends (Unlimited)',
+            '🔍 DEX check (Unlimited)',
+            '📰 News + AI (Unlimited)',
+            '📅 Trader calendar (Unlimited)',
+            '🔎 Token search (Unlimited)',
+            '❄️ Panic mode',
+            '📝 Mood diary',
+            '🏆 Ranking',
+            '🚀 Autotrading (3/day)',
+            '💬 AI advisor (20/day)',
+            '📊 Full report + CSV',
+            '🆘 Kill Switch'
         ]
     },
     VIP: {
         id: 'VIP',
-        name: 'VIP',
-        name_en: 'VIP',
+        name: '👑 VIP',
+        name_en: '👑 VIP',
         price: 1500,
         duration: 30,
         limits: {
@@ -531,45 +597,44 @@ const PLANS = {
             csv: true, kill_switch: true, priority_support: true
         },
         features: [
-            'Анализ портфеля (Безлимит)',
-            'Антискам-центр (Безлимит)',
-            'Оповещения (Безлимит)',
-            'Соц.тренды (Безлимит)',
-            'DEX проверка (Безлимит)',
-            'Новости + AI (Безлимит)',
-            'Календарь трейдера (Безлимит)',
-            'Поиск токена (Безлимит)',
-            'Холодный душ (Безлимит)',
-            'Дневник настроения',
-            'Рейтинг',
-            'Автоторговля (Безлимит)',
-            'AI-советник (Безлимит)',
-            'Полный отчет + CSV',
-            'Kill Switch',
-            'Приоритетная поддержка 24/7'
+            '📊 Анализ портфеля (Безлимит)',
+            '🛡️ Антискам-центр (Безлимит)',
+            '🔔 Оповещения (Безлимит)',
+            '📈 Соц.тренды (Безлимит)',
+            '🔍 DEX проверка (Безлимит)',
+            '📰 Новости + AI (Безлимит)',
+            '📅 Календарь трейдера (Безлимит)',
+            '🔎 Поиск токена (Безлимит)',
+            '❄️ Холодный душ (Безлимит)',
+            '📝 Дневник настроения',
+            '🏆 Рейтинг',
+            '🚀 Автоторговля (Безлимит)',
+            '💬 AI-советник (Безлимит)',
+            '📊 Полный отчет + CSV',
+            '🆘 Kill Switch',
+            '⚡ Приоритетная поддержка 24/7'
         ],
         features_en: [
-            'Portfolio analysis (Unlimited)',
-            'Anti-scam center (Unlimited)',
-            'Alerts (Unlimited)',
-            'Social trends (Unlimited)',
-            'DEX check (Unlimited)',
-            'News + AI (Unlimited)',
-            'Trader calendar (Unlimited)',
-            'Token search (Unlimited)',
-            'Panic mode (Unlimited)',
-            'Mood diary',
-            'Ranking',
-            'Autotrading (Unlimited)',
-            'AI advisor (Unlimited)',
-            'Full report + CSV',
-            'Kill Switch',
-            '24/7 priority support'
+            '📊 Portfolio analysis (Unlimited)',
+            '🛡️ Anti-scam center (Unlimited)',
+            '🔔 Alerts (Unlimited)',
+            '📈 Social trends (Unlimited)',
+            '🔍 DEX check (Unlimited)',
+            '📰 News + AI (Unlimited)',
+            '📅 Trader calendar (Unlimited)',
+            '🔎 Token search (Unlimited)',
+            '❄️ Panic mode (Unlimited)',
+            '📝 Mood diary',
+            '🏆 Ranking',
+            '🚀 Autotrading (Unlimited)',
+            '💬 AI advisor (Unlimited)',
+            '📊 Full report + CSV',
+            '🆘 Kill Switch',
+            '⚡ 24/7 priority support'
         ]
     }
 };
 
-// Кэш планов
 const planCache = new Map();
 
 async function getUserPlan(chatId) {
@@ -593,8 +658,8 @@ async function getUserPlan(chatId) {
             } else if (parsed.planId === 'TRIAL' && parsed.trialUsed && parsed.expires < Date.now()) {
                 result = {
                     plan: 'NONE',
-                    name: 'Без подписки',
-                    name_en: 'No subscription',
+                    name: '❌ Без подписки',
+                    name_en: '❌ No subscription',
                     price: 0,
                     duration: 0,
                     expires: parsed.expires,
@@ -610,8 +675,8 @@ async function getUserPlan(chatId) {
             } else if (parsed.planId !== 'TRIAL' && parsed.expires < Date.now()) {
                 result = {
                     plan: 'NONE',
-                    name: 'Без подписки',
-                    name_en: 'No subscription',
+                    name: '❌ Без подписки',
+                    name_en: '❌ No subscription',
                     price: 0,
                     duration: 0,
                     expires: parsed.expires,
@@ -706,230 +771,822 @@ async function checkLimit(chatId, feature) {
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.2 (ИСПРАВЛЕННАЯ)
-// ЧАСТЬ 2 ИЗ 5: УПРАВЛЕНИЕ СООБЩЕНИЯМИ, МЕНЮ, ИНТЕРФЕЙС
+// 8. ПОЛНАЯ ЛОКАЛИЗАЦИЯ (РУССКИЙ + АНГЛИЙСКИЙ)
+// ============================================================
+const LANGUAGES = {
+    ru: {
+        language_select: '🌍 *Выберите язык / Choose language:*',
+        mode_select: '📊 *Выбери свой уровень:*',
+        mode_beginner_desc: '🔰 *Новичок*\n• Целевые веса: BTC 50%, Альты 30%, Стейблы 20%\n• Простые рекомендации по портфелю\n• Базовые метрики (риск, распределение)',
+        mode_pro_desc: '🚀 *Опытный*\n• Целевые веса: BTC 40%, Альты 40%, Стейблы 20%\n• Расширенные рекомендации\n• Полные метрики (Шарп, RSI, MA20, просадка)',
+        mode_select_prompt: '👇 *Выбери режим:*',
+        mode_beginner_btn: '🔰 Новичок',
+        mode_pro_btn: '🚀 Опытный',
+        onboarding_setup: '⚙️ *Настройка бота...*\n\n✅ Язык установлен\n✅ Режим выбран\n✅ Профиль создан\n\n⏳ Завершаем настройку...',
+        onboarding_done: '✅ *Готово!* 🎉',
+        main_header: (name, mode, id, plan, expires) => `👤 *${name}* | ${mode} | 🆔 ID: ${id}\n💳 Тариф: ${plan} (до ${expires})`,
+        main_functions: '📊 Функции',
+        main_settings: '⚙️ Настройки',
+        main_plans: '💳 Тарифы',
+        main_help: '❓ Помощь',
+        main_about: 'ℹ️ О боте',
+        back_to_menu: '🔙 Назад в меню',
+        functions_title: '📊 *Функции*',
+        functions_analyze: '📊 Анализ портфеля',
+        functions_security: '🛡️ Антискам-центр',
+        functions_news: '📰 Новости',
+        functions_history: '📋 История',
+        back_to_functions: '🔙 Назад к функциям',
+        settings_title: '⚙️ *Настройки*',
+        settings_lang: '🌍 Язык:',
+        settings_mode: '🧠 Режим:',
+        settings_change_lang: '🌍 Сменить язык',
+        settings_change_mode: '🧠 Сменить режим',
+        back_to_settings: '🔙 Назад к настройкам',
+        help_menu_title: '❓ *Помощь по боту*\n\nВыберите интересующий вас вопрос:',
+        help_q1: '🔐 Как подключить биржу?',
+        help_q2: '📊 Как работает анализ портфеля?',
+        help_q3: '🔐 Зачем подключать биржу?',
+        help_q4: '🛡️ Как проверить контракт?',
+        help_q5: '🔔 Как создать оповещение?',
+        help_q6: '🚀 Как включить автоторговлю?',
+        help_q7: '❄️ Что такое холодный душ?',
+        help_q8: '📝 Как работает дневник настроения?',
+        help_q9: '🔌 Как отключить биржу?',
+        help_contact_moderator: '👤 Написать модератору',
+        back_to_help: '🔙 Назад к помощи',
+        help_answer_q1: '🔐 *Как подключить биржу?*\n\n1. Зайдите на биржу (Binance, Bybit, OKX и др.)\n2. Перейдите в раздел управления API\n3. Создайте ключ с правами *только на чтение*\n4. Скопируйте API-ключ и Secret-ключ\n5. Отправьте их в бот командой /connect в формате:\n`API_KEY:SECRET_KEY`\n\n🔒 *Ключи шифруются и не имеют права на вывод средств.*',
+        help_answer_q2: '📊 *Как работает анализ портфеля?*\n\nКоманда /analyze запускает полный анализ:\n• Показывает распределение активов (BTC, альты, стейблы)\n• Рассчитывает RSI, скользящие средние (MA20, MA200)\n• Оценивает риск (низкий/средний/высокий)\n• Считает коэффициент Шарпа и VaR\n• Даёт конкретные рекомендации по ребалансировке\n\n📌 После анализа вы можете исполнить рекомендации одним нажатием кнопки.',
+        help_answer_q3: '🔐 *Зачем подключать биржу?*\n\nПодключение биржи даёт доступ к ключевым функциям:\n\n1. Анализ портфеля — бот видит активы и даёт рекомендации\n2. Автоторговля — автоматическая защита и ребаланс\n3. Холодный душ — экстренная защита при падении рынка\n4. Оповещения — уведомления по вашим активам\n5. Ребаланс — автоматическое поддержание целевых весов\n\n🔒 Ключи шифруются и имеют права только на чтение.',
+        help_answer_q4: '🛡️ *Как проверить контракт?*\n\nОтправьте адрес контракта (0x...) в чат — бот проверит:\n• Верификацию на Etherscan\n• Подозрительные паттерны (honeypot)\n• Скоринг риска (0–100 баллов)\n\n📌 Пример: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
+        help_answer_q5: '🔔 *Как создать оповещение?*\n\nИспользуйте /alerts или меню *Оповещения*.\n\n5 типов оповещений:\n• 📊 По цене — при достижении заданной цены\n• 📈 По изменению % — при изменении цены более чем на X%\n• 📊 По объёму — при превышении объёма торгов\n• 📰 Новостное — при появлении новостей по вашим активам\n• 📅 Календарное — перед важными экономическими событиями\n\n📌 Лимит зависит от вашего тарифа.',
+        help_answer_q6: '🚀 *Как включить автоторговлю?*\n\n/autotrade открывает меню с 4 уровнями:\n\n🛡️ *Уровень 1 (Защита)* — стоп-лоссы 5% и 10%\n🔄 *Уровень 2 (Перераспределение)* — продажа мусора, покупка роста\n🧠 *Уровень 3 (Умный рост)* — трейлинг стоп-лосс, фиксация 30% прибыли\n❄️ *Уровень 4 (Снежный ком)* — переток из мусорных в растущие\n\n📌 Доступна только на PRO и VIP.',
+        help_answer_q7: '❄️ *Что такое холодный душ?*\n\nЭкстренная защита при падении рынка:\n• Бот проверяет ВСЕ токены каждые 15 минут\n• При падении >5% за 15 минут — отправляет предупреждение\n• Предлагает конвертировать все активы в USDT\n\n🛡️ Доступен на PRO и VIP.',
+        help_answer_q8: '📝 *Как работает дневник настроения?*\n\n/diary открывает дневник эмоций.\n\nВыберите настроение:\n😌 Спокоен | 🤔 Задумчив | 😰 Тревожен | 😱 Паника | 😤 Зол | 😊 Эйфория\n\n📌 Бот сохраняет записи. Если вы тревожны 3 дня подряд — бот предупредит вас.',
+        help_answer_q9: '🔌 *Как отключить биржу?*\n\n/disconnect или *Настройки* → *Отключить биржу*.\n\nПосле подтверждения API-ключи будут удалены.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
+        help_contact_moderator_message: '👤 *Связь с модератором*\n\nНапишите @clofeLEAN — он вам поможет!\n\n📌 Также вы можете задать вопрос в нашем чате поддержки:\n📱 [Чат поддержки](https://t.me/void_node_chat)\n\n⏳ Мы отвечаем в течение 15 минут (в рабочее время).',
+        market_menu: '📈 *Что вас интересует?*',
+        market_social: '📊 Соц.тренды',
+        market_news: '📰 Новости',
+        market_calendar: '📅 Календарь',
+        back_to_market: '🔙 Назад к рынку',
+        social_menu: '📊 *Выберите монету:*',
+        social_search: '🔎 Найти токен',
+        social_analyzing: (coin) => `⏳ Получаю данные по ${coin}...`,
+        social_search_prompt: '🔎 *Введите название токена*\n\n📌 Примеры: PEPE, ARB, SOL, DOGE, SHIB\n🔄 /cancel — отмена',
+        social_search_invalid: '❌ *Некорректное название токена.*\n\n📌 Введите тикер (например: PEPE, ARB, SOL, DOGE, SHIB).',
+        news_analyzing: '📰 Получаю новости...',
+        news_empty: '📭 Новостей не найдено.',
+        news_coin: (coin) => `📰 *НОВОСТИ: ${coin}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`,
+        news_personalized_header: '📰 *НОВОСТИ ДЛЯ ТВОЕГО ПОРТФЕЛЯ*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n',
+        news_no_assets: '❌ Сначала выполни /analyze, чтобы я знал твой портфель.',
+        news_no_news: '📭 Новостей по твоим активам не найдено.',
+        calendar_analyzing: '📅 Формирую календарь...',
+        calendar_empty: '📭 На эту неделю важных событий не найдено.',
+        calendar_pro_only: '❌ *Календарь трейдера доступен на тарифах PRO и VIP.*\n\n💳 /subscribe',
+        calendar_result: (events) => {
+            if (!events || events.length === 0) return '📭 На эту неделю важных событий не найдено.';
+            let result = '📅 *КАЛЕНДАРЬ ТРЕЙДЕРА*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+            for (const event of events.slice(0, 10)) {
+                result += `📌 *${event.title || 'Событие'}*\n`;
+                result += `📅 ${event.date || 'Дата неизвестна'}\n`;
+                if (event.importance) result += `⭐ Важность: ${event.importance}\n`;
+                if (event.impact) result += `📊 Влияние: ${event.impact}\n`;
+                result += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            }
+            return result;
+        },
+        settings_old: '⚙️ *Настройки*',
+        settings_lang_old: '🌍 Язык',
+        settings_mode_old: '🧠 Режим',
+        settings_lang_selected: (lang) => `✅ Язык: ${lang}`,
+        settings_mode_selected: (mode) => `✅ Режим: ${mode}`,
+        settings_mode_beginner_old: '🔰 Новичок',
+        settings_mode_pro_old: '🚀 Опытный',
+        history_title: '📋 *ИСТОРИЯ*',
+        history_empty: '📭 История пуста.',
+        history_item: (date, action, detail) => `📌 ${date}\n• ${action}\n  ${detail}\n`,
+        history_analyze: '📊 Анализ портфеля',
+        history_antiscam: '🛡️ Проверка безопасности',
+        history_social: '📈 Соц.тренды',
+        history_news: '📰 Новости',
+        history_calendar: '📅 Календарь',
+        mood_title: '📝 *Как настроение?*',
+        mood_saved: '✅ *Сохранено!*',
+        mood_warning: (days) => `⚠️ *Внимание!*\n\nТы тревожен ${days} день подряд.\nВ таком состоянии опасно торговать.\n\n🛡️ Рекомендую:\n• Сделать перерыв\n• Включить режим HODL\n• Не принимать решений до завтра`,
+        mood_calm: '😌 Спокоен',
+        mood_thoughtful: '🤔 Задумчив',
+        mood_anxious: '😰 Тревожен',
+        mood_panic: '😱 Паника',
+        mood_angry: '😤 Зол',
+        mood_euphoric: '😊 Эйфория',
+        plans_title: '💳 *Тарифы*',
+        plans_current: (plan, expires) => `📊 ${plan}\n📅 До: ${expires}`,
+        plans_trial: '🔰 Триал — 0 ₽\n   • 7 дней\n   • Базовые функции',
+        plans_start: '⭐ Старт — 500 ₽/мес\n   • 10 анализов/день\n   • Антискам (15/день)',
+        plans_pro: '🚀 PRO — 1 000 ₽/мес 🔥\n   • 30 анализов/день\n   • Безлимитные тренды\n   • Холодный душ',
+        plans_vip: '👑 VIP — 1 500 ₽/мес\n   • ВСЕ БЕЗЛИМИТНО\n   • Поддержка 24/7',
+        plans_select: '👇 *Выбери тариф:*',
+        plans_payment_creating: '⏳ Создаю счёт...',
+        plans_payment_error: '❌ Ошибка создания счёта.',
+        plans_success: (plan) => `✅ *${plan} активирован!*`,
+        plans_already: (plan) => `ℹ️ У вас уже активен ${plan}`,
+        plans_not_found: '❌ Тариф не найден.',
+        plans_trial_used: '❌ Триал уже использован.\n💳 /subscribe',
+        plans_trial_success: '🎉 *Триал активирован на 7 дней!*',
+        plans_payment_title: (plan) => `ОПЛАТА ${plan}`,
+        days: 'дней',
+        plans_features: 'Функции',
+        plans_payment_methods: 'Способы оплаты',
+        plans_payment_crypto: 'Криптовалюта (USDT, BTC, TON)',
+        plans_payment_card: 'Банковская карта',
+        plans_payment_note: 'После оплаты тариф активируется автоматически.',
+        plan_trial_name: '🔰 Триал',
+        plan_start_name: '⭐ Старт',
+        plan_pro_name: '🚀 PRO',
+        plan_vip_name: '👑 VIP',
+        error_exchange: '⚠️ *Биржа не отвечает.* Попробуй через минуту.',
+        error_api_key: '❌ *Неверный ключ.* Проверь инструкцию: /connect',
+        error_general: (err) => `❌ *Ошибка:* ${err}`,
+        cooldown: (sec) => `⏳ Подожди ${sec} сек.`,
+        no_keys: '🔐 *Подключи биржу:* /connect',
+        no_analysis_data: '❌ *Нет данных.* Выполни /analyze',
+        ai_mode: '🤖 *Задай вопрос по портфелю*\nДля выхода: /exit',
+        ai_thinking: '🤔 *Думаю...*',
+        ai_exit: '✅ *Выход из AI.*',
+        export_error: '❌ *Ошибка CSV.*',
+        issues_found: '🔍 *Проблемы:*',
+        suggested_actions: '💡 *Рекомендации:*',
+        disconnect_success: '🔌 *Биржа отключена.*',
+        default_response: (text) => `Ты написал: "${text}"\n\n🤔 Нажми /help`,
+        no_coins: '📭 *На балансе нет монет.*',
+        risk_high: '🔴 Высокий риск',
+        risk_medium: '🟡 Средний риск',
+        risk_low: '🟢 Низкий риск',
+        wallet_invalid: '❌ *Неверный адрес кошелька.*\n\nОтправь адрес, начинающийся с 0x...',
+        wallet_balance: (balance, price) => `💰 *Баланс:* ${balance} ETH (≈ $${price})`,
+        wallet_tokens: (tokens) => `🪙 *Токены:* ${tokens} разных токенов`,
+        wallet_risk_label: (risk) => `Риск: ${risk}`,
+        wallet_risk_high: '🔴 Высокий',
+        wallet_risk_medium: '🟡 Средний',
+        wallet_risk_low: '🟢 Низкий',
+        wallet_no_risks: 'Рисков не обнаружено',
+        wallet_recommendations: '💡 *Рекомендации:*',
+        wallet_connect: '🔐 Подключить биржу',
+        kill_switch_activated: '🛑 *KILL SWITCH АКТИВИРОВАН*\n\n• Ордера отменены\n• Ключи удалены\n• Бот заблокирован\n\nДля разблокировки: /reset',
+        kill_switch_cancel: '❌ *Отменён.*',
+        kill_switch_no_keys: 'ℹ️ *Нет биржи.*',
+        kill_switch_blocked: '🛑 *Бот заблокирован.*\nДля разблокировки: /reset',
+        kill_switch_reset: '✅ *Бот разблокирован.*\n\nПодключи биржу: /connect',
+        kill_switch_confirm_yes: '🛑 ДА, ОСТАНОВИТЬ',
+        kill_switch_confirm_no: '❌ Отмена',
+        kill_switch_pro_only: '❌ *Kill Switch доступен на PRO и VIP.*\n💳 /subscribe',
+        kill_switch_confirmation: '⚠️ *ПОДТВЕРДИ KILL SWITCH*\n\nЭто действие НЕОБРАТИМО!\n\n• Все ордера будут отменены\n• Ключи будут удалены\n• Бот будет заблокирован',
+        share_title: '📤 *Поделиться Void Node*',
+        share_text: '🛡️ *Void Node — твой крипто-телохранитель*\n\n• Анализ портфеля за 1 минуту\n• Антискам-центр\n• Соц.тренды\n• Календарь трейдера\n• AI-советник\n\n🚀 Присоединяйся: @void_node_bot',
+        share_link: (ref) => `🔗 Твоя реферальная ссылка:\nhttps://t.me/${BOT_USERNAME}?start=ref_${ref}`,
+        help_title: '🤖 *УМНАЯ ПОМОЩЬ*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n💬 *Просто напиши свой вопрос, и я отвечу!*\n🔄 Для выхода: /exit',
+        help_ask: '💬 Задать свой вопрос',
+        help_how_check: '🔍 Как проверить токен?',
+        help_sharpe: '📊 Коэффициент Шарпа',
+        help_connect: '🔐 Подключить биржу',
+        help_antiscam: '🛡️ Антискам-центр',
+        help_panic: '❄️ Холодный душ',
+        help_plans: '💳 Тарифы',
+        help_out_of_scope: '🤖 *Я помогаю только с вопросами о боте Void Node!*',
+        help_ask_prompt: '💬 *Напиши свой вопрос*\n\n📝 Я отвечу на него максимально подробно.\n🔄 Для выхода из режима помощи отправь /exit',
+        alert_menu: '🔔 *Оповещения*\n\nВыберите тип оповещения:',
+        alert_price: '📊 По цене',
+        alert_change: '📈 По изменению %',
+        alert_volume: '📊 По объёму',
+        alert_news: '📰 Новостное',
+        alert_calendar: '📅 Календарное',
+        alert_create_price: '📊 *Создать ценовое оповещение*\n\nВведите символ и цену в формате:\n`BTC 70000` (выше) или `BTC 65000 below`',
+        alert_create_change: '📈 *Создать оповещение по изменению %*\n\nВведите символ и % в формате:\n`BTC 5` (изменение >5% за час)',
+        alert_created: '✅ Оповещение создано!',
+        alert_list: '📋 *Ваши оповещения:*\n',
+        alert_deleted: '✅ Оповещение удалено.',
+        autotrade_menu: '🚀 *Автоторговля*\n\nВыберите уровень сложности:',
+        autotrade_level1: '🛡️ Уровень 1 (Защита)',
+        autotrade_level2: '🔄 Уровень 2 (Перераспределение)',
+        autotrade_level3: '🧠 Уровень 3 (Умный рост)',
+        autotrade_level4: '❄️ Уровень 4 (Снежный ком)',
+        autotrade_active: '✅ Автоторговля активирована (уровень {level})',
+        autotrade_stopped: '⏹️ Автоторговля остановлена.',
+        autotrade_pro_only: '❌ Автоторговля доступна только PRO и VIP.',
+        panic_start: '❄️ *Холодный душ активирован.*\n\nБуду отслеживать ВСЕ токены каждые 15 минут. При падении >5% за 15 минут – предложу конвертацию в стейблы.',
+        panic_stop: '❄️ Холодный душ остановлен.',
+        panic_trigger: '🚨 *Холодный душ сработал!*\n\nОбнаружено падение >5% по нескольким активам.\n\n⚠️ Рекомендуется конвертировать ВСЕ активы в USDT.',
+        panic_convert: '🔄 Конвертировать всё в USDT',
+        panic_converted: '✅ Конвертация выполнена. Портфель в безопасности.',
+        back_to_security: '🔙 Назад к безопасности',
+        back_to_plans: '🔙 Назад к тарифам',
+        back_to_history: '🔙 Назад к истории',
+        back_to_analyze: '🔙 Назад к анализу',
+        about_title: 'ℹ️ *О БОТЕ*\n━━━━━━━━━━━━━━━━━━━━━━━',
+        about_version: '📌 *Версия:* 3.8',
+        about_created: '📅 *Создан:* 2024',
+        about_dev: '👨‍💻 *Разработчик:* @void_node_dev',
+        about_instruction: '📖 *ИНСТРУКЦИЯ:*\n\n1️⃣ **Подключи биржу** /connect\n2️⃣ **Анализируй портфель** /analyze\n3️⃣ **Проверяй безопасность** — отправь ссылку или контракт\n4️⃣ **Следи за рынком** /news\n5️⃣ **Получи AI-совет** /help',
+        about_links: '🔗 *ПОЛЕЗНЫЕ ССЫЛКИ:*\n\n📱 [Telegram](https://t.me/void_node_bot)',
+        about_commands: '⚡ *Быстрые команды:*\n/analyze — анализ портфеля\n/connect — подключить биржу\n/news — новости, тренды, календарь\n/help — умная помощь',
+        menu: '🔮 *Void Node — твой крипто-телохранитель*\n\n🏠 *Главное меню:*',
+        main_analyze: '📊 Анализ портфеля',
+        main_security: '🛡️ Безопасность',
+        main_market: '📈 Рынок',
+        main_settings_old: '⚙️ Настройки',
+        main_plans_old: '💳 Тарифы',
+        main_history_old: '📋 История',
+        main_help_old: '❓ Помощь',
+        greeting_morning: (name) => `☀️ *Доброе утро, ${name}!*`,
+        greeting_afternoon: (name) => `☀️ *Добрый день, ${name}!*`,
+        greeting_evening: (name) => `🌙 *Добрый вечер, ${name}!*`,
+        onboard: '👋 *Добро пожаловать в Void Node!*\n\nЯ — *твой крипто-телохранитель* 🛡️\n\n🔐 Начни с подключения биржи: /connect\n🛡️ Или отправь мне ссылку или адрес контракта — я проверю!',
+        onboard_skip: '⏭️ Пропустить',
+        onboard_start: '🚀 Начать!',
+        connect_prompt: '🔐 *Подключи биржу*\n\n📋 Отправь API-ключи в формате:\n`API_KEY:SECRET_KEY`\n\n🔄 Для отмены: /cancel',
+        connect_success: (exchange) => `✅ *Биржа ${exchange} подключена!*\n\n📊 Теперь отправь /analyze`,
+        connect_fail: '❌ *Не удалось подключить биржу.*\n\nПроверь ключи и попробуй ещё раз.',
+        connect_cancel: '❌ *Подключение отменено.*',
+        connect_confirm: '⚠️ *Точно отключить биржу?*\n\nВсе ключи будут удалены.',
+        connect_confirm_yes: '✅ Да, отключить',
+        connect_confirm_no: '❌ Нет, оставить',
+        connect_undo: '⏳ Ключи будут удалены через 10 секунд. Отмена: /undo',
+        connect_undo_success: '✅ *Отмена выполнена!* Ключи сохранены.',
+        connect_disconnected: '🔌 *Биржа отключена.* Все ключи удалены.',
+        invalid_format: '❌ *Неверный формат!* Отправь ключи как `API_KEY:SECRET_KEY`.',
+        analyzing_step: (step, total, text) => `⏳ [${step}/${total}] ${text}...`,
+        analyzing_done: '✅ *Анализ завершён!*',
+        analyzing_no_keys: '🔐 *Сначала подключи биржу.* /connect',
+        analyzing_limit: (limit, remaining) => `📊 *Лимит: ${limit}/день.* Осталось: ${remaining}\n💳 /subscribe`,
+        security_menu: '🛡️ *Что проверить?*',
+        security_link: '🔗 Ссылку',
+        security_contract: '📄 Контракт',
+        security_file: '📁 Файл',
+        security_dex: '🔍 DEX',
+        security_impersonation: '🔄 Аккаунт',
+        security_wallet: '👛 Кошелек',
+        scan_link: '🔗 *Отправь ссылку для проверки*\n🔄 /cancel — отмена',
+        scan_contract: '📄 *Отправь адрес контракта (0x...)*\n🔄 /cancel — отмена',
+        scan_file: '📁 *Отправь файл для проверки*\n🔄 /cancel — отмена',
+        dex_prompt: '🔍 *Отправь адрес контракта для DEX проверки*\n🔄 /cancel — отмена',
+        impersonation_prompt: '🔄 *Перешли сообщение от подозрительного пользователя*\n🔄 /cancel — отмена',
+        wallet_prompt: '👛 *Отправь адрес кошелька для проверки*\n📌 Пример: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e\n🔄 /cancel — отмена',
+        scan_link_invalid: '❌ Отправьте ссылку, начинающуюся с http:// или https://',
+        scan_contract_invalid: '❌ Отправьте адрес контракта (0x...)',
+        scan_file_invalid: '❌ Отправьте файл для проверки.',
+        scan_impersonation_invalid: '❌ Перешлите сообщение от подозрительного пользователя.',
+        scan_timeout: '⏱️ *Проверка заняла слишком много времени.*',
+        scan_cancelled: '❌ *Проверка отменена.*',
+        scan_safe: '🟢 *БЕЗОПАСНО*',
+        scan_danger: '🔴 *ОПАСНО*',
+        scan_result_safe: (type) => `🟢 *БЕЗОПАСНО*\n\n${type} не содержит угроз.`,
+        scan_result_danger: (type, reason) => `🔴 *ОПАСНО*\n\n${type} содержит угрозы:\n${reason}`,
+    },
+    en: {
+        language_select: '🌍 *Choose language:*',
+        mode_select: '📊 *Choose your level:*',
+        mode_beginner_desc: '🔰 *Beginner*\n• Target weights: BTC 50%, Alts 30%, Stable 20%\n• Simple portfolio recommendations\n• Basic metrics (risk, allocation)',
+        mode_pro_desc: '🚀 *Experienced*\n• Target weights: BTC 40%, Alts 40%, Stable 20%\n• Advanced recommendations\n• Full metrics (Sharpe, RSI, MA20, drawdown)',
+        mode_select_prompt: '👇 *Select mode:*',
+        mode_beginner_btn: '🔰 Beginner',
+        mode_pro_btn: '🚀 Experienced',
+        onboarding_setup: '⚙️ *Setting up bot...*\n\n✅ Language set\n✅ Mode selected\n✅ Profile created\n\n⏳ Finishing setup...',
+        onboarding_done: '✅ *Done!* 🎉',
+        main_header: (name, mode, id, plan, expires) => `👤 *${name}* | ${mode} | 🆔 ID: ${id}\n💳 Plan: ${plan} (until ${expires})`,
+        main_functions: '📊 Functions',
+        main_settings: '⚙️ Settings',
+        main_plans: '💳 Plans',
+        main_help: '❓ Help',
+        main_about: 'ℹ️ About',
+        back_to_menu: '🔙 Back to menu',
+        functions_title: '📊 *Functions*',
+        functions_analyze: '📊 Analyze portfolio',
+        functions_security: '🛡️ Anti-scam center',
+        functions_news: '📰 News',
+        functions_history: '📋 History',
+        back_to_functions: '🔙 Back to functions',
+        settings_title: '⚙️ *Settings*',
+        settings_lang: '🌍 Language:',
+        settings_mode: '🧠 Mode:',
+        settings_change_lang: '🌍 Change language',
+        settings_change_mode: '🧠 Change mode',
+        back_to_settings: '🔙 Back to settings',
+        help_menu_title: '❓ *Help*\n\nSelect a question:',
+        help_q1: '🔐 How to connect exchange?',
+        help_q2: '📊 How does portfolio analysis work?',
+        help_q3: '🔐 Why connect exchange?',
+        help_q4: '🛡️ How to check a contract?',
+        help_q5: '🔔 How to create an alert?',
+        help_q6: '🚀 How to enable autotrading?',
+        help_q7: '❄️ What is Panic mode?',
+        help_q8: '📝 How does mood diary work?',
+        help_q9: '🔌 How to disconnect exchange?',
+        help_contact_moderator: '👤 Contact moderator',
+        back_to_help: '🔙 Back to help',
+        help_answer_q1: '🔐 *How to connect exchange?*\n\n1. Go to your exchange (Binance, Bybit, OKX, etc.)\n2. Go to API management section\n3. Create a key with *read-only* permissions\n4. Copy API key and Secret key\n5. Send them to bot with /connect in format:\n`API_KEY:SECRET_KEY`\n\n🔒 *Keys are encrypted and have no withdrawal rights.*',
+        help_answer_q2: '📊 *How does portfolio analysis work?*\n\n/analyze runs a full portfolio analysis:\n\n• Shows asset allocation (BTC, alts, stablecoins)\n• Calculates RSI, moving averages (MA20, MA200)\n• Evaluates risk (low/medium/high)\n• Calculates Sharpe ratio and VaR\n• Gives specific rebalancing recommendations\n\n📌 After analysis you can execute recommendations with one click.',
+        help_answer_q3: '🔐 *Why connect exchange?*\n\nConnecting your exchange gives you access to key features:\n\n1. Portfolio analysis — bot sees your assets and gives recommendations\n2. Autotrading — automatic protection and rebalancing\n3. Panic mode — emergency protection during market crashes\n4. Alerts — notifications for your assets\n5. Rebalance — automatic maintenance of target weights\n\n🔒 Keys are encrypted and have read-only permissions.',
+        help_answer_q4: '🛡️ *How to check a contract?*\n\nYou can check a smart contract in several ways:\n\n1. Send contract address (0x...) in chat — bot will check automatically\n2. Use *Security* menu → *Contract*\n3. Use *Security* menu → *DEX* — shows liquidity and risks\n\n🔍 Bot checks:\n• Verification on Etherscan\n• Suspicious patterns (honeypot)\n• Risk scoring (0–100)\n\n📌 Example: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
+        help_answer_q5: '🔔 *How to create an alert?*\n\nUse /alerts or *Alerts* menu.\n\n5 alert types available:\n• 📊 Price — triggers at target price\n• 📈 Change % — triggers when price changes by X%\n• 📊 Volume — triggers when trading volume exceeds\n• 📰 News — triggers when news appear for your assets\n• 📅 Calendar — before important economic events\n\n📌 Limit depends on your plan.',
+        help_answer_q6: '🚀 *How to enable autotrading?*\n\n/autotrade opens menu with 4 levels:\n\n🛡️ *Level 1 (Protection)* — sets stop-losses at 5% and 10% drops\n🔄 *Level 2 (Reallocation)* — sells junk tokens and buys growing ones\n🧠 *Level 3 (Smart Growth)* — uses trailing stop-loss and locks 30% profit at >20% growth\n❄️ *Level 4 (Snowball)* — flows capital from junk tokens to growing ones\n\n📌 Available only on PRO and VIP.',
+        help_answer_q7: '❄️ *What is Panic mode?*\n\nPanic mode is emergency protection during market crashes.\n\n• Bot checks ALL tokens every 15 minutes\n• If drop >5% in 15 minutes — sends warning\n• Offers one-click conversion of ALL assets to USDT\n\n🛡️ Available on PRO and VIP.',
+        help_answer_q8: '📝 *How does mood diary work?*\n\n/diary opens emotion diary.\n\nChoose your current mood:\n😌 Calm | 🤔 Thoughtful | 😰 Anxious | 😱 Panic | 😤 Angry | 😊 Euphoric\n\n📌 Bot saves entries. If you\'re anxious for 3 days in a row — bot warns you.',
+        help_answer_q9: '🔌 *How to disconnect exchange?*\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
+        help_contact_moderator_message: '👤 *Contact moderator*\n\nWrite to @clofeLEAN — he will help you!\n\n📌 Also you can ask in our support chat:\n📱 [Support chat](https://t.me/void_node_chat)\n\n⏳ We reply within 15 minutes (working hours).',
+        market_menu: '📈 *What interests you?*',
+        market_social: '📊 Social trends',
+        market_news: '📰 News',
+        market_calendar: '📅 Calendar',
+        back_to_market: '🔙 Back to market',
+        social_menu: '📊 *Select coin:*',
+        social_search: '🔎 Find token',
+        social_analyzing: (coin) => `⏳ Getting data for ${coin}...`,
+        social_search_prompt: '🔎 *Enter token name*\n\n📌 Examples: PEPE, ARB, SOL, DOGE, SHIB\n🔄 /cancel — cancel',
+        social_search_invalid: '❌ *Invalid token name.*\n\n📌 Enter a ticker (e.g., PEPE, ARB, SOL, DOGE, SHIB).',
+        news_analyzing: '📰 Fetching news...',
+        news_empty: '📭 No news found.',
+        news_coin: (coin) => `📰 *NEWS: ${coin}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`,
+        news_personalized_header: '📰 *NEWS FOR YOUR PORTFOLIO*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n',
+        news_no_assets: '❌ Please run /analyze first so I know your portfolio.',
+        news_no_news: '📭 No news found for your assets.',
+        calendar_analyzing: '📅 Generating calendar...',
+        calendar_empty: '📭 No important events this week.',
+        calendar_pro_only: '❌ *Trader Calendar available on PRO and VIP plans.*\n\n💳 /subscribe',
+        calendar_result: (events) => {
+            if (!events || events.length === 0) return '📭 No important events this week.';
+            let result = '📅 *TRADER CALENDAR*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+            for (const event of events.slice(0, 10)) {
+                result += `📌 *${event.title || 'Event'}*\n`;
+                result += `📅 ${event.date || 'Date unknown'}\n`;
+                if (event.importance) result += `⭐ Importance: ${event.importance}\n`;
+                if (event.impact) result += `📊 Impact: ${event.impact}\n`;
+                result += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            }
+            return result;
+        },
+        settings_old: '⚙️ *Settings*',
+        settings_lang_old: '🌍 Language',
+        settings_mode_old: '🧠 Mode',
+        settings_lang_selected: (lang) => `✅ Language: ${lang}`,
+        settings_mode_selected: (mode) => `✅ Mode: ${mode}`,
+        settings_mode_beginner_old: '🔰 Beginner',
+        settings_mode_pro_old: '🚀 Pro',
+        history_title: '📋 *HISTORY*',
+        history_empty: '📭 History is empty.',
+        history_item: (date, action, detail) => `📌 ${date}\n• ${action}\n  ${detail}\n`,
+        history_analyze: '📊 Portfolio analysis',
+        history_antiscam: '🛡️ Security check',
+        history_social: '📈 Social trends',
+        history_news: '📰 News',
+        history_calendar: '📅 Calendar',
+        mood_title: '📝 *How are you feeling?*',
+        mood_saved: '✅ *Saved!*',
+        mood_warning: (days) => `⚠️ *Warning!*\n\nYou\'ve been anxious for ${days} days in a row.\nIt\'s dangerous to trade in this state.\n\n🛡️ I recommend:\n• Take a break\n• Enable HODL mode\n• Don\'t make decisions until tomorrow`,
+        mood_calm: '😌 Calm',
+        mood_thoughtful: '🤔 Thoughtful',
+        mood_anxious: '😰 Anxious',
+        mood_panic: '😱 Panic',
+        mood_angry: '😤 Angry',
+        mood_euphoric: '😊 Euphoric',
+        plans_title: '💳 *Plans*',
+        plans_current: (plan, expires) => `📊 ${plan}\n📅 Until: ${expires}`,
+        plans_trial: '🔰 Trial — 0 ₽\n   • 7 days\n   • Basic features',
+        plans_start: '⭐ Start — 500 ₽/mo\n   • 10 analyses/day\n   • Anti-scam (15/day)',
+        plans_pro: '🚀 PRO — 1 000 ₽/mo 🔥\n   • 30 analyses/day\n   • Unlimited trends\n   • Panic mode',
+        plans_vip: '👑 VIP — 1 500 ₽/mo\n   • UNLIMITED\n   • 24/7 support',
+        plans_select: '👇 *Select plan:*',
+        plans_payment_creating: '⏳ Creating invoice...',
+        plans_payment_error: '❌ Payment error.',
+        plans_success: (plan) => `✅ *${plan} activated!*`,
+        plans_already: (plan) => `ℹ️ You already have ${plan}`,
+        plans_not_found: '❌ Plan not found.',
+        plans_trial_used: '❌ Trial already used.\n💳 /subscribe',
+        plans_trial_success: '🎉 *Trial activated for 7 days!*',
+        plans_payment_title: (plan) => `PAYMENT ${plan}`,
+        days: 'days',
+        plans_features: 'Features',
+        plans_payment_methods: 'Payment methods',
+        plans_payment_crypto: 'Cryptocurrency (USDT, BTC, TON)',
+        plans_payment_card: 'Bank card',
+        plans_payment_note: 'After payment, the plan will be activated automatically.',
+        plan_trial_name: '🔰 Trial',
+        plan_start_name: '⭐ Start',
+        plan_pro_name: '🚀 PRO',
+        plan_vip_name: '👑 VIP',
+        error_exchange: '⚠️ *Exchange not responding.* Try again in a minute.',
+        error_api_key: '❌ *Invalid key.* Check instructions: /connect',
+        error_general: (err) => `❌ *Error:* ${err}`,
+        cooldown: (sec) => `⏳ Wait ${sec} sec.`,
+        no_keys: '🔐 *Connect exchange:* /connect',
+        no_analysis_data: '❌ *No data.* Run /analyze',
+        ai_mode: '🤖 *Ask about your portfolio*\nTo exit: /exit',
+        ai_thinking: '🤔 *Thinking...*',
+        ai_exit: '✅ *Exited AI.*',
+        export_error: '❌ *CSV error.*',
+        issues_found: '🔍 *Issues:*',
+        suggested_actions: '💡 *Recommendations:*',
+        disconnect_success: '🔌 *Exchange disconnected.*',
+        default_response: (text) => `You wrote: "${text}"\n\n🤔 Press /help`,
+        no_coins: '📭 *No coins in balance.*',
+        risk_high: '🔴 High risk',
+        risk_medium: '🟡 Medium risk',
+        risk_low: '🟢 Low risk',
+        wallet_invalid: '❌ *Invalid wallet address.*\n\nSend a valid address starting with 0x...',
+        wallet_balance: (balance, price) => `💰 *Balance:* ${balance} ETH (≈ $${price})`,
+        wallet_tokens: (tokens) => `🪙 *Tokens:* ${tokens} different tokens`,
+        wallet_risk_label: (risk) => `Risk: ${risk}`,
+        wallet_risk_high: '🔴 High',
+        wallet_risk_medium: '🟡 Medium',
+        wallet_risk_low: '🟢 Low',
+        wallet_no_risks: 'No risks detected',
+        wallet_recommendations: '💡 *Recommendations:*',
+        wallet_connect: '🔐 Connect Exchange',
+        kill_switch_activated: '🛑 *KILL SWITCH ACTIVATED*\n\n• Orders cancelled\n• Keys deleted\n• Bot locked\n\nTo unlock: /reset',
+        kill_switch_cancel: '❌ *Cancelled.*',
+        kill_switch_no_keys: 'ℹ️ *No exchange.*',
+        kill_switch_blocked: '🛑 *Bot locked.*\nTo unlock: /reset',
+        kill_switch_reset: '✅ *Bot unlocked.*\n\nConnect exchange: /connect',
+        kill_switch_confirm_yes: '🛑 YES, STOP',
+        kill_switch_confirm_no: '❌ Cancel',
+        kill_switch_pro_only: '❌ *Kill Switch available on PRO and VIP.*\n💳 /subscribe',
+        kill_switch_confirmation: '⚠️ *CONFIRM KILL SWITCH*\n\nThis action is IRREVERSIBLE!\n\n• All orders will be cancelled\n• Keys will be deleted\n• Bot will be locked',
+        share_title: '📤 *Share Void Node*',
+        share_text: '🛡️ *Void Node — your crypto guardian*\n\n• Portfolio analysis in 1 minute\n• Anti-scam center\n• Social trends\n• Trader calendar\n• AI advisor\n\n🚀 Join: @void_node_bot',
+        share_link: (ref) => `🔗 Your referral link:\nhttps://t.me/${BOT_USERNAME}?start=ref_${ref}`,
+        help_title: '🤖 *SMART HELP*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n💬 *Just write your question, and I\'ll answer!*\n🔄 To exit: /exit',
+        help_ask: '💬 Ask your own question',
+        help_how_check: '🔍 How to check token?',
+        help_sharpe: '📊 Sharpe ratio',
+        help_connect: '🔐 Connect exchange',
+        help_antiscam: '🛡️ Anti-scam center',
+        help_panic: '❄️ Panic mode',
+        help_plans: '💳 Plans',
+        help_out_of_scope: '🤖 *I only help with questions about the Void Node bot!*',
+        help_ask_prompt: '💬 *Write your question*\n\n📝 I will answer in detail.\n🔄 To exit help mode: /exit',
+        alert_menu: '🔔 *Alerts*\n\nSelect alert type:',
+        alert_price: '📊 Price',
+        alert_change: '📈 Change %',
+        alert_volume: '📊 Volume',
+        alert_news: '📰 News',
+        alert_calendar: '📅 Calendar',
+        alert_create_price: '📊 *Create price alert*\n\nEnter symbol and price in format:\n`BTC 70000` (above) or `BTC 65000 below`',
+        alert_create_change: '📈 *Create change % alert*\n\nEnter symbol and % in format:\n`BTC 5` (change >5% per hour)',
+        alert_created: '✅ Alert created!',
+        alert_list: '📋 *Your alerts:*\n',
+        alert_deleted: '✅ Alert deleted.',
+        autotrade_menu: '🚀 *Autotrading*\n\nChoose difficulty level:',
+        autotrade_level1: '🛡️ Level 1 (Protection)',
+        autotrade_level2: '🔄 Level 2 (Reallocation)',
+        autotrade_level3: '🧠 Level 3 (Smart Growth)',
+        autotrade_level4: '❄️ Level 4 (Snowball)',
+        autotrade_active: '✅ Autotrading activated (level {level})',
+        autotrade_stopped: '⏹️ Autotrading stopped.',
+        autotrade_pro_only: '❌ Autotrading is available only for PRO and VIP.',
+        panic_start: '❄️ *Panic mode activated.*\n\nI will monitor ALL tokens every 15 minutes. If drop >5% in 15 minutes — I will suggest converting to stables.',
+        panic_stop: '❄️ Panic mode stopped.',
+        panic_trigger: '🚨 *Panic mode triggered!*\n\nDetected drop >5% across multiple assets.\n\n⚠️ It\'s recommended to convert ALL assets to USDT.',
+        panic_convert: '🔄 Convert all to USDT',
+        panic_converted: '✅ Conversion completed. Portfolio is safe.',
+        back_to_security: '🔙 Back to Security',
+        back_to_plans: '🔙 Back to Plans',
+        back_to_history: '🔙 Back to History',
+        back_to_analyze: '🔙 Back to Analysis',
+        about_title: 'ℹ️ *ABOUT BOT*\n━━━━━━━━━━━━━━━━━━━━━━━',
+        about_version: '📌 *Version:* 3.8',
+        about_created: '📅 *Created:* 2024',
+        about_dev: '👨‍💻 *Developer:* @void_node_dev',
+        about_instruction: '📖 *INSTRUCTION:*\n\n1️⃣ **Connect exchange** /connect\n2️⃣ **Analyze portfolio** /analyze\n3️⃣ **Check security** — send link or contract\n4️⃣ **Follow market** /news\n5️⃣ **Get AI advice** /help',
+        about_links: '🔗 *USEFUL LINKS:*\n\n📱 [Telegram](https://t.me/void_node_bot)',
+        about_commands: '⚡ *Quick commands:*\n/analyze — portfolio analysis\n/connect — connect exchange\n/news — news, trends, calendar\n/help — smart help',
+        menu: '🔮 *Void Node — your crypto guardian*\n\n🏠 *Main menu:*',
+        main_analyze: '📊 Analyze portfolio',
+        main_security: '🛡️ Security',
+        main_market: '📈 Market',
+        main_settings_old: '⚙️ Settings',
+        main_plans_old: '💳 Plans',
+        main_history_old: '📋 History',
+        main_help_old: '❓ Help',
+        greeting_morning: (name) => `☀️ *Good morning, ${name}!*`,
+        greeting_afternoon: (name) => `☀️ *Good afternoon, ${name}!*`,
+        greeting_evening: (name) => `🌙 *Good evening, ${name}!*`,
+        onboard: '👋 *Welcome to Void Node!*\n\nI am *your crypto guardian* 🛡️\n\n🔐 Start by connecting exchange: /connect\n🛡️ Or just send me a link or contract address — I\'ll check it!',
+        onboard_skip: '⏭️ Skip',
+        onboard_start: '🚀 Start!',
+        connect_prompt: '🔐 *Connect exchange*\n\n📋 Send API keys as:\n`API_KEY:SECRET_KEY`\n\n🔄 To cancel: /cancel',
+        connect_success: (exchange) => `✅ *${exchange} connected!*\n\n📊 Now send /analyze`,
+        connect_fail: '❌ *Failed to connect.*\n\nCheck your keys and try again.',
+        connect_cancel: '❌ *Cancelled.*',
+        connect_confirm: '⚠️ *Really disconnect exchange?*\n\nAll keys will be deleted.',
+        connect_confirm_yes: '✅ Yes, disconnect',
+        connect_confirm_no: '❌ No, keep',
+        connect_undo: '⏳ Keys will be deleted in 10 seconds. Undo: /undo',
+        connect_undo_success: '✅ *Undo successful!* Keys saved.',
+        connect_disconnected: '🔌 *Exchange disconnected.* All keys deleted.',
+        invalid_format: '❌ *Invalid format!* Send as `API_KEY:SECRET_KEY`.',
+        analyzing_step: (step, total, text) => `⏳ [${step}/${total}] ${text}...`,
+        analyzing_done: '✅ *Analysis complete!*',
+        analyzing_no_keys: '🔐 *Connect exchange first.* /connect',
+        analyzing_limit: (limit, remaining) => `📊 *Limit: ${limit}/day.* Remaining: ${remaining}\n💳 /subscribe`,
+        security_menu: '🛡️ *What to check?*',
+        security_link: '🔗 Link',
+        security_contract: '📄 Contract',
+        security_file: '📁 File',
+        security_dex: '🔍 DEX',
+        security_impersonation: '🔄 Account',
+        security_wallet: '👛 Wallet',
+        scan_link: '🔗 *Send link to check*\n🔄 /cancel — cancel',
+        scan_contract: '📄 *Send contract address (0x...)*\n🔄 /cancel — cancel',
+        scan_file: '📁 *Send file to check*\n🔄 /cancel — cancel',
+        dex_prompt: '🔍 *Send contract address for DEX check*\n🔄 /cancel — cancel',
+        impersonation_prompt: '🔄 *Forward message from suspicious user*\n🔄 /cancel — cancel',
+        wallet_prompt: '👛 *Send wallet address to check*\n📌 Example: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e\n🔄 /cancel — cancel',
+        scan_link_invalid: '❌ Send a link starting with http:// or https://',
+        scan_contract_invalid: '❌ Send a contract address (0x...)',
+        scan_file_invalid: '❌ Send a file to check.',
+        scan_impersonation_invalid: '❌ Forward a message from a suspicious user.',
+        scan_timeout: '⏱️ *Check took too long.*',
+        scan_cancelled: '❌ *Check cancelled.*',
+        scan_safe: '🟢 *SAFE*',
+        scan_danger: '🔴 *DANGER*',
+        scan_result_safe: (type) => `🟢 *SAFE*\n\n${type} contains no threats.`,
+        scan_result_danger: (type, reason) => `🔴 *DANGER*\n\n${type} contains threats:\n${reason}`,
+    }
+};
+
+function getText(lang, key, ...args) {
+    const strings = LANGUAGES[lang] || LANGUAGES.ru;
+    const text = strings[key];
+    if (text === undefined) {
+        const fallbackText = LANGUAGES.ru[key];
+        if (typeof fallbackText === 'function') return fallbackText(...args);
+        return fallbackText || `❌ Ошибка: отсутствует перевод для "${key}"`;
+    }
+    if (typeof text === 'function') return text(...args);
+    return text;
+}
+
+// ============================================================
+// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
+// ЧАСТЬ 3/6: ВСЕ МЕНЮ И КЛАВИАТУРЫ
 // ============================================================
 
 // ============================================================
-// 8. УПРАВЛЕНИЕ СООБЩЕНИЯМИ
+// 9. ВСЕ КЛАВИАТУРЫ (ИНЛАЙН КНОПКИ)
 // ============================================================
 
-async function getUserLastMessageId(chatId) {
-    const key = 'last_msg_' + chatId;
-    const data = await getData(key);
-    return data ? parseInt(data) : null;
-}
-
-async function setUserLastMessageId(chatId, messageId) {
-    const key = 'last_msg_' + chatId;
-    await setData(key, messageId.toString());
-}
-
-async function deleteUserLastMessage(chatId) {
-    try {
-        const messageId = await getUserLastMessageId(chatId);
-        if (messageId) {
-            await botDeleteMessage(chatId, messageId);
-            await deleteData('last_msg_' + chatId);
-        }
-    } catch (error) {
-        console.error('❌ deleteUserLastMessage error:', error);
-    }
-}
-
-async function botDeleteMessage(chatId, messageId) {
-    try {
-        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
-        const body = { chat_id: chatId, message_id: messageId };
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        return response;
-    } catch (error) {
-        console.error('❌ Delete message error:', error);
-        return null;
-    }
-}
-
-async function deleteUserMessage(chatId, messageId) {
-    if (!messageId) return;
-    try {
-        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
-        const body = { chat_id: chatId, message_id: messageId };
-        await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-    } catch (error) {
-        console.error('❌ Failed to delete user message:', error);
-    }
-}
-
-async function deleteUserMessageWithDelay(chatId, messageId, delay) {
-    if (!messageId) return;
-    if (delay === undefined) delay = 1500;
-    setTimeout(async function() {
-        await deleteUserMessage(chatId, messageId);
-    }, delay);
-}
-
-async function checkMessageExists(chatId, messageId) {
-    try {
-        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getMessage';
-        const body = { chat_id: chatId, message_id: messageId };
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        return response.ok;
-    } catch (error) {
-        return false;
-    }
-}
-
-async function sendTyping(chatId) {
-    try {
-        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendChatAction';
-        const body = { chat_id: chatId, action: 'typing' };
-        await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-    } catch (error) {
-        console.error('❌ Typing error:', error);
-    }
-}
-
-async function answerCallback(callbackId, text, showAlert) {
-    try {
-        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/answerCallbackQuery';
-        const body = { callback_query_id: callbackId, show_alert: showAlert || false };
-        if (text) body.text = text;
-        await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-    } catch (error) {
-        console.error('❌ Answer callback error:', error);
-    }
-}
-
-async function sendMessage(chatId, text, keyboard, parseMode) {
-    if (!text) return null;
-    try {
-        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
-        const body = {
-            chat_id: chatId,
-            text: text,
-            parse_mode: parseMode || 'Markdown',
-            disable_web_page_preview: true
-        };
-        if (keyboard) {
-            const lang = await getData('lang_' + chatId) || 'ru';
-            keyboard = addExitButton(keyboard, lang);
-            body.reply_markup = keyboard;
-        }
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        return response;
-    } catch (error) {
-        console.error('❌ Send message error:', error);
-        return null;
-    }
-}
-
-async function sendUpdatedMessage(chatId, text, keyboard, parseMode, userMessageId) {
-    if (userMessageId) {
-        const msgExists = await checkMessageExists(chatId, userMessageId);
-        if (msgExists) {
-            await deleteUserMessageWithDelay(chatId, userMessageId, 1500);
-        }
-    }
-    await deleteUserLastMessage(chatId);
-    if (!parseMode) parseMode = 'Markdown';
-    const result = await sendMessage(chatId, text, keyboard, parseMode);
-    if (result && result.ok) {
-        const data = await result.json();
-        if (data.result && data.result.message_id) {
-            await setUserLastMessageId(chatId, data.result.message_id);
-        }
-    }
-    return result;
-}
-
-async function sendDocument(chatId, content, filename) {
-    try {
-        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendDocument';
-        const formData = new FormData();
-        formData.append('chat_id', chatId);
-        const blob = new Blob([content], { type: 'text/csv' });
-        formData.append('document', blob, filename);
-        await fetch(url, { method: 'POST', body: formData });
-    } catch (error) {
-        console.error('❌ Send document error:', error);
-    }
-}
-
-// ============================================================
-// 9. КНОПКА "ВЫЙТИ В МЕНЮ" (ДОБАВЛЯЕТСЯ В КАЖДУЮ КЛАВИАТУРУ)
-// ============================================================
-
-function addExitButton(keyboard, lang) {
-    if (!keyboard) {
-        return {
-            inline_keyboard: [
-                [{ text: '🔙 Выйти в меню', callback_data: 'exit_to_menu' }]
-            ]
-        };
-    }
-    const hasExit = keyboard.inline_keyboard.some(function(row) {
-        return row.some(function(btn) {
-            return btn.callback_data === 'exit_to_menu';
-        });
-    });
-    if (!hasExit) {
-        keyboard.inline_keyboard.push([
-            [{ text: '🔙 Выйти в меню', callback_data: 'exit_to_menu' }]
-        ]);
-    }
-    return keyboard;
-}
-
-// ============================================================
-// 10. МЕНЮ И КЛАВИАТУРЫ
-// ============================================================
-
-// 10.1. ГЛАВНОЕ МЕНЮ
 function getMainMenuKeyboard(lang) {
     return {
         inline_keyboard: [
             [
-                { text: '📊 Функции', callback_data: 'menu_functions' },
-                { text: '⚙️ Настройки', callback_data: 'menu_settings_new' }
+                { text: getText(lang, 'main_functions'), callback_data: 'menu_functions' },
+                { text: getText(lang, 'main_settings'), callback_data: 'menu_settings_new' }
             ],
             [
-                { text: '💳 Тарифы', callback_data: 'menu_plans' },
-                { text: '❓ Помощь', callback_data: 'menu_help' }
+                { text: getText(lang, 'main_plans'), callback_data: 'menu_plans' },
+                { text: getText(lang, 'main_help'), callback_data: 'menu_help' }
             ],
             [
-                { text: 'ℹ️ О боте', callback_data: 'menu_about' }
+                { text: getText(lang, 'main_about'), callback_data: 'menu_about' }
             ]
         ]
     };
 }
 
-async function showMainMenu(chatId, lang) {
+function getFunctionsMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'functions_analyze'), callback_data: 'menu_analyze' }],
+            [{ text: getText(lang, 'functions_security'), callback_data: 'menu_security' }],
+            [{ text: '📈 ' + getText(lang, 'market_menu'), callback_data: 'menu_market' }],
+            [{ text: getText(lang, 'functions_history'), callback_data: 'menu_history' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+function getSecurityMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [
+                { text: getText(lang, 'security_link'), callback_data: 'antiscam_url' },
+                { text: getText(lang, 'security_contract'), callback_data: 'antiscam_contract' }
+            ],
+            [
+                { text: getText(lang, 'security_file'), callback_data: 'antiscam_file' },
+                { text: getText(lang, 'security_dex'), callback_data: 'antiscam_dex' }
+            ],
+            [
+                { text: getText(lang, 'security_impersonation'), callback_data: 'antiscam_impersonation' },
+                { text: getText(lang, 'security_wallet'), callback_data: 'antiscam_wallet' }
+            ],
+            [
+                { text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }
+            ]
+        ]
+    };
+}
+
+function getMarketMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'market_social'), callback_data: 'menu_social' }],
+            [{ text: getText(lang, 'market_news'), callback_data: 'menu_news' }],
+            [{ text: getText(lang, 'market_calendar'), callback_data: 'menu_calendar' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+function getSocialTrendsKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [
+                { text: '₿ BTC', callback_data: 'trend_BTC' },
+                { text: '⟠ ETH', callback_data: 'trend_ETH' }
+            ],
+            [
+                { text: '🔷 SOL', callback_data: 'trend_SOL' },
+                { text: '🔶 ADA', callback_data: 'trend_ADA' }
+            ],
+            [
+                { text: '🔹 XRP', callback_data: 'trend_XRP' },
+                { text: '💠 DOT', callback_data: 'trend_DOT' }
+            ],
+            [
+                { text: getText(lang, 'social_search'), callback_data: 'trend_search_menu' }
+            ],
+            [
+                { text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }
+            ]
+        ]
+    };
+}
+
+function getTrendSearchMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: '🔎 По названию токена', callback_data: 'trend_search_name' }],
+            [{ text: '📄 По адресу контракта', callback_data: 'trend_search_contract' }],
+            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_social' }]
+        ]
+    };
+}
+
+function getSettingsMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'settings_change_lang'), callback_data: 'settings_change_lang' }],
+            [{ text: getText(lang, 'settings_change_mode'), callback_data: 'settings_change_mode' }],
+            [{ text: '🔌 Отключить биржу', callback_data: 'action_disconnect' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+function getLanguageSelectKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: '🇷🇺 Русский', callback_data: 'lang_ru' }],
+            [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
+            [{ text: getText(lang, 'back_to_settings'), callback_data: 'back_to_settings' }]
+        ]
+    };
+}
+
+function getModeSelectKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'mode_beginner_btn'), callback_data: 'mode_beginner' }],
+            [{ text: getText(lang, 'mode_pro_btn'), callback_data: 'mode_pro' }],
+            [{ text: getText(lang, 'back_to_settings'), callback_data: 'back_to_settings' }]
+        ]
+    };
+}
+
+function getPlansMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'plan_trial_name'), callback_data: 'plan_TRIAL' }],
+            [{ text: getText(lang, 'plan_start_name'), callback_data: 'plan_START' }],
+            [{ text: getText(lang, 'plan_pro_name'), callback_data: 'plan_PRO' }],
+            [{ text: getText(lang, 'plan_vip_name'), callback_data: 'plan_VIP' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+function getHelpMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'help_q1'), callback_data: 'help_q1' }],
+            [{ text: getText(lang, 'help_q2'), callback_data: 'help_q2' }],
+            [{ text: getText(lang, 'help_q3'), callback_data: 'help_q3' }],
+            [{ text: getText(lang, 'help_q4'), callback_data: 'help_q4' }],
+            [{ text: getText(lang, 'help_q5'), callback_data: 'help_q5' }],
+            [{ text: getText(lang, 'help_q6'), callback_data: 'help_q6' }],
+            [{ text: getText(lang, 'help_q7'), callback_data: 'help_q7' }],
+            [{ text: getText(lang, 'help_q8'), callback_data: 'help_q8' }],
+            [{ text: getText(lang, 'help_q9'), callback_data: 'help_q9' }],
+            [{ text: getText(lang, 'help_contact_moderator'), callback_data: 'help_contact_moderator' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+function getAnalyzeMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: '📊 Полный анализ', callback_data: 'action_analyze' }],
+            [{ text: '📥 CSV отчет', callback_data: 'action_export_csv' }],
+            [{ text: '🔄 Ребаланс портфеля', callback_data: 'action_rebalance' }],
+            [{ text: '🚀 Автоторговля', callback_data: 'autotrade_menu' }],
+            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+        ]
+    };
+}
+
+function getAutotradeMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'autotrade_level1'), callback_data: 'autotrade_level1' }],
+            [{ text: getText(lang, 'autotrade_level2'), callback_data: 'autotrade_level2' }],
+            [{ text: getText(lang, 'autotrade_level3'), callback_data: 'autotrade_level3' }],
+            [{ text: getText(lang, 'autotrade_level4'), callback_data: 'autotrade_level4' }],
+            [{ text: '⏹️ Остановить', callback_data: 'autotrade_stop' }],
+            [{ text: getText(lang, 'back_to_analyze'), callback_data: 'back_to_analyze' }]
+        ]
+    };
+}
+
+function getAlertMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'alert_price'), callback_data: 'alert_price' }],
+            [{ text: getText(lang, 'alert_change'), callback_data: 'alert_change' }],
+            [{ text: getText(lang, 'alert_volume'), callback_data: 'alert_volume' }],
+            [{ text: getText(lang, 'alert_news'), callback_data: 'alert_news' }],
+            [{ text: getText(lang, 'alert_calendar'), callback_data: 'alert_calendar' }],
+            [{ text: '📋 Список оповещений', callback_data: 'alert_list' }],
+            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+        ]
+    };
+}
+
+function getDiaryMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'mood_calm'), callback_data: 'diary_mood_calm' }, { text: getText(lang, 'mood_thoughtful'), callback_data: 'diary_mood_thoughtful' }],
+            [{ text: getText(lang, 'mood_anxious'), callback_data: 'diary_mood_anxious' }, { text: getText(lang, 'mood_panic'), callback_data: 'diary_mood_panic' }],
+            [{ text: getText(lang, 'mood_angry'), callback_data: 'diary_mood_angry' }, { text: getText(lang, 'mood_euphoric'), callback_data: 'diary_mood_euphoric' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+function getOnboardLanguageKeyboard() {
+    return {
+        inline_keyboard: [
+            [{ text: '🇷🇺 Русский', callback_data: 'onboard_lang_ru' }],
+            [{ text: '🇬🇧 English', callback_data: 'onboard_lang_en' }]
+        ]
+    };
+}
+
+function getOnboardModeKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'mode_beginner_btn'), callback_data: 'onboard_mode_beginner' }],
+            [{ text: getText(lang, 'mode_pro_btn'), callback_data: 'onboard_mode_pro' }]
+        ]
+    };
+}
+
+function getVipBonusKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: '🔐 Подключить биржу', callback_data: 'onboard_connect_vip' }],
+            [{ text: '⏭️ Пропустить', callback_data: 'onboard_skip' }]
+        ]
+    };
+}
+
+function getBackKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+// ============================================================
+// 10. ВСЕ МЕНЮ (ФУНКЦИИ ПОКАЗА)
+// ============================================================
+
+async function showMainMenu(chatId) {
     try {
-        console.log('📊 showMainMenu вызван для ' + chatId);
+        const lang = await getData('lang_' + chatId) || 'ru';
+        console.log('📊 showMainMenu для ' + chatId);
         const userPlan = await getUserPlan(chatId);
         const mode = await getData('mode_' + chatId) || 'beginner';
         let userName = 'Друг';
@@ -954,9 +1611,10 @@ async function showMainMenu(chatId, lang) {
         const modeDisplay = mode === 'beginner' ? 'Новичок' : 'Опытный';
         const hour = new Date().getHours();
         let greeting;
-        if (hour < 12) greeting = '☀️ Доброе утро, ' + userName + '!';
-        else if (hour < 18) greeting = '☀️ Добрый день, ' + userName + '!';
-        else greeting = '🌙 Добрый вечер, ' + userName + '!';
+        if (hour < 12) greeting = getText(lang, 'greeting_morning', userName);
+        else if (hour < 18) greeting = getText(lang, 'greeting_afternoon', userName);
+        else greeting = getText(lang, 'greeting_evening', userName);
+        
         let vipStatus = '';
         if (userPlan.plan === 'VIP' && userPlan.expires > Date.now()) {
             const timeLeft = userPlan.expires - Date.now();
@@ -967,287 +1625,201 @@ async function showMainMenu(chatId, lang) {
                 vipStatus = '\n👑 VIP активен (' + daysLeft + ' дн.)';
             }
         }
-        const header = '👤 ' + userName + ' | ' + modeDisplay + ' | 🆔 ' + userId + '\n💳 ' + planName + ' (до ' + expiresDate + ')';
+        const header = getText(lang, 'main_header', userName, modeDisplay, userId, planName, expiresDate);
         const message = greeting + '\n\n' + header + vipStatus + '\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n🔮 Void Node — твой крипто-телохранитель\n\n🏠 Главное меню:';
-        console.log('📤 Отправляю меню для ' + chatId);
         await sendUpdatedMessage(chatId, message, getMainMenuKeyboard(lang));
         console.log('✅ Меню отправлено для ' + chatId);
     } catch (error) {
         console.error('❌ showMainMenu error:', error);
-        await sendMessage(chatId, '⚠️ Ошибка загрузки меню. Попробуйте позже.\n\nЕсли ошибка повторяется, напишите /reset для сброса данных.');
+        await sendMessage(chatId, '⚠️ Ошибка загрузки меню. Попробуйте позже.');
     }
 }
 
-// 10.2. МЕНЮ ФУНКЦИЙ
-async function showFunctionsMenu(chatId, lang) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '📊 Анализ портфеля', callback_data: 'menu_analyze' }],
-            [{ text: '🛡️ Антискам-центр', callback_data: 'menu_security' }],
-            [{ text: '🔔 Оповещения', callback_data: 'alert_menu' }],
-            [{ text: '📈 Рынок', callback_data: 'menu_market' }],
-            [{ text: '📋 История', callback_data: 'menu_history' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '📊 Функции\n\nВыберите раздел:', keyboard);
+async function showFunctionsMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'functions_title'), getFunctionsMenuKeyboard(lang));
 }
 
-// 10.3. МЕНЮ НАСТРОЕК
-async function showSettingsMenuNew(chatId, lang) {
-    const currentLang = lang === 'ru' ? '🇷🇺 Русский' : '🇬🇧 English';
-    const mode = await getData('mode_' + chatId) || 'beginner';
-    const modeDisplay = mode === 'beginner' ? '🔰 Новичок' : '🚀 Опытный';
-    const message = '⚙️ Настройки\n\n' +
-        '🌍 Язык: ' + currentLang + '\n' +
-        '🧠 Режим: ' + modeDisplay;
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🌍 Сменить язык', callback_data: 'settings_change_lang' }],
-            [{ text: '🧠 Сменить режим', callback_data: 'settings_change_mode' }],
-            [{ text: '🔌 Отключить биржу', callback_data: 'action_disconnect' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard);
+async function showSecurityMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'security_menu'), getSecurityMenuKeyboard(lang));
 }
 
-// 10.4. МЕНЮ СМЕНЫ ЯЗЫКА
-async function showLanguageSelect(chatId, lang) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🇷🇺 Русский', callback_data: 'lang_ru' }],
-            [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
-            [{ text: '🔙 Назад к настройкам', callback_data: 'back_to_settings' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '🌍 Выберите язык:', keyboard);
+async function showMarketMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'market_menu'), getMarketMenuKeyboard(lang));
 }
 
-// 10.5. МЕНЮ СМЕНЫ РЕЖИМА
-async function showModeSelect(chatId, lang) {
-    const message = '📊 Выбери свой уровень:\n\n' +
-        '🔰 Новичок\nЦелевые веса: BTC 50%, Альты 30%, Стейблы 20%\nПростые рекомендации по портфелю\nБазовые метрики (риск, распределение)\n\n' +
-        '🚀 Опытный\nЦелевые веса: BTC 40%, Альты 40%, Стейблы 20%\nРасширенные рекомендации\nПолные метрики (Шарп, RSI, MA20, просадка)\n\n' +
-        '👇 Выбери режим:';
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔰 Новичок', callback_data: 'mode_beginner' }],
-            [{ text: '🚀 Опытный', callback_data: 'mode_pro' }],
-            [{ text: '🔙 Назад к настройкам', callback_data: 'back_to_settings' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard);
+async function showSocialTrends(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'social_menu'), getSocialTrendsKeyboard(lang));
 }
 
-// 10.6. МЕНЮ "О БОТЕ"
-async function showAboutMenu(chatId, lang) {
-    const message = 'ℹ️ О БОТЕ\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-        'Void Node — твой персональный крипто-телохранитель.\n\n' +
-        'Что умеет бот:\n' +
-        '• 📊 Анализировать портфель и давать рекомендации\n' +
-        '• 🛡️ Проверять контракты и ссылки на безопасность\n' +
-        '• 📈 Отслеживать соц.тренды и новости\n' +
-        '• 📅 Календарь трейдера с важными событиями\n' +
-        '• 🚀 Автоторговля для защиты и роста\n' +
-        '• ❄️ Холодный душ при падении рынка\n' +
-        '• 🔔 Оповещения по цене, объёму и новостям\n\n' +
-        '📌 Версия: 3.2\n' +
-        '📅 Создан: 2024\n\n' +
-        '🔗 Канал проекта: [Atifragility Node](https://t.me/atifragility_node)\n\n' +
-        '⚡ Быстрые команды:\n' +
-        '/analyze — анализ портфеля\n' +
-        '/connect — подключить биржу\n' +
-        '/news — новости, тренды, календарь\n' +
-        '/help — помощь по боту';
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard);
+async function showTrendSearchMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    const message = '🔍 Как искать токен?\n\n📌 По названию — введи тикер (PEPE, DOGE, SHIB)\n📄 По адресу — вставь адрес контракта (0x...)\n\n💡 Если адрес контракта — бот покажет DEX данные и ликвидность.';
+    await sendUpdatedMessage(chatId, message, getTrendSearchMenuKeyboard(lang));
 }
 
-// 10.7. МЕНЮ АНАЛИЗА
-async function showAnalyzeMenu(chatId, lang) {
+async function showSettingsMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'settings_title'), getSettingsMenuKeyboard(lang));
+}
+
+async function showLanguageSelect(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'language_select'), getLanguageSelectKeyboard(lang));
+}
+
+async function showModeSelect(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    let message = getText(lang, 'mode_select') + '\n\n';
+    message += getText(lang, 'mode_beginner_desc') + '\n\n';
+    message += getText(lang, 'mode_pro_desc') + '\n\n';
+    message += getText(lang, 'mode_select_prompt');
+    await sendUpdatedMessage(chatId, message, getModeSelectKeyboard(lang));
+}
+
+async function showPlansMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    const userPlan = await getUserPlan(chatId);
+    const expiresDate = formatDateShort(userPlan.expires);
+    let message = getText(lang, 'plans_title') + '\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    message += getText(lang, 'plans_current', userPlan.name, expiresDate) + '\n\n';
+    message += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    message += getText(lang, 'plans_trial') + '\n\n';
+    message += getText(lang, 'plans_start') + '\n\n';
+    message += getText(lang, 'plans_pro') + '\n\n';
+    message += getText(lang, 'plans_vip') + '\n\n';
+    message += getText(lang, 'plans_select');
+    await sendUpdatedMessage(chatId, message, getPlansMenuKeyboard(lang));
+}
+
+async function showHelpMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'help_menu_title'), getHelpMenuKeyboard(lang));
+}
+
+async function showAnalyzeMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
     const savedData = await getData('user_' + chatId);
     if (!savedData) {
         const keyboard = {
             inline_keyboard: [
                 [{ text: '🔐 Подключить биржу', callback_data: 'menu_connect' }],
-                [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
+                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
-        await sendUpdatedMessage(chatId, '🔐 Сначала подключи биржу. /connect', keyboard);
+        await sendUpdatedMessage(chatId, getText(lang, 'analyzing_no_keys'), keyboard);
         return;
     }
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '📊 Полный анализ', callback_data: 'action_analyze' }],
-            [{ text: '📥 CSV отчет', callback_data: 'action_export_csv' }],
-            [{ text: '🔄 Ребаланс портфеля', callback_data: 'action_rebalance' }],
-            [{ text: '🚀 Автоторговля', callback_data: 'autotrade_menu' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '📊 Анализ портфеля\n\nВыберите действие:', keyboard);
+    await sendUpdatedMessage(chatId, '📊 Анализ портфеля\n\nВыберите действие:', getAnalyzeMenuKeyboard(lang));
 }
 
-// 10.8. МЕНЮ БЕЗОПАСНОСТИ
-async function showSecurityMenu(chatId, lang) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔗 Ссылку', callback_data: 'antiscam_url' }, { text: '📄 Контракт', callback_data: 'antiscam_contract' }],
-            [{ text: '📁 Файл', callback_data: 'antiscam_file' }, { text: '🔍 DEX', callback_data: 'antiscam_dex' }],
-            [{ text: '🔄 Аккаунт', callback_data: 'antiscam_impersonation' }, { text: '👛 Кошелек', callback_data: 'antiscam_wallet' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '🛡️ Антискам-центр\n\nЧто проверить?', keyboard);
+async function showAutotradeMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'autotrade_menu'), getAutotradeMenuKeyboard(lang));
 }
 
-// 10.9. МЕНЮ РЫНКА
-async function showMarketMenu(chatId, lang) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '📊 Соц.тренды', callback_data: 'menu_social' }],
-            [{ text: '📰 Новости', callback_data: 'menu_news' }],
-            [{ text: '📅 Календарь трейдера', callback_data: 'menu_calendar' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '📈 Рынок\n\nЧто вас интересует?', keyboard);
+async function showAlertMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await sendUpdatedMessage(chatId, getText(lang, 'alert_menu'), getAlertMenuKeyboard(lang));
 }
 
-// 10.10. МЕНЮ ИСТОРИИ
-async function showHistoryMenu(chatId, lang) {
-    const history = await getHistory(chatId);
-    if (history.length === 0) {
-        const keyboard = {
-            inline_keyboard: [
-                [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
-            ]
-        };
-        await sendUpdatedMessage(chatId, '📋 История пуста.', keyboard);
-        return;
-    }
-    let message = '📋 ИСТОРИЯ\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    const items = history.slice(-10).reverse();
-    for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        message += '📌 ' + item.date + '\n• ' + item.action + '\n  ' + item.detail + '\n';
+async function showHistoryMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    const history = await getData('history_' + chatId);
+    let text = getText(lang, 'history_title') + '\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    if (!history) {
+        text += getText(lang, 'history_empty');
+    } else {
+        try {
+            const items = typeof history === 'string' ? JSON.parse(history) : history;
+            const recent = items.slice(-10).reverse();
+            for (const item of recent) {
+                text += getText(lang, 'history_item', item.date, item.action, item.detail);
+            }
+        } catch (e) {
+            text += getText(lang, 'history_empty');
+        }
     }
     const keyboard = {
         inline_keyboard: [
             [{ text: '🔄 Обновить', callback_data: 'action_history_refresh' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
+            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+        ]
+    };
+    await sendUpdatedMessage(chatId, text, keyboard);
+}
+
+async function showAboutMenu(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    let message = getText(lang, 'about_title') + '\n';
+    message += getText(lang, 'about_version') + '\n';
+    message += getText(lang, 'about_created') + '\n';
+    message += getText(lang, 'about_dev') + '\n\n';
+    message += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    message += getText(lang, 'about_instruction') + '\n\n';
+    message += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    message += getText(lang, 'about_links') + '\n\n';
+    message += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    message += getText(lang, 'about_commands');
+    await sendUpdatedMessage(chatId, message, getBackKeyboard(lang));
+}
+
+// ============================================================
+// 11. ОНБОРДИНГ
+// ============================================================
+async function showLanguageSelectOnboarding(chatId) {
+    await sendUpdatedMessage(chatId, '🌍 Выберите язык / Choose language:', getOnboardLanguageKeyboard());
+}
+
+async function showModeSelectOnboarding(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    let message = getText(lang, 'mode_select') + '\n\n';
+    message += getText(lang, 'mode_beginner_desc') + '\n\n';
+    message += getText(lang, 'mode_pro_desc') + '\n\n';
+    message += getText(lang, 'mode_select_prompt');
+    await sendUpdatedMessage(chatId, message, getOnboardModeKeyboard(lang));
+}
+
+async function showVipBonusOffer(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    const message = '🎁 БОНУС!\n\nПодключи биржу и получи 3 дня VIP-доступа БЕСПЛАТНО!\n\nЧто ты получишь:\n• ❄️ Холодный душ — экстренная защита\n• 🚀 Автоторговля — автоматическая прибыль\n• 📊 Полная аналитика портфеля\n• 🔔 Безлимитные оповещения\n\n🔥 Предложение действует только сейчас!';
+    await sendUpdatedMessage(chatId, message, getVipBonusKeyboard(lang));
+}
+
+async function handleOnboardConnectVip(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await setData('state_' + chatId, 'waiting_for_keys_vip');
+    await sendMessage(chatId, getText(lang, 'connect_prompt'));
+}
+
+async function handleOnboardSkip(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    await setData('onboarded_' + chatId, 'true');
+    await showMainMenu(chatId);
+}
+
+async function showVipActivated(chatId) {
+    const lang = await getData('lang_' + chatId) || 'ru';
+    const expiresDate = formatDateShort(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    const message = '🎉 ПОЗДРАВЛЯЮ!\n\nТы подключил биржу и получил VIP-доступ на 3 дня!\n\nДействует до: ' + expiresDate + '\n\nТеперь тебе доступно всё:\n• ❄️ Холодный душ\n• 🚀 Автоторговля\n• 📊 Полная аналитика\n• 🔔 Безлимитные оповещения\n\nПопробуй все функции, а после триала выбери подходящий тариф!';
+    const keyboard = {
+        inline_keyboard: [
+            [{ text: '🏠 В меню', callback_data: 'onboard_vip_done' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard);
 }
 
-// 10.11. МЕНЮ ТАРИФОВ
-async function showPlansMenu(chatId, lang) {
-    const userPlan = await getUserPlan(chatId);
-    const expiresDate = formatDateShort(userPlan.expires);
-    const message = '💳 Тарифы\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-        '📊 ' + userPlan.name + ' (до ' + expiresDate + ')\n\n' +
-        '━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-        '🔰 Триал — 0 ₽\n   7 дней, Базовые функции\n\n' +
-        '⭐ Старт — 500 ₽/мес\n   10 анализов/день, Антискам (15/день)\n\n' +
-        '🚀 PRO — 1 000 ₽/мес\n   30 анализов/день, Безлимитные тренды, Холодный душ\n\n' +
-        '👑 VIP — 1 500 ₽/мес\n   ВСЕ БЕЗЛИМИТНО, Поддержка 24/7\n\n' +
-        '👇 Выбери тариф:';
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔰 Триал', callback_data: 'plan_TRIAL' }],
-            [{ text: '⭐ Старт', callback_data: 'plan_START' }],
-            [{ text: '🚀 PRO', callback_data: 'plan_PRO' }],
-            [{ text: '👑 VIP', callback_data: 'plan_VIP' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard);
-}
-
-// 10.12. МЕНЮ ПОМОЩИ (БЕЗ AI, 9 ВОПРОСОВ + МОДЕРАТОР)
-async function showHelpMenu(chatId, lang) {
-    const message = '❓ Помощь по боту\n\nВыберите интересующий вас вопрос:';
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔐 Как подключить биржу?', callback_data: 'help_q1' }],
-            [{ text: '📊 Как работает анализ портфеля?', callback_data: 'help_q2' }],
-            [{ text: '🔐 Зачем подключать биржу?', callback_data: 'help_q3' }],
-            [{ text: '🛡️ Как проверить контракт?', callback_data: 'help_q4' }],
-            [{ text: '🔔 Как создать оповещение?', callback_data: 'help_q5' }],
-            [{ text: '🚀 Как включить автоторговлю?', callback_data: 'help_q6' }],
-            [{ text: '❄️ Что такое холодный душ?', callback_data: 'help_q7' }],
-            [{ text: '📝 Как работает дневник настроения?', callback_data: 'help_q8' }],
-            [{ text: '🔌 Как отключить биржу?', callback_data: 'help_q9' }],
-            [{ text: '👤 Написать модератору', callback_data: 'help_contact_moderator' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard);
-}
-
-// 10.13. МЕНЮ ОПОВЕЩЕНИЙ
-async function showAlertMenu(chatId, lang) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '📊 По цене', callback_data: 'alert_price' }],
-            [{ text: '📈 По изменению %', callback_data: 'alert_change' }],
-            [{ text: '📊 По объёму', callback_data: 'alert_volume' }],
-            [{ text: '📰 Новостное', callback_data: 'alert_news' }],
-            [{ text: '📅 Календарное', callback_data: 'alert_calendar' }],
-            [{ text: '📋 Список оповещений', callback_data: 'alert_list' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_functions' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '🔔 Оповещения\n\nВыберите тип оповещения:', keyboard);
-}
-
-// 10.14. МЕНЮ АВТОТОРГОВЛИ
-async function showAutotradeMenu(chatId, lang) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🛡️ Уровень 1 (Защита)', callback_data: 'autotrade_level1' }],
-            [{ text: '🔄 Уровень 2 (Перераспределение)', callback_data: 'autotrade_level2' }],
-            [{ text: '🧠 Уровень 3 (Умный рост)', callback_data: 'autotrade_level3' }],
-            [{ text: '❄️ Уровень 4 (Снежный ком)', callback_data: 'autotrade_level4' }],
-            [{ text: '⏹️ Остановить', callback_data: 'autotrade_stop' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_analyze' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '🚀 Автоторговля\n\nВыберите уровень сложности:', keyboard);
-}
-
-// 10.15. МЕНЮ СОЦИАЛЬНЫХ ТРЕНДОВ
-async function handleSocialTrend(chatId, lang, messageId) {
-    const check = await checkLimit(chatId, 'social');
-    if (!check.allowed) {
-        await sendUpdatedMessage(chatId, check.reason, null, 'Markdown', messageId);
-        return;
-    }
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '₿ BTC', callback_data: 'trend_BTC' }, { text: '⟠ ETH', callback_data: 'trend_ETH' }],
-            [{ text: '🔷 SOL', callback_data: 'trend_SOL' }, { text: '🔶 ADA', callback_data: 'trend_ADA' }],
-            [{ text: '🔹 XRP', callback_data: 'trend_XRP' }, { text: '💠 DOT', callback_data: 'trend_DOT' }],
-            [{ text: '🔎 Найти токен', callback_data: 'trend_search_menu' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '📊 Соц.тренды\n\nВыберите монету:', keyboard, 'Markdown', messageId);
-}
-
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.2 (ИСПРАВЛЕННАЯ)
-// ЧАСТЬ 3 ИЗ 5: АНТИСКАМ, ТРЕНДЫ, НОВОСТИ, КАЛЕНДАРЬ, ОПОВЕЩЕНИЯ, ХОЛОДНЫЙ ДУШ, СНЕЖНЫЙ КОМ
+// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
+// ЧАСТЬ 4/6: АНТИСКАМ, ТРЕНДЫ, НОВОСТИ, КАЛЕНДАРЬ
 // ============================================================
 
 // ============================================================
-// 11. АНТИСКАМ ФУНКЦИИ
+// 12. АНТИСКАМ ФУНКЦИИ
 // ============================================================
 
 async function checkContract(address) {
@@ -1348,7 +1920,7 @@ function checkImpersonation(username) {
 }
 
 // ============================================================
-// 12. ОБРАБОТЧИКИ АНТИСКАМА
+// 13. ОБРАБОТЧИКИ АНТИСКАМА
 // ============================================================
 
 async function handleAntiScamInput(chatId, text, lang, update, messageId) {
@@ -1361,19 +1933,19 @@ async function handleAntiScamInput(chatId, text, lang, update, messageId) {
     const state = await getData('state_' + chatId);
     if (state === 'antiscam_url') {
         if (!isValidUrl(text)) {
-            await sendUpdatedMessage(chatId, '❌ Отправьте ссылку, начинающуюся с http:// или https://', null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, getText(lang, 'scan_link_invalid'), null, 'Markdown', messageId);
             return;
         }
         await handleUrlCheck(chatId, text, lang, messageId);
     } else if (state === 'antiscam_contract') {
         if (!isValidContractAddress(text)) {
-            await sendUpdatedMessage(chatId, '❌ Отправьте адрес контракта (0x...)', null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, getText(lang, 'scan_contract_invalid'), null, 'Markdown', messageId);
             return;
         }
         await handleContractCheck(chatId, text, lang, messageId);
     } else if (state === 'antiscam_dex') {
         if (!isValidContractAddress(text)) {
-            await sendUpdatedMessage(chatId, '❌ Отправьте адрес контракта (0x...)', null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, getText(lang, 'scan_contract_invalid'), null, 'Markdown', messageId);
             return;
         }
         const dexCheck = await checkLimit(chatId, 'dex');
@@ -1387,13 +1959,13 @@ async function handleAntiScamInput(chatId, text, lang, update, messageId) {
         if (update && update.message.document) {
             await handleFileCheck(chatId, update, lang, messageId);
         } else {
-            await sendUpdatedMessage(chatId, '❌ Отправьте файл для проверки.', null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, getText(lang, 'scan_file_invalid'), null, 'Markdown', messageId);
         }
     } else if (state === 'antiscam_impersonation') {
         if (update && update.message.forward_from) {
             await handleImpersonationCheck(chatId, update, lang, messageId);
         } else {
-            await sendUpdatedMessage(chatId, '❌ Перешлите сообщение от подозрительного пользователя.', null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, getText(lang, 'scan_impersonation_invalid'), null, 'Markdown', messageId);
         }
     } else if (state === 'antiscam_wallet') {
         await handleWalletCheck(chatId, text, lang, messageId);
@@ -1406,31 +1978,31 @@ async function handleAntiScamInput(chatId, text, lang, update, messageId) {
 async function handleUrlCheck(chatId, url, lang, messageId) {
     await sendTyping(chatId);
     const result = await checkUrl(url);
-    const message = result.safe ?
-        '🟢 БЕЗОПАСНО\n\nСсылка не содержит угроз.' :
-        '🔴 ОПАСНО\n\nСсылка содержит угрозы:\n' + result.reason;
+    let message = result.safe ?
+        getText(lang, 'scan_safe') + '\n\n' + getText(lang, 'scan_result_safe', 'Ссылка') :
+        getText(lang, 'scan_danger') + '\n\n' + getText(lang, 'scan_result_danger', 'Ссылка', result.reason);
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔙 Назад к безопасности', callback_data: 'menu_security' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '🛡️ Проверка безопасности', 'Ссылка: ' + url.slice(0, 30) + '...');
+    await addHistory(chatId, getText(lang, 'history_antiscam'), 'Ссылка: ' + url.slice(0, 30) + '...');
 }
 
 async function handleContractCheck(chatId, address, lang, messageId) {
     await sendTyping(chatId);
     const contractInfo = await checkContract(address);
-    const message = '📄 ПРОВЕРКА КОНТРАКТА\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📌 ' + address + '\n\n' + contractInfo.reason + '\n\n💡 Проверьте вручную: https://etherscan.io/address/' + address;
+    let message = '📄 ПРОВЕРКА КОНТРАКТА\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📌 ' + address + '\n\n' + contractInfo.reason + '\n\n💡 Проверьте вручную: https://etherscan.io/address/' + address;
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔙 Назад к безопасности', callback_data: 'menu_security' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '🛡️ Проверка безопасности', 'Контракт: ' + address.slice(0, 10) + '...');
+    await addHistory(chatId, getText(lang, 'history_antiscam'), 'Контракт: ' + address.slice(0, 10) + '...');
 }
 
 async function handleDEXCheck(chatId, address, lang, messageId) {
@@ -1461,12 +2033,12 @@ async function handleDEXCheck(chatId, address, lang, messageId) {
         message += '🔗 [Etherscan](https://etherscan.io/address/' + address + ')';
         const keyboard = {
             inline_keyboard: [
-                [{ text: '🔙 Назад к безопасности', callback_data: 'menu_security' }],
-                [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+                [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-        await addHistory(chatId, '🛡️ Проверка безопасности', 'DEX: ' + address.slice(0, 10) + '...');
+        await addHistory(chatId, getText(lang, 'history_antiscam'), 'DEX: ' + address.slice(0, 10) + '...');
     } catch (error) {
         console.error('❌ DEX check error:', error);
         await sendUpdatedMessage(chatId, '❌ Ошибка при проверке DEX.', null, 'Markdown', messageId);
@@ -1486,12 +2058,12 @@ async function handleFileCheck(chatId, update, lang, messageId) {
     const message = '📁 ПРОВЕРКА ФАЙЛА\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📌 ' + fileName + '\n📏 ' + (file.file_size / 1024).toFixed(1) + ' KB\n\n' + result;
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔙 Назад к безопасности', callback_data: 'menu_security' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '🛡️ Проверка безопасности', 'Файл: ' + fileName);
+    await addHistory(chatId, getText(lang, 'history_antiscam'), 'Файл: ' + fileName);
 }
 
 async function handleImpersonationCheck(chatId, update, lang, messageId) {
@@ -1499,25 +2071,25 @@ async function handleImpersonationCheck(chatId, update, lang, messageId) {
     const username = forwarded.username || '';
     if (!username) {
         await sendUpdatedMessage(chatId, '❌ Не удалось определить пользователя.', null, 'Markdown', messageId);
-        await showMainMenu(chatId, lang);
+        await showMainMenu(chatId);
         return;
     }
     await sendTyping(chatId);
     const result = checkImpersonation(username);
     let message = '🔄 ПРОВЕРКА АККАУНТА\n━━━━━━━━━━━━━━━━━━━━━━━\n\n👤 @' + username + '\n\n';
     if (result) {
-        message += '🔴 ОПАСНО\n\n' + result;
+        message += getText(lang, 'scan_danger') + '\n\n' + result;
     } else {
-        message += '🟢 БЕЗОПАСНО\n\n✅ Аккаунт безопасен.';
+        message += getText(lang, 'scan_safe') + '\n\n✅ Аккаунт безопасен.';
     }
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔙 Назад к безопасности', callback_data: 'menu_security' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '🛡️ Проверка безопасности', 'Аккаунт: @' + username);
+    await addHistory(chatId, getText(lang, 'history_antiscam'), 'Аккаунт: @' + username);
 }
 
 async function handleWalletCheck(chatId, address, lang, messageId) {
@@ -1529,7 +2101,7 @@ async function handleWalletCheck(chatId, address, lang, messageId) {
     }
     await sendTyping(chatId);
     if (!isValidContractAddress(address)) {
-        await sendUpdatedMessage(chatId, '❌ Неверный адрес кошелька.\n\nОтправь адрес, начинающийся с 0x...', null, 'Markdown', messageId);
+        await sendUpdatedMessage(chatId, getText(lang, 'wallet_invalid'), null, 'Markdown', messageId);
         return;
     }
     const walletInfo = await checkWallet(address);
@@ -1555,20 +2127,19 @@ async function handleWalletCheck(chatId, address, lang, messageId) {
     message += '━━━━━━━━━━━━━━━━━━━━━━━\n🔗 Просмотр: https://etherscan.io/address/' + address;
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔐 Подключить биржу', callback_data: 'menu_connect' }],
-            [{ text: '🔙 Назад к безопасности', callback_data: 'menu_security' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'wallet_connect'), callback_data: 'menu_connect' }],
+            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '🛡️ Проверка безопасности', 'Кошелёк: ' + address.slice(0, 10) + '...');
+    await addHistory(chatId, getText(lang, 'history_antiscam'), 'Кошелёк: ' + address.slice(0, 10) + '...');
     await setData('state_' + chatId, 'idle');
 }
 
 // ============================================================
-// 13. АВТОМАТИЧЕСКАЯ ПРОВЕРКА ССЫЛОК И КОНТРАКТОВ
+// 14. АВТОМАТИЧЕСКАЯ ПРОВЕРКА
 // ============================================================
-
 async function autoCheckLinks(chatId, text, lang, messageId) {
     const urls = text.match(/https?:\/\/[^\s]+/g);
     if (!urls) return;
@@ -1583,11 +2154,11 @@ async function autoCheckLinks(chatId, text, lang, messageId) {
                 const keyboard = {
                     inline_keyboard: [
                         [{ text: '🛡️ Проверить другое', callback_data: 'menu_security' }],
-                        [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+                        [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
                     ]
                 };
                 await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-                await addHistory(chatId, '🛡️ Проверка безопасности', 'Авто: ' + url.slice(0, 30) + '...');
+                await addHistory(chatId, getText(lang, 'history_antiscam'), 'Авто: ' + url.slice(0, 30) + '...');
             }
         } catch (error) {
             console.error('❌ Auto-check error:', error);
@@ -1604,15 +2175,15 @@ async function autoCheckContract(chatId, address, lang, messageId) {
     const keyboard = {
         inline_keyboard: [
             [{ text: '🛡️ Проверить другое', callback_data: 'menu_security' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, result, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '🛡️ Проверка безопасности', 'Контракт: ' + address.slice(0, 10) + '...');
+    await addHistory(chatId, getText(lang, 'history_antiscam'), 'Контракт: ' + address.slice(0, 10) + '...');
 }
 
 // ============================================================
-// 14. ТРЕНДЫ (СОЦИАЛЬНЫЕ)
+// 15. ТРЕНДЫ (СОЦИАЛЬНЫЕ)
 // ============================================================
 
 const TICKER_TO_COINGECKO = {
@@ -1661,7 +2232,7 @@ async function handleTrendClick(chatId, data, lang, messageId) {
         return;
     }
     await sendTyping(chatId);
-    await sendUpdatedMessage(chatId, '⏳ Получаю данные по ' + coin + '...', null, 'Markdown', messageId);
+    await sendUpdatedMessage(chatId, getText(lang, 'social_analyzing', coin), null, 'Markdown', messageId);
     try {
         const coinId = TICKER_TO_COINGECKO[coin] || coin.toLowerCase();
         let dataObj = await getCachedCoinGecko(coinId);
@@ -1714,34 +2285,22 @@ async function handleTrendClick(chatId, data, lang, messageId) {
             '🕐 Обновлено: только что\n📡 Источник: CoinGecko';
         const keyboard = {
             inline_keyboard: [
-                [{ text: '🔙 Назад к рынку', callback_data: 'menu_market' }],
-                [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+                [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-        await addHistory(chatId, '📈 Соц.тренды', coin);
+        await addHistory(chatId, getText(lang, 'history_social'), coin);
     } catch (error) {
         console.error('❌ Trend error:', error);
         await sendUpdatedMessage(chatId, '❌ Ошибка получения данных по ' + coin + '. Попробуйте позже.', null, 'Markdown', messageId);
     }
 }
 
-async function handleTrendSearchMenu(chatId, lang, messageId) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔎 По названию токена', callback_data: 'trend_search_name' }],
-            [{ text: '📄 По адресу контракта', callback_data: 'trend_search_contract' }],
-            [{ text: '🔙 Назад к трендам', callback_data: 'menu_social' }]
-        ]
-    };
-    const message = '🔍 Как искать токен?\n\n📌 По названию — введи тикер (PEPE, DOGE, SHIB)\n📄 По адресу — вставь адрес контракта (0x...)\n\n💡 Если адрес контракта — бот покажет DEX данные и ликвидность.';
-    await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-}
-
 async function handleTrendSearchInput(chatId, text, lang, messageId) {
     const input = text.trim().toUpperCase();
     if (input.length < 2 || input.length > 15) {
-        await sendUpdatedMessage(chatId, '❌ Некорректное название токена.\n\n📌 Введите тикер (например: PEPE, ARB, SOL, DOGE, SHIB).', null, 'Markdown', messageId);
+        await sendUpdatedMessage(chatId, getText(lang, 'social_search_invalid'), null, 'Markdown', messageId);
         await setData('state_' + chatId, 'waiting_for_trend_search');
         return;
     }
@@ -1787,8 +2346,8 @@ async function handleContractSearch(chatId, address, lang, messageId) {
         const keyboard = {
             inline_keyboard: [
                 [{ text: '🔍 Поискать другой токен', callback_data: 'trend_search_menu' }],
-                [{ text: '🔙 Назад к трендам', callback_data: 'menu_social' }],
-                [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+                [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_social' }],
+                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -1801,7 +2360,7 @@ async function handleContractSearch(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 15. НОВОСТИ
+// 16. НОВОСТИ
 // ============================================================
 
 class NewsManager {
@@ -1952,8 +2511,7 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         await sendUpdatedMessage(chatId, result.message, null, 'Markdown', messageId);
         return;
     }
-    const isRu = lang === 'ru';
-    let report = '📰 НОВОСТИ ДЛЯ ТВОЕГО ПОРТФЕЛЯ\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    let report = getText(lang, 'news_personalized_header');
     if (result.fromCache) {
         report += '🕐 Обновлено ' + result.age + ' мин. назад\n';
     } else {
@@ -1961,12 +2519,12 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
     }
     report += '📌 По твоим активам: ' + result.assets.map(function(a) { return a.symbol; }).join(', ') + '\n\n';
     if (result.articles.length === 0) {
-        report += '📭 Новостей не найдено\n\nПопробуй обновить через 5-10 минут';
+        report += getText(lang, 'news_no_news') + '\n\nПопробуй обновить через 5-10 минут';
         const keyboard = {
             inline_keyboard: [
                 [{ text: '🔄 Обновить', callback_data: 'menu_news' }],
-                [{ text: '🔙 Назад к рынку', callback_data: 'menu_market' }],
-                [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+                [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
@@ -1976,7 +2534,7 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         const article = result.articles.slice(0, 7)[i];
         const title = article.title?.length > 80 ? article.title.slice(0, 77) + '...' : article.title || 'Новость';
         const source = article.source?.name || 'Unknown';
-        const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString(isRu ? 'ru-RU' : 'en-US') : '';
+        const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString('ru-RU') : '';
         const description = article.description?.length > 120 ? article.description.slice(0, 117) + '...' : article.description || '';
         const assetTag = article.asset ? ' 🎯 ' + article.asset : '';
         report += '📌 ' + title + assetTag + '\n';
@@ -1994,12 +2552,12 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
     const keyboard = {
         inline_keyboard: [
             [{ text: '🔄 Обновить', callback_data: 'menu_news' }],
-            [{ text: '🔙 Назад к рынку', callback_data: 'menu_market' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '📰 Новости', 'Персонализированные (' + result.articles.length + ')');
+    await addHistory(chatId, getText(lang, 'history_news'), 'Персонализированные (' + result.articles.length + ')');
 }
 
 async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
@@ -2018,7 +2576,7 @@ async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
         const response = await fetch(url);
         const data = await response.json();
         if (data.status !== 'ok' || !data.articles || data.articles.length === 0) {
-            await sendUpdatedMessage(chatId, '📭 Новостей не найдено.', null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, getText(lang, 'news_empty'), null, 'Markdown', messageId);
             return;
         }
         await setData(cacheKey, JSON.stringify({ articles: data.articles, timestamp: Date.now() }), 300);
@@ -2031,7 +2589,7 @@ async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
 
 async function sendNewsReport(chatId, articles, coin, lang, messageId) {
     const isRu = lang === 'ru';
-    let report = '📰 НОВОСТИ: ' + coin.toUpperCase() + '\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    let report = getText(lang, 'news_coin', coin.toUpperCase());
     let count = 0;
     const seenUrls = new Set();
     for (let i = 0; i < articles.length; i++) {
@@ -2059,22 +2617,27 @@ async function sendNewsReport(chatId, articles, coin, lang, messageId) {
     report += '🔄 /news ' + coin + ' — обновить';
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔙 Назад к рынку', callback_data: 'menu_market' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '📰 Новости', coin);
+    await addHistory(chatId, getText(lang, 'history_news'), coin);
 }
 
 // ============================================================
-// 16. КАЛЕНДАРЬ ТРЕЙДЕРА
+// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
+// ЧАСТЬ 5/6: КАЛЕНДАРЬ, ОПОВЕЩЕНИЯ, АВТОТОРГОВЛЯ, ХОЛОДНЫЙ ДУШ
+// ============================================================
+
+// ============================================================
+// 17. КАЛЕНДАРЬ ТРЕЙДЕРА
 // ============================================================
 
 async function handleCalendarCommand(chatId, lang, messageId) {
     const plan = await getUserPlan(chatId);
     if (!plan.limits.panic) {
-        await sendUpdatedMessage(chatId, '❌ Календарь трейдера доступен на тарифах PRO и VIP.\n\n💳 /subscribe', null, 'Markdown', messageId);
+        await sendUpdatedMessage(chatId, getText(lang, 'calendar_pro_only'), null, 'Markdown', messageId);
         return;
     }
     const check = await checkLimit(chatId, 'calendar');
@@ -2083,7 +2646,7 @@ async function handleCalendarCommand(chatId, lang, messageId) {
         return;
     }
     await sendTyping(chatId);
-    await sendUpdatedMessage(chatId, '📅 Формирую календарь...', null, 'Markdown', messageId);
+    await sendUpdatedMessage(chatId, getText(lang, 'calendar_analyzing'), null, 'Markdown', messageId);
     try {
         const cacheKey = 'economic_calendar';
         const cached = await getData(cacheKey);
@@ -2110,7 +2673,7 @@ async function handleCalendarCommand(chatId, lang, messageId) {
             });
         }
         if (events.length === 0) {
-            await sendUpdatedMessage(chatId, '📭 На эту неделю важных событий не найдено.', null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, getText(lang, 'calendar_empty'), null, 'Markdown', messageId);
             return;
         }
         await setData(cacheKey, JSON.stringify({ events: events, timestamp: Date.now() }), 1800);
@@ -2122,27 +2685,19 @@ async function handleCalendarCommand(chatId, lang, messageId) {
 }
 
 async function sendCalendarReport(chatId, events, lang, messageId) {
-    let calendar = '📅 КАЛЕНДАРЬ ТРЕЙДЕРА\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    for (let i = 0; i < events.length; i++) {
-        const event = events[i];
-        calendar += '📌 ' + event.title + '\n';
-        calendar += '📅 ' + event.date + '\n';
-        if (event.importance) calendar += '⭐ Важность: ' + event.importance + '\n';
-        if (event.impact) calendar += '📊 Влияние: ' + event.impact + '\n';
-        calendar += '━━━━━━━━━━━━━━━━━━━━━━━\n';
-    }
+    const calendar = getText(lang, 'calendar_result', events);
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔙 Назад к рынку', callback_data: 'menu_market' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
+            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, calendar, keyboard, 'Markdown', messageId);
-    await addHistory(chatId, '📅 Календарь', 'Неделя');
+    await addHistory(chatId, getText(lang, 'history_calendar'), 'Неделя');
 }
 
 // ============================================================
-// 17. ОПОВЕЩЕНИЯ
+// 18. ОПОВЕЩЕНИЯ
 // ============================================================
 
 async function createAlert(chatId, type, params) {
@@ -2160,21 +2715,34 @@ async function createAlert(chatId, type, params) {
     return { success: true };
 }
 
+async function getAlerts(chatId) {
+    const key = 'alerts_' + chatId;
+    const data = await getData(key);
+    return data ? (typeof data === 'string' ? JSON.parse(data) : data) : [];
+}
+
+async function deleteAlert(chatId, alertId) {
+    const key = 'alerts_' + chatId;
+    let alerts = await getData(key);
+    if (!alerts) return;
+    alerts = typeof alerts === 'string' ? JSON.parse(alerts) : alerts;
+    const filtered = alerts.filter(function(a) { return a.id !== alertId; });
+    await setData(key, JSON.stringify(filtered));
+}
+
 async function checkAlerts() {
     const keys = await VOID_KV.list('alerts_');
     for (let k = 0; k < keys.length; k++) {
         const key = keys[k];
         const chatId = parseInt(key.name.replace('alerts_', ''));
-        const alerts = await getData(key.name);
-        if (!alerts) continue;
-        const parsedAlerts = typeof alerts === 'string' ? JSON.parse(alerts) : alerts;
+        const alerts = await getAlerts(chatId);
         const keysUser = await loadUserKeys(chatId);
         if (!keysUser) continue;
         try {
             const exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
             let updated = false;
-            for (let i = 0; i < parsedAlerts.length; i++) {
-                const alert = parsedAlerts[i];
+            for (let i = 0; i < alerts.length; i++) {
+                const alert = alerts[i];
                 if (!alert.active) continue;
                 try {
                     const ticker = await exchange.fetchTicker(alert.params.symbol + '/USDT');
@@ -2209,7 +2777,7 @@ async function checkAlerts() {
                 }
             }
             if (updated) {
-                await setData(key.name, JSON.stringify(parsedAlerts));
+                await setData(key.name, JSON.stringify(alerts));
             }
         } catch (error) {
             console.error('❌ Ошибка подключения к бирже для ' + chatId + ':', error);
@@ -2218,121 +2786,93 @@ async function checkAlerts() {
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.2 (ИСПРАВЛЕННАЯ)
-// ЧАСТЬ 4 ИЗ 5: ХОЛОДНЫЙ ДУШ, СНЕЖНЫЙ КОМ, АВТОТОРГОВЛЯ, РЕБАЛАНС, ИСТОРИЯ, ПЛАТЕЖИ
+// 19. АВТОТОРГОВЛЯ
 // ============================================================
 
-// ============================================================
-// 18. ХОЛОДНЫЙ ДУШ (ПРОВЕРКА ВСЕХ ТОКЕНОВ)
-// ============================================================
-
-async function checkPanic() {
-    const keys = await VOID_KV.list('panic_');
+async function runAutotrade() {
+    const keys = await VOID_KV.list('autotrade_');
     for (let k = 0; k < keys.length; k++) {
         const key = keys[k];
-        const chatId = parseInt(key.name.replace('panic_', ''));
-        const config = await getData(key.name);
-        if (!config) continue;
-        const parsedConfig = typeof config === 'string' ? JSON.parse(config) : config;
-        if (!parsedConfig.active) continue;
+        const chatId = parseInt(key.name.replace('autotrade_', ''));
+        const data = await getData(key.name);
+        if (!data) continue;
+        const config = typeof data === 'string' ? JSON.parse(data) : data;
+        if (!config.active) continue;
         const keysUser = await loadUserKeys(chatId);
         if (!keysUser) continue;
         try {
             const exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
             const balance = await exchange.fetchBalance();
-            const coins = Object.keys(balance.total).filter(function(c) { return c !== 'USDT' && balance.total[c] > 0; });
-            if (coins.length === 0) continue;
-            let panicTriggered = false;
-            let droppedCoins = [];
-            for (let i = 0; i < coins.length; i++) {
-                const coin = coins[i];
-                try {
-                    const ticker = await exchange.fetchTicker(coin + '/USDT');
-                    if (!ticker) continue;
-                    const currentPrice = ticker.last;
-                    const priceKey = 'panic_price_' + chatId + '_' + coin;
-                    const previousPrice = await getData(priceKey);
-                    if (previousPrice) {
-                        const prev = parseFloat(previousPrice);
-                        const drop = ((prev - currentPrice) / prev) * 100;
-                        if (drop >= 5) {
-                            panicTriggered = true;
-                            droppedCoins.push({ coin: coin, drop: drop, currentPrice: currentPrice, prev: prev });
-                        }
-                    }
-                    await setData(priceKey, currentPrice.toString(), 3600);
-                } catch (e) {
-                    console.error('❌ Ошибка проверки ' + coin + ':', e.message);
-                }
+            const total = balance.total;
+            const coins = Object.keys(total).filter(function(c) { return c !== 'USDT' && total[c] > 0; });
+            if (config.level === 4) {
+                await runSnowballStrategy(chatId);
+                continue;
             }
-            if (panicTriggered) {
-                const coinsList = droppedCoins.map(function(c) { return '• ' + c.coin + ': -' + c.drop.toFixed(1) + '%'; }).join('\n');
-                const message = '🚨 ХОЛОДНЫЙ ДУШ СРАБОТАЛ!\n\n' +
-                    'Обнаружено падение >5% по нескольким активам:\n\n' + coinsList + '\n\n' +
-                    '⚠️ Рекомендуется конвертировать ВСЕ активы в USDT для защиты капитала.';
-                const keyboard = {
-                    inline_keyboard: [
-                        [{ text: '🔄 Конвертировать всё в USDT', callback_data: 'panic_convert_all' }],
-                        [{ text: '🔙 Выйти в меню', callback_data: 'exit_to_menu' }]
-                    ]
-                };
-                await sendMessage(chatId, message, keyboard);
-                await setData(key.name, JSON.stringify({
-                    active: true,
-                    lastCheck: Date.now(),
-                    triggered: true,
-                    droppedCoins: droppedCoins
-                }));
+            if (config.level === 1) {
+                for (let i = 0; i < coins.length; i++) {
+                    const coin = coins[i];
+                    try {
+                        const ticker = await exchange.fetchTicker(coin + '/USDT');
+                        if (!ticker) continue;
+                        const price = ticker.last;
+                        const stop5 = price * 0.95;
+                        const stop10 = price * 0.90;
+                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin], stop5, { stopPrice: stop5 });
+                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin] * 0.5, stop10, { stopPrice: stop10 });
+                    } catch (e) {}
+                }
+            } else if (config.level === 2) {
+                for (let i = 0; i < coins.length; i++) {
+                    const coin = coins[i];
+                    try {
+                        const ticker = await exchange.fetchTicker(coin + '/USDT');
+                        if (!ticker) continue;
+                        const change = ticker.percentage || 0;
+                        const volume = ticker.quoteVolume || 0;
+                        if (volume < 50000 && change < 0) {
+                            await exchange.createMarketSellOrder(coin + '/USDT', total[coin]);
+                        } else if (change > 5) {
+                            const amount = (0.01 * balance.total.USDT) / ticker.last;
+                            if (amount > 0.001) await exchange.createMarketBuyOrder(coin + '/USDT', amount);
+                        }
+                    } catch (e) {}
+                }
+            } else if (config.level === 3) {
+                const settingsKey = 'autotrade_settings_' + chatId;
+                let settings = await getData(settingsKey);
+                settings = settings ? (typeof settings === 'string' ? JSON.parse(settings) : settings) : {};
+                for (let i = 0; i < coins.length; i++) {
+                    const coin = coins[i];
+                    try {
+                        const ticker = await exchange.fetchTicker(coin + '/USDT');
+                        if (!ticker) continue;
+                        const price = ticker.last;
+                        const symbol = coin + '/USDT';
+                        if (!settings[symbol]) settings[symbol] = { stop: price * 0.95, entry: price };
+                        if (price > settings[symbol].entry * 1.05) {
+                            const newStop = price * 0.95;
+                            await exchange.cancelAllOrders(symbol);
+                            await exchange.createOrder(symbol, 'stop_loss_limit', 'sell', total[coin], newStop, { stopPrice: newStop });
+                            settings[symbol].stop = newStop;
+                        }
+                        if (price > settings[symbol].entry * 1.2) {
+                            const profitAmount = total[coin] * 0.3;
+                            await exchange.createMarketSellOrder(symbol, profitAmount);
+                            settings[symbol].entry = price;
+                        }
+                    } catch (e) {}
+                }
+                await setData(settingsKey, JSON.stringify(settings));
             }
         } catch (error) {
-            console.error('❌ Panic check error for ' + chatId + ':', error);
+            console.error('❌ Autotrade error for ' + chatId + ':', error);
         }
-    }
-}
-
-async function handlePanicConvertAll(chatId) {
-    const keys = await loadUserKeys(chatId);
-    if (!keys) {
-        await sendMessage(chatId, '❌ Нет ключей для конвертации.');
-        return;
-    }
-    try {
-        const exchange = await connectExchange(keys.exchangeId, keys.apiKey, keys.secretKey);
-        const balance = await exchange.fetchBalance();
-        let converted = 0;
-        let details = [];
-        const coins = Object.keys(balance.total).filter(function(c) { return c !== 'USDT' && balance.total[c] > 0; });
-        for (let i = 0; i < coins.length; i++) {
-            const coin = coins[i];
-            try {
-                const amount = balance.total[coin];
-                const ticker = await exchange.fetchTicker(coin + '/USDT');
-                const value = amount * ticker.last;
-                await exchange.createMarketSellOrder(coin + '/USDT', amount);
-                converted++;
-                details.push('• ' + coin + ': ' + amount.toFixed(4) + ' ≈ $' + value.toFixed(2));
-            } catch (e) {
-                details.push('• ' + coin + ': Ошибка: ' + e.message);
-            }
-        }
-        const message = '✅ ХОЛОДНЫЙ ДУШ — КОНВЕРТАЦИЯ ВЫПОЛНЕНА!\n\n' +
-            '🔄 Продано ' + converted + ' активов в USDT\n\n' +
-            details.join('\n') + '\n\n' +
-            '🛡️ Портфель в безопасности.';
-        await sendMessage(chatId, message);
-        await deleteData('panic_' + chatId);
-        const priceKeys = await VOID_KV.list('panic_price_' + chatId + '_');
-        for (let j = 0; j < priceKeys.length; j++) {
-            await deleteData(priceKeys[j].name);
-        }
-    } catch (error) {
-        console.error('❌ Panic convert error:', error);
-        await sendMessage(chatId, '❌ Ошибка конвертации: ' + error.message);
     }
 }
 
 // ============================================================
-// 19. СТРАТЕГИЯ "СНЕЖНЫЙ КОМ" (УРОВЕНЬ 4)
+// 20. СТРАТЕГИЯ "СНЕЖНЫЙ КОМ" (УРОВЕНЬ 4)
 // ============================================================
 
 class SnowballTracker {
@@ -2468,290 +3008,121 @@ async function runSnowballStrategy(chatId) {
 }
 
 // ============================================================
-// 20. АВТОТОРГОВЛЯ (ОСНОВНАЯ)
+// 21. ХОЛОДНЫЙ ДУШ (ПРОВЕРКА ВСЕХ ТОКЕНОВ)
 // ============================================================
 
-async function runAutotrade() {
-    const keys = await VOID_KV.list('autotrade_');
+async function checkPanic() {
+    const keys = await VOID_KV.list('panic_');
     for (let k = 0; k < keys.length; k++) {
         const key = keys[k];
-        const chatId = parseInt(key.name.replace('autotrade_', ''));
-        const data = await getData(key.name);
-        if (!data) continue;
-        const config = typeof data === 'string' ? JSON.parse(data) : data;
-        if (!config.active) continue;
-        const mode = await getData('mode_' + chatId) || 'beginner';
-        const thresholds = getRiskThresholds(mode);
+        const chatId = parseInt(key.name.replace('panic_', ''));
+        const config = await getData(key.name);
+        if (!config) continue;
+        const parsedConfig = typeof config === 'string' ? JSON.parse(config) : config;
+        if (!parsedConfig.active) continue;
         const keysUser = await loadUserKeys(chatId);
         if (!keysUser) continue;
         try {
             const exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
             const balance = await exchange.fetchBalance();
-            const total = balance.total;
-            const coins = Object.keys(total).filter(function(c) { return c !== 'USDT' && total[c] > 0; });
-            if (config.level === 4) {
-                console.log('🚀 Запуск "Снежного кома" для ' + chatId);
-                await runSnowballStrategy(chatId);
-                continue;
+            const coins = Object.keys(balance.total).filter(function(c) { return c !== 'USDT' && balance.total[c] > 0; });
+            if (coins.length === 0) continue;
+            let panicTriggered = false;
+            let droppedCoins = [];
+            for (let i = 0; i < coins.length; i++) {
+                const coin = coins[i];
+                try {
+                    const ticker = await exchange.fetchTicker(coin + '/USDT');
+                    if (!ticker) continue;
+                    const currentPrice = ticker.last;
+                    const priceKey = 'panic_price_' + chatId + '_' + coin;
+                    const previousPrice = await getData(priceKey);
+                    if (previousPrice) {
+                        const prev = parseFloat(previousPrice);
+                        const drop = ((prev - currentPrice) / prev) * 100;
+                        if (drop >= 5) {
+                            panicTriggered = true;
+                            droppedCoins.push({ coin: coin, drop: drop, currentPrice: currentPrice, prev: prev });
+                        }
+                    }
+                    await setData(priceKey, currentPrice.toString(), 3600);
+                } catch (e) {
+                    console.error('❌ Ошибка проверки ' + coin + ':', e.message);
+                }
             }
-            if (config.level === 1) {
-                for (let i = 0; i < coins.length; i++) {
-                    const coin = coins[i];
-                    try {
-                        const ticker = await exchange.fetchTicker(coin + '/USDT');
-                        if (!ticker) continue;
-                        const price = ticker.last;
-                        const stopLoss = thresholds.stopLoss;
-                        const stop5 = price * (1 - stopLoss / 100);
-                        const stop10 = price * 0.90;
-                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin], stop5, { stopPrice: stop5 });
-                        await exchange.createOrder(coin + '/USDT', 'stop_loss_limit', 'sell', total[coin] * 0.5, stop10, { stopPrice: stop10 });
-                    } catch (e) {}
-                }
-            } else if (config.level === 2) {
-                for (let i = 0; i < coins.length; i++) {
-                    const coin = coins[i];
-                    try {
-                        const ticker = await exchange.fetchTicker(coin + '/USDT');
-                        if (!ticker) continue;
-                        const change = ticker.percentage || 0;
-                        const volume = ticker.quoteVolume || 0;
-                        if (volume < 50000 && change < 0) {
-                            await exchange.createMarketSellOrder(coin + '/USDT', total[coin]);
-                        } else if (change > 5) {
-                            const amount = (0.01 * balance.total.USDT) / ticker.last;
-                            if (amount > 0.001) await exchange.createMarketBuyOrder(coin + '/USDT', amount);
-                        }
-                    } catch (e) {}
-                }
-            } else if (config.level === 3) {
-                const settingsKey = 'autotrade_settings_' + chatId;
-                let settings = await getData(settingsKey);
-                settings = settings ? (typeof settings === 'string' ? JSON.parse(settings) : settings) : {};
-                for (let i = 0; i < coins.length; i++) {
-                    const coin = coins[i];
-                    try {
-                        const ticker = await exchange.fetchTicker(coin + '/USDT');
-                        if (!ticker) continue;
-                        const price = ticker.last;
-                        const symbol = coin + '/USDT';
-                        if (!settings[symbol]) settings[symbol] = { stop: price * 0.95, entry: price };
-                        if (price > settings[symbol].entry * 1.05) {
-                            const newStop = price * 0.95;
-                            await exchange.cancelAllOrders(symbol);
-                            await exchange.createOrder(symbol, 'stop_loss_limit', 'sell', total[coin], newStop, { stopPrice: newStop });
-                            settings[symbol].stop = newStop;
-                        }
-                        if (price > settings[symbol].entry * 1.2) {
-                            const profitAmount = total[coin] * 0.3;
-                            await exchange.createMarketSellOrder(symbol, profitAmount);
-                            settings[symbol].entry = price;
-                        }
-                    } catch (e) {}
-                }
-                await setData(settingsKey, JSON.stringify(settings));
+            if (panicTriggered) {
+                const coinsList = droppedCoins.map(function(c) { return '• ' + c.coin + ': -' + c.drop.toFixed(1) + '%'; }).join('\n');
+                const message = '🚨 ХОЛОДНЫЙ ДУШ СРАБОТАЛ!\n\n' +
+                    'Обнаружено падение >5% по нескольким активам:\n\n' + coinsList + '\n\n' +
+                    '⚠️ Рекомендуется конвертировать ВСЕ активы в USDT для защиты капитала.';
+                const keyboard = {
+                    inline_keyboard: [
+                        [{ text: '🔄 Конвертировать всё в USDT', callback_data: 'panic_convert_all' }],
+                        [{ text: '🔙 Выйти в меню', callback_data: 'back_to_menu' }]
+                    ]
+                };
+                await sendMessage(chatId, message, keyboard);
+                await setData(key.name, JSON.stringify({
+                    active: true,
+                    lastCheck: Date.now(),
+                    triggered: true,
+                    droppedCoins: droppedCoins
+                }));
             }
         } catch (error) {
-            console.error('❌ Autotrade error for ' + chatId + ':', error);
+            console.error('❌ Panic check error for ' + chatId + ':', error);
         }
     }
 }
 
-// ============================================================
-// 21. РЕБАЛАНС ПОРТФЕЛЯ
-// ============================================================
-
-function getRiskThresholds(mode) {
-    if (mode === 'beginner') {
-        return {
-            stopLoss: 5,
-            takeProfit: 10,
-            maxPosition: 10,
-            maxAltExposure: 30,
-            label: 'Новичок (спокойный)',
-            labelEn: 'Beginner (calm)'
-        };
-    } else {
-        return {
-            stopLoss: 8,
-            takeProfit: 20,
-            maxPosition: 15,
-            maxAltExposure: 40,
-            label: 'Опытный (активный)',
-            labelEn: 'Experienced (active)'
-        };
+async function handlePanicConvertAll(chatId) {
+    const keys = await loadUserKeys(chatId);
+    if (!keys) {
+        await sendMessage(chatId, '❌ Нет ключей для конвертации.');
+        return;
     }
-}
-
-function getIdealPortfolio(mode) {
-    if (mode === 'beginner') {
-        return { btc: 50, alt: 30, stable: 20, label: 'Для новичков' };
-    } else {
-        return { btc: 40, alt: 40, stable: 20, label: 'Для опытных' };
-    }
-}
-
-async function autoRebalance(chatId) {
-    const savedData = await getData('user_' + chatId);
-    if (!savedData) {
-        return { error: '❌ Нет ключей биржи' };
-    }
-    const user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
-    const apiKey = decrypt(user.apiKey);
-    const secretKey = decrypt(user.secretKey);
-    const mode = await getData('mode_' + chatId) || 'beginner';
-    const ideal = getIdealPortfolio(mode);
-    const thresholds = getRiskThresholds(mode);
     try {
-        const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
+        const exchange = await connectExchange(keys.exchangeId, keys.apiKey, keys.secretKey);
         const balance = await exchange.fetchBalance();
-        const total = balance.total;
-        const coins = Object.keys(total).filter(function(key) { return total[key] > 0; });
-        let totalUSDT = 0;
-        let assets = [];
+        let converted = 0;
+        let details = [];
+        const coins = Object.keys(balance.total).filter(function(c) { return c !== 'USDT' && balance.total[c] > 0; });
         for (let i = 0; i < coins.length; i++) {
             const coin = coins[i];
-            if (coin === 'USDT') {
-                totalUSDT += total[coin];
-                continue;
-            }
             try {
+                const amount = balance.total[coin];
                 const ticker = await exchange.fetchTicker(coin + '/USDT');
-                const value = total[coin] * ticker.last;
-                totalUSDT += value;
-                assets.push({ symbol: coin, value: value });
-            } catch (e) {}
-        }
-        for (let a = 0; a < assets.length; a++) {
-            assets[a].weight = (assets[a].value / totalUSDT) * 100;
-        }
-        const btcWeight = assets.find(function(a) { return a.symbol === 'BTC'; })?.weight || 0;
-        const altWeight = assets.filter(function(a) { return a.symbol !== 'BTC' && a.symbol !== 'USDT'; }).reduce(function(sum, a) { return sum + a.weight; }, 0);
-        let trades = [];
-        let message = '';
-        if (btcWeight > ideal.btc + 5) {
-            const excess = (btcWeight - ideal.btc) / 100 * totalUSDT;
-            const btcPrice = assets.find(function(a) { return a.symbol === 'BTC'; })?.value / (total[balance.total.BTC] || 1) || 0;
-            const amount = excess / btcPrice;
-            if (amount > 0.001) {
-                await exchange.createMarketSellOrder('BTC/USDT', amount);
-                trades.push('Продано ' + amount.toFixed(4) + ' BTC (' + excess.toFixed(2) + ' USDT)');
-            }
-        } else if (btcWeight < ideal.btc - 5) {
-            const needed = (ideal.btc - btcWeight) / 100 * totalUSDT;
-            const btcPrice = assets.find(function(a) { return a.symbol === 'BTC'; })?.value / (total[balance.total.BTC] || 1) || 0;
-            const amount = needed / btcPrice;
-            if (amount > 0.001 && balance.total.USDT > needed) {
-                await exchange.createMarketBuyOrder('BTC/USDT', amount);
-                trades.push('Куплено ' + amount.toFixed(4) + ' BTC (' + needed.toFixed(2) + ' USDT)');
+                const value = amount * ticker.last;
+                await exchange.createMarketSellOrder(coin + '/USDT', amount);
+                converted++;
+                details.push('• ' + coin + ': ' + amount.toFixed(4) + ' ≈ $' + value.toFixed(2));
+            } catch (e) {
+                details.push('• ' + coin + ': Ошибка: ' + e.message);
             }
         }
-        if (altWeight > thresholds.maxAltExposure) {
-            const excess = (altWeight - thresholds.maxAltExposure) / 100 * totalUSDT;
-            for (let j = 0; j < assets.length; j++) {
-                const asset = assets[j];
-                if (asset.symbol === 'BTC' || asset.symbol === 'USDT') continue;
-                const sellAmount = (asset.value / altWeight) * excess / (asset.value / (total[asset.symbol] || 1));
-                if (sellAmount > 0.001) {
-                    await exchange.createMarketSellOrder(asset.symbol + '/USDT', sellAmount);
-                    trades.push('Продано ' + sellAmount.toFixed(4) + ' ' + asset.symbol + ' (' + (sellAmount * asset.value / (total[asset.symbol] || 1)).toFixed(2) + ' USDT)');
-                }
-            }
-        }
-        if (trades.length === 0) {
-            return { error: false, message: '✅ Портфель уже сбалансирован. Никаких действий не требуется.' };
-        }
-        message = '✅ РЕБАЛАНС ВЫПОЛНЕН!\n\nВыполнено действий: ' + trades.length + '\n\n' +
-            trades.slice(0, 5).join('\n') +
-            (trades.length > 5 ? '\n... и еще ' + (trades.length - 5) + ' действий' : '');
-        await addHistory(chatId, '🔄 Ребаланс портфеля', trades.length + ' действий');
-        return { error: false, message: message };
-    } catch (error) {
-        console.error('❌ Rebalance error:', error);
-        return { error: '❌ Ошибка ребаланса: ' + error.message };
-    }
-}
-
-// ============================================================
-// 22. ИСТОРИЯ
-// ============================================================
-
-async function addHistory(chatId, action, detail) {
-    const key = 'history_' + chatId;
-    const data = await getData(key);
-    let history = [];
-    if (data) {
-        try {
-            history = typeof data === 'string' ? JSON.parse(data) : data;
-        } catch (e) {
-            console.error('❌ History parse error for ' + chatId + ':', e);
-            history = [];
-        }
-    }
-    history.push({
-        timestamp: Date.now(),
-        date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        action: action,
-        detail: detail
-    });
-    if (history.length > 50) history.shift();
-    await setData(key, JSON.stringify(history));
-}
-
-async function getHistory(chatId) {
-    const key = 'history_' + chatId;
-    const data = await getData(key);
-    if (!data) return [];
-    try {
-        return typeof data === 'string' ? JSON.parse(data) : data;
-    } catch (e) {
-        console.error('❌ History parse error for ' + chatId + ':', e);
-        return [];
-    }
-}
-
-// ============================================================
-// 23. ПЛАТЕЖИ (CRYPTOBOT)
-// ============================================================
-
-async function createCryptoInvoice(chatId, planId, amountRub) {
-    const url = 'https://pay.crypt.bot/api/createInvoice';
-    const usdtAmount = Math.round(amountRub / 90);
-    const plan = PLANS[planId];
-    if (amountRub === 0) return { payUrl: null, invoiceId: null };
-    const body = {
-        asset: 'USDT',
-        amount: usdtAmount,
-        description: 'Void Node - ' + plan.name + ' (' + amountRub + ' RUB ≈ ' + usdtAmount + ' USDT)',
-        payload: 'plan_' + planId + '_' + chatId,
-        paid_btn_name: 'openBot',
-        paid_btn_url: 'https://t.me/' + BOT_USERNAME + '?start=activate_' + planId,
-        hidden_message: '✅ Тариф ' + plan.name + ' активирован! Спасибо! 🙏'
-    };
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Crypto-Pay-API-Token': CRYPTOBOT_TOKEN
-            },
-            body: JSON.stringify(body)
-        });
-        const data = await response.json();
-        if (data.ok) {
-            return { payUrl: data.result.pay_url, invoiceId: data.result.invoice_id };
-        } else {
-            console.error('❌ CryptoBot error:', data.error);
-            return null;
+        const message = '✅ ХОЛОДНЫЙ ДУШ — КОНВЕРТАЦИЯ ВЫПОЛНЕНА!\n\n' +
+            '🔄 Продано ' + converted + ' активов в USDT\n\n' +
+            details.join('\n') + '\n\n' +
+            '🛡️ Портфель в безопасности.';
+        await sendMessage(chatId, message);
+        await deleteData('panic_' + chatId);
+        const priceKeys = await VOID_KV.list('panic_price_' + chatId + '_');
+        for (let j = 0; j < priceKeys.length; j++) {
+            await deleteData(priceKeys[j].name);
         }
     } catch (error) {
-        console.error('❌ Invoice creation error:', error);
-        return null;
+        console.error('❌ Panic convert error:', error);
+        await sendMessage(chatId, '❌ Ошибка конвертации: ' + error.message);
     }
 }
 
 // ============================================================
-// 24. ЗАГРУЗКА КЛЮЧЕЙ ПОЛЬЗОВАТЕЛЯ
+// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
+// ЧАСТЬ 6/6: ОБРАБОТЧИКИ, СЕРВЕР, ЗАПУСК
+// ============================================================
+
+// ============================================================
+// 22. ЗАГРУЗКА КЛЮЧЕЙ ПОЛЬЗОВАТЕЛЯ
 // ============================================================
 
 async function loadUserKeys(chatId) {
@@ -2774,7 +3145,7 @@ async function loadUserKeys(chatId) {
 }
 
 // ============================================================
-// 25. ИСПОЛНЕНИЕ РЕКОМЕНДАЦИЙ
+// 23. ИСПОЛНЕНИЕ РЕКОМЕНДАЦИЙ
 // ============================================================
 
 async function executeRecommendation(chatId, recId) {
@@ -2832,12 +3203,7 @@ async function executeRecommendation(chatId, recId) {
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.2 (ИСПРАВЛЕННАЯ)
-// ЧАСТЬ 5 ИЗ 5: ОБРАБОТЧИКИ CALLBACK, СООБЩЕНИЙ, СЕРВЕР, ЗАПУСК
-// ============================================================
-
-// ============================================================
-// 26. КОМПОЗИЦИЯ ОТЧЕТА
+// 24. КОМПОЗИЦИЯ ОТЧЕТА
 // ============================================================
 
 function createProgressBarUI(value, max, length) {
@@ -2878,7 +3244,6 @@ async function composeReport(engineResult, mode, lang, dailyChange) {
     const signals = engineResult.signals || [];
     const btcMetrics = engineResult.btcMetrics;
     const riskScore = engineResult.riskScore;
-    const thresholds = engineResult.thresholds;
 
     let baseText = '📊 АНАЛИЗ ПОРТФЕЛЯ\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     baseText += '💰 Общая стоимость: $' + (totalUSDT?.toFixed(2) || 0) + ' USDT\n';
@@ -2889,14 +3254,7 @@ async function composeReport(engineResult, mode, lang, dailyChange) {
     baseText += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
     const modeLabel = mode === 'beginner' ? 'Новичок' : 'Опытный';
-    baseText += '🧠 Режим: ' + modeLabel + '\n';
-    if (thresholds) {
-        baseText += '📊 Риск-профиль:\n';
-        baseText += '• Стоп-лосс: ' + thresholds.stopLoss + '%\n';
-        baseText += '• Тейк-профит: ' + thresholds.takeProfit + '%\n';
-        baseText += '• Макс. позиция: ' + thresholds.maxPosition + '%\n';
-        baseText += '• Макс. доля альтов: ' + thresholds.maxAltExposure + '%\n\n';
-    }
+    baseText += '🧠 Режим: ' + modeLabel + '\n\n';
 
     baseText += '📊 РАСПРЕДЕЛЕНИЕ АКТИВОВ\n';
     baseText += 'BTC:      ' + createProgressBarUI(btcPercent) + ' ' + (btcPercent?.toFixed(1) || 0) + '%\n';
@@ -2926,9 +3284,6 @@ async function composeReport(engineResult, mode, lang, dailyChange) {
         if (btcMetrics.var !== undefined) {
             const varEmoji = btcMetrics.var > -5 ? '🟢' : (btcMetrics.var > -10 ? '🟡' : '🔴');
             baseText += varEmoji + ' VaR (95%): ' + btcMetrics.var.toFixed(2) + '%\n';
-        }
-        if (btcMetrics.volatility !== undefined) {
-            baseText += '📉 Волатильность: ' + btcMetrics.volatility.toFixed(2) + '%\n';
         }
         baseText += '\n';
     }
@@ -3002,468 +3357,312 @@ async function composeReport(engineResult, mode, lang, dailyChange) {
 }
 
 // ============================================================
-// 27. ОБРАБОТЧИК CALLBACK
+// 25. ОБРАБОТЧИК CALLBACK
 // ============================================================
 
 async function handleCallback(update) {
     const callback = update.callback_query;
     const chatId = callback.message.chat.id;
-    const messageId = callback.message.message_id;
     const data = callback.data;
     const lang = await getData('lang_' + chatId) || 'ru';
-    
-    const buttonSpamKey = 'btn_spam_' + chatId;
-    const lastButtonClick = await getData(buttonSpamKey);
-    if (lastButtonClick && Date.now() - parseInt(lastButtonClick) < 500) {
-        await answerCallback(callback.id, '⏳ Не спамьте кнопками!', true);
-        return;
-    }
-    await setData(buttonSpamKey, Date.now().toString(), 5);
-    await deleteUserMessage(chatId, messageId);
+
     await answerCallback(callback.id);
+    console.log('🔄 Callback: ' + data + ' от ' + chatId);
 
     try {
-        // === ВЫХОД В МЕНЮ ===
-        if (data === 'exit_to_menu') {
-            await setData('state_' + chatId, 'idle');
-            await showMainMenu(chatId, lang);
-            return;
-        }
-        if (data === 'back_to_menu') { await showMainMenu(chatId, lang); return; }
-        if (data === 'back_to_functions') { await showFunctionsMenu(chatId, lang); return; }
-        if (data === 'back_to_settings') { await showSettingsMenuNew(chatId, lang); return; }
-        if (data === 'back_to_plans') { await showPlansMenu(chatId, lang); return; }
-        if (data === 'back_to_analyze') { await showAnalyzeMenu(chatId, lang); return; }
-        if (data === 'back_to_market') { await showMarketMenu(chatId, lang); return; }
-        if (data === 'menu_functions') { await showFunctionsMenu(chatId, lang); return; }
-        if (data === 'menu_settings_new') { await showSettingsMenuNew(chatId, lang); return; }
-        if (data === 'menu_plans') { await showPlansMenu(chatId, lang); return; }
-        if (data === 'menu_help') { await showHelpMenu(chatId, lang); return; }
-        if (data === 'menu_about') { await showAboutMenu(chatId, lang); return; }
-        if (data === 'menu_analyze') { await showAnalyzeMenu(chatId, lang); return; }
-        if (data === 'menu_security') { await showSecurityMenu(chatId, lang); return; }
-        if (data === 'menu_market') { await showMarketMenu(chatId, lang); return; }
+        if (data === 'back_to_menu') { await showMainMenu(chatId); return; }
+        if (data === 'back_to_functions') { await showFunctionsMenu(chatId); return; }
+        if (data === 'back_to_settings') { await showSettingsMenu(chatId); return; }
+        if (data === 'back_to_analyze') { await showAnalyzeMenu(chatId); return; }
+        if (data === 'back_to_help') { await showHelpMenu(chatId); return; }
+        if (data === 'back_to_market') { await showMarketMenu(chatId); return; }
+
+        if (data === 'menu_functions') { await showFunctionsMenu(chatId); return; }
+        if (data === 'menu_settings_new') { await showSettingsMenu(chatId); return; }
+        if (data === 'menu_plans') { await showPlansMenu(chatId); return; }
+        if (data === 'menu_help') { await showHelpMenu(chatId); return; }
+        if (data === 'menu_about') { await showAboutMenu(chatId); return; }
+        if (data === 'menu_analyze') { await showAnalyzeMenu(chatId); return; }
+        if (data === 'menu_security') { await showSecurityMenu(chatId); return; }
+        if (data === 'menu_market') { await showMarketMenu(chatId); return; }
+        if (data === 'menu_social') { await showSocialTrends(chatId); return; }
+        if (data === 'menu_history') { await showHistoryMenu(chatId); return; }
         if (data === 'menu_news') { await handleNewsCommand(chatId, null, lang, null); return; }
-        if (data === 'menu_history') { await showHistoryMenu(chatId, lang); return; }
-        if (data === 'menu_social') { await handleSocialTrend(chatId, lang, null); return; }
         if (data === 'menu_calendar') { await handleCalendarCommand(chatId, lang, null); return; }
-
-        // === НАСТРОЙКИ ===
-        if (data === 'settings_change_lang') { await showLanguageSelect(chatId, lang); return; }
-        if (data === 'settings_change_mode') { await showModeSelect(chatId, lang); return; }
-        if (data === 'lang_ru' || data === 'lang_en') {
-            const newLang = data === 'lang_ru' ? 'ru' : 'en';
-            await setData('lang_' + chatId, newLang);
-            await sendUpdatedMessage(chatId, '✅ Язык: ' + (newLang === 'ru' ? 'Русский' : 'English'));
-            await showSettingsMenuNew(chatId, newLang);
-            return;
-        }
-        if (data === 'mode_beginner' || data === 'mode_pro') {
-            const newMode = data === 'mode_beginner' ? 'beginner' : 'pro';
-            await setData('mode_' + chatId, newMode);
-            await sendUpdatedMessage(chatId, '✅ Режим: ' + (newMode === 'beginner' ? 'Новичок' : 'Опытный'));
-            await showSettingsMenuNew(chatId, lang);
+        if (data === 'menu_connect') {
+            await sendMessage(chatId, getText(lang, 'connect_prompt'));
+            await setData('state_' + chatId, 'waiting_for_keys');
             return;
         }
 
-        // === ОНБОРДИНГ ===
-        if (data === 'onboard_lang_ru' || data === 'onboard_lang_en') {
-            const newLang = data === 'onboard_lang_ru' ? 'ru' : 'en';
-            await setData('lang_' + chatId, newLang);
-            await showModeSelectOnboarding(chatId, newLang);
+        if (data === 'settings_change_lang') { await showLanguageSelect(chatId); return; }
+        if (data === 'settings_change_mode') { await showModeSelect(chatId); return; }
+
+        if (data === 'lang_ru') {
+            await setData('lang_' + chatId, 'ru');
+            await sendMessage(chatId, '✅ Язык: Русский');
+            await showSettingsMenu(chatId);
             return;
         }
-        if (data === 'onboard_mode_beginner' || data === 'onboard_mode_pro') {
-            const mode = data === 'onboard_mode_beginner' ? 'beginner' : 'pro';
-            await setData('mode_' + chatId, mode);
-            await showVipBonusOffer(chatId, lang);
-            return;
-        }
-        if (data === 'onboard_connect_vip') {
-            await setData('state_' + chatId, 'waiting_for_keys_vip');
-            await sendUpdatedMessage(chatId, '🔐 Отправь API-ключи в формате:\n`API_KEY:SECRET_KEY`\n\n🔄 Для отмены: /cancel');
-            return;
-        }
-        if (data === 'onboard_skip') {
-            await setData('onboarded_' + chatId, 'true');
-            await showMainMenu(chatId, lang);
-            return;
-        }
-        if (data === 'onboard_vip_done') {
-            await showMainMenu(chatId, lang);
+        if (data === 'lang_en') {
+            await setData('lang_' + chatId, 'en');
+            await sendMessage(chatId, '✅ Language: English');
+            await showSettingsMenu(chatId);
             return;
         }
 
-        // === ПОМОЩЬ ===
-        if (data === 'help_q1') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q1', lang)); return; }
-        if (data === 'help_q2') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q2', lang)); return; }
-        if (data === 'help_q3') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q3', lang)); return; }
-        if (data === 'help_q4') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q4', lang)); return; }
-        if (data === 'help_q5') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q5', lang)); return; }
-        if (data === 'help_q6') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q6', lang)); return; }
-        if (data === 'help_q7') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q7', lang)); return; }
-        if (data === 'help_q8') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q8', lang)); return; }
-        if (data === 'help_q9') { await sendUpdatedMessage(chatId, getHelpAnswer('help_answer_q9', lang)); return; }
-        if (data === 'help_contact_moderator') {
-            await sendUpdatedMessage(chatId, '👤 Связь с модератором\n\nНапишите @clofeLEAN — он вам поможет!\n\n📌 Также вы можете задать вопрос в нашем чате поддержки:\n📱 [Чат поддержки](https://t.me/void_node_chat)\n\n⏳ Мы отвечаем в течение 15 минут (в рабочее время).');
+        if (data === 'mode_beginner') {
+            await setData('mode_' + chatId, 'beginner');
+            await sendMessage(chatId, '✅ Режим: Новичок');
+            await showSettingsMenu(chatId);
+            return;
+        }
+        if (data === 'mode_pro') {
+            await setData('mode_' + chatId, 'pro');
+            await sendMessage(chatId, '✅ Режим: Опытный');
+            await showSettingsMenu(chatId);
             return;
         }
 
-        // === АНТИСКАМ ===
-        if (data.startsWith('antiscam_')) {
-            await setData('state_' + chatId, data);
-            const prompts = {
-                'antiscam_url': '🔗 Отправь ссылку для проверки\n🔄 /cancel — отмена',
-                'antiscam_contract': '📄 Отправь адрес контракта (0x...)\n🔄 /cancel — отмена',
-                'antiscam_file': '📁 Отправь файл для проверки\n🔄 /cancel — отмена',
-                'antiscam_dex': '🔍 Отправь адрес контракта для DEX проверки\n🔄 /cancel — отмена',
-                'antiscam_impersonation': '🔄 Перешли сообщение от подозрительного пользователя\n🔄 /cancel — отмена',
-                'antiscam_wallet': '👛 Отправь адрес кошелька для проверки\n📌 Пример: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e\n🔄 /cancel — отмена'
-            };
-            await sendUpdatedMessage(chatId, prompts[data]);
+        if (data === 'antiscam_url') {
+            await setData('state_' + chatId, 'antiscam_url');
+            await sendMessage(chatId, getText(lang, 'scan_link'));
+            return;
+        }
+        if (data === 'antiscam_contract') {
+            await setData('state_' + chatId, 'antiscam_contract');
+            await sendMessage(chatId, getText(lang, 'scan_contract'));
+            return;
+        }
+        if (data === 'antiscam_file') {
+            await setData('state_' + chatId, 'antiscam_file');
+            await sendMessage(chatId, getText(lang, 'scan_file'));
+            return;
+        }
+        if (data === 'antiscam_dex') {
+            await setData('state_' + chatId, 'antiscam_dex');
+            await sendMessage(chatId, getText(lang, 'dex_prompt'));
+            return;
+        }
+        if (data === 'antiscam_impersonation') {
+            await setData('state_' + chatId, 'antiscam_impersonation');
+            await sendMessage(chatId, getText(lang, 'impersonation_prompt'));
+            return;
+        }
+        if (data === 'antiscam_wallet') {
+            await setData('state_' + chatId, 'antiscam_wallet');
+            await sendMessage(chatId, getText(lang, 'wallet_prompt'));
             return;
         }
 
-        // === ТРЕНДЫ ===
+        if (data === 'trend_search_menu') {
+            await showTrendSearchMenu(chatId);
+            return;
+        }
+        if (data === 'trend_search_name') {
+            await setData('state_' + chatId, 'waiting_for_trend_search');
+            await sendMessage(chatId, getText(lang, 'social_search_prompt'));
+            return;
+        }
+        if (data === 'trend_search_contract') {
+            await setData('state_' + chatId, 'waiting_for_contract_search');
+            await sendMessage(chatId, '📄 Отправь адрес контракта для проверки\n\n📌 Пример: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e\n🔄 /cancel — отмена');
+            return;
+        }
         if (data.startsWith('trend_')) {
             await handleTrendClick(chatId, data, lang, null);
             return;
         }
-        if (data === 'trend_search_menu') { await handleTrendSearchMenu(chatId, lang, null); return; }
-        if (data === 'trend_search_name') {
-            await sendUpdatedMessage(chatId, '🔎 Введите название токена\n\n📌 Примеры: PEPE, ARB, SOL, DOGE, SHIB\n🔄 /cancel — отмена');
-            await setData('state_' + chatId, 'waiting_for_trend_search');
-            return;
-        }
-        if (data === 'trend_search_contract') {
-            await sendUpdatedMessage(chatId, '📄 Отправь адрес контракта для проверки\n\n📌 Пример: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e\n🔄 /cancel — отмена');
-            await setData('state_' + chatId, 'waiting_for_contract_search');
+
+        if (data.startsWith('plan_')) {
+            const plan = data.replace('plan_', '');
+            await handlePlanSelection(chatId, plan, lang, null);
             return;
         }
 
-        // === ОПОВЕЩЕНИЯ ===
-        if (data === 'alert_menu') { await showAlertMenu(chatId, lang); return; }
-        if (data === 'alert_price') {
-            await sendUpdatedMessage(chatId, '📊 Создать ценовое оповещение\n\nВведите символ и цену в формате:\n`BTC 70000` (выше) или `BTC 65000 below`');
-            await setData('state_' + chatId, 'alert_price');
+        if (data === 'autotrade_menu') { await showAutotradeMenu(chatId); return; }
+        if (data === 'autotrade_level1') {
+            await setData('autotrade_' + chatId, JSON.stringify({ level: 1, active: true, lastCheck: Date.now() }));
+            await sendMessage(chatId, '🛡️ Уровень 1 (Защита) активирован');
             return;
         }
-        if (data === 'alert_change') {
-            await sendUpdatedMessage(chatId, '📈 Создать оповещение по изменению %\n\nВведите символ и % в формате:\n`BTC 5` (изменение >5% за час)');
-            await setData('state_' + chatId, 'alert_change');
+        if (data === 'autotrade_level2') {
+            await setData('autotrade_' + chatId, JSON.stringify({ level: 2, active: true, lastCheck: Date.now() }));
+            await sendMessage(chatId, '🔄 Уровень 2 (Перераспределение) активирован');
             return;
         }
-        if (data === 'alert_volume') {
-            await sendUpdatedMessage(chatId, '📊 Создать оповещение по объёму\n\nВведите символ и объём в формате:\n`BTC 1000000`');
-            await setData('state_' + chatId, 'alert_volume');
+        if (data === 'autotrade_level3') {
+            await setData('autotrade_' + chatId, JSON.stringify({ level: 3, active: true, lastCheck: Date.now() }));
+            await sendMessage(chatId, '🧠 Уровень 3 (Умный рост) активирован');
             return;
         }
-        if (data === 'alert_news' || data === 'alert_calendar') {
-            const type = data === 'alert_news' ? 'news' : 'calendar';
-            const result = await createAlert(chatId, type, {});
-            if (result.error) { await sendUpdatedMessage(chatId, result.error); return; }
-            await sendUpdatedMessage(chatId, '✅ Оповещение добавлено!');
-            return;
-        }
-        if (data === 'alert_list') {
-            const alerts = await getData('alerts_' + chatId);
-            if (!alerts || (typeof alerts === 'string' ? JSON.parse(alerts) : alerts).length === 0) {
-                await sendUpdatedMessage(chatId, '📭 У вас нет активных оповещений.');
-                return;
-            }
-            const parsedAlerts = typeof alerts === 'string' ? JSON.parse(alerts) : alerts;
-            let text = '📋 Ваши оповещения:\n';
-            for (let i = 0; i < parsedAlerts.length; i++) {
-                const a = parsedAlerts[i];
-                const typeText = a.type === 'price' ? '💰 цена' : a.type === 'change' ? '📈 изменение' : a.type === 'volume' ? '📊 объём' : a.type;
-                text += '• ' + (a.params.symbol || '') + ' (' + typeText + ') – ' + (a.params.target || '') + '\n';
-            }
-            const keyboard = {
-                inline_keyboard: parsedAlerts.map(function(a) {
-                    return [{ text: '❌ Удалить ' + (a.params.symbol || a.id), callback_data: 'alert_delete_' + a.id }];
-                })
-            };
-            keyboard.inline_keyboard.push([{ text: '🔙 Назад', callback_data: 'alert_menu' }]);
-            await sendUpdatedMessage(chatId, text, keyboard);
-            return;
-        }
-        if (data.startsWith('alert_delete_')) {
-            const alertId = data.replace('alert_delete_', '');
-            const key = 'alerts_' + chatId;
-            let alerts = await getData(key);
-            if (alerts) {
-                const parsed = typeof alerts === 'string' ? JSON.parse(alerts) : alerts;
-                const filtered = parsed.filter(function(a) { return a.id !== alertId; });
-                await setData(key, JSON.stringify(filtered));
-                await sendUpdatedMessage(chatId, '✅ Оповещение удалено.');
-                await showAlertMenu(chatId, lang);
-            }
-            return;
-        }
-
-        // === АВТОТОРГОВЛЯ ===
-        if (data === 'autotrade_menu') { await showAutotradeMenu(chatId, lang); return; }
-        if (data === 'autotrade_level1' || data === 'autotrade_level2' || data === 'autotrade_level3' || data === 'autotrade_level4') {
-            const plan = await getUserPlan(chatId);
-            if (!plan.limits.autotrade) {
-                await sendUpdatedMessage(chatId, '❌ Автоторговля доступна только PRO и VIP.\n💳 /subscribe');
-                return;
-            }
-            const levelMap = {
-                'autotrade_level1': 1,
-                'autotrade_level2': 2,
-                'autotrade_level3': 3,
-                'autotrade_level4': 4
-            };
-            const level = levelMap[data];
-            if (level === 4) {
-                await sendUpdatedMessage(chatId, '🚀 Запускаю "Снежный ком"...');
-                const result = await runSnowballStrategy(chatId);
-                if (result.error) {
-                    await sendUpdatedMessage(chatId, '❌ ' + result.error);
-                } else {
-                    await setData('autotrade_' + chatId, JSON.stringify({ level: 4, active: true, lastCheck: Date.now(), type: 'snowball' }));
-                    await sendUpdatedMessage(chatId, '❄️ Стратегия "Снежный ком" запущена!');
-                }
-                return;
-            }
-            await setData('autotrade_' + chatId, JSON.stringify({ level: level, active: true, lastCheck: Date.now() }));
-            await sendUpdatedMessage(chatId, '✅ Автоторговля активирована (уровень ' + level + ')');
+        if (data === 'autotrade_level4') {
+            await setData('autotrade_' + chatId, JSON.stringify({ level: 4, active: true, lastCheck: Date.now(), type: 'snowball' }));
+            await sendMessage(chatId, '❄️ Уровень 4 (Снежный ком) активирован');
             return;
         }
         if (data === 'autotrade_stop') {
             await deleteData('autotrade_' + chatId);
-            await sendUpdatedMessage(chatId, '⏹️ Автоторговля остановлена.');
+            await sendMessage(chatId, getText(lang, 'autotrade_stopped'));
             return;
         }
 
-        // === ТАРИФЫ ===
-        if (data.startsWith('plan_')) {
-            const planId = data.replace('plan_', '');
-            await handlePlanSelection(chatId, planId, lang, null);
+        if (data === 'alert_menu') { await showAlertMenu(chatId); return; }
+        if (data === 'alert_price') {
+            await setData('state_' + chatId, 'alert_price');
+            await sendMessage(chatId, getText(lang, 'alert_create_price'));
+            return;
+        }
+        if (data === 'alert_change') {
+            await setData('state_' + chatId, 'alert_change');
+            await sendMessage(chatId, getText(lang, 'alert_create_change'));
+            return;
+        }
+        if (data === 'alert_volume') {
+            await setData('state_' + chatId, 'alert_volume');
+            await sendMessage(chatId, '📊 Создать оповещение по объёму\n\nВведите символ и объём в формате:\n`BTC 1000000`');
+            return;
+        }
+        if (data === 'alert_news') {
+            const result = await createAlert(chatId, 'news', {});
+            if (result.error) { await sendMessage(chatId, result.error); return; }
+            await sendMessage(chatId, '✅ Оповещение добавлено!');
+            return;
+        }
+        if (data === 'alert_calendar') {
+            const result = await createAlert(chatId, 'calendar', {});
+            if (result.error) { await sendMessage(chatId, result.error); return; }
+            await sendMessage(chatId, '✅ Оповещение добавлено!');
+            return;
+        }
+        if (data === 'alert_list') {
+            const alerts = await getAlerts(chatId);
+            if (alerts.length === 0) {
+                await sendMessage(chatId, '📭 У вас нет активных оповещений.');
+                return;
+            }
+            let text = getText(lang, 'alert_list');
+            for (let i = 0; i < alerts.length; i++) {
+                const a = alerts[i];
+                const typeText = a.type === 'price' ? '💰 цена' : a.type === 'change' ? '📈 изменение' : a.type === 'volume' ? '📊 объём' : a.type;
+                text += '• ' + (a.params.symbol || '') + ' (' + typeText + ') – ' + (a.params.target || '') + '\n';
+            }
+            const keyboard = {
+                inline_keyboard: alerts.map(function(a) {
+                    return [{ text: '❌ Удалить ' + (a.params.symbol || a.id), callback_data: 'alert_delete_' + a.id }];
+                })
+            };
+            keyboard.inline_keyboard.push([{ text: '🔙 Назад', callback_data: 'alert_menu' }]);
+            await sendMessage(chatId, text, keyboard);
+            return;
+        }
+        if (data.startsWith('alert_delete_')) {
+            const alertId = data.replace('alert_delete_', '');
+            await deleteAlert(chatId, alertId);
+            await sendMessage(chatId, getText(lang, 'alert_deleted'));
+            await showAlertMenu(chatId);
             return;
         }
 
-        // === КНОПКИ "ПОДТВЕРДИТЬ" ===
-        if (data === 'action_disconnect') {
-            await deleteData('user_' + chatId);
-            await sendUpdatedMessage(chatId, '🔌 Биржа отключена. Все ключи удалены.');
-            await showMainMenu(chatId, lang);
+        if (data.startsWith('diary_mood_')) {
+            const mood = data.replace('diary_mood_', '');
+            await setData('diary_' + chatId, mood);
+            await sendMessage(chatId, getText(lang, 'mood_saved'));
+            await showMainMenu(chatId);
             return;
         }
+
         if (data === 'action_analyze') {
             const savedData = await getData('user_' + chatId);
             if (!savedData) {
-                await sendUpdatedMessage(chatId, '🔐 Сначала подключи биржу. /connect');
+                await sendMessage(chatId, getText(lang, 'analyzing_no_keys'));
                 return;
             }
-            await sendUpdatedMessage(chatId, '⏳ Начинаю анализ...');
-            const user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
-            const apiKey = decrypt(user.apiKey);
-            const secretKey = decrypt(user.secretKey);
-            try {
-                const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
-                const balance = await exchange.fetchBalance();
-                const total = balance.total;
-                const coins = Object.keys(total).filter(function(key) { return total[key] > 0; });
-                if (coins.length === 0) {
-                    await sendUpdatedMessage(chatId, '📭 На балансе нет монет.');
-                    return;
-                }
-                let totalUSDT = 0;
-                let assets = [];
-                for (let i = 0; i < coins.length; i++) {
-                    const coin = coins[i];
-                    if (coin === 'USDT') {
-                        totalUSDT += total[coin];
-                        continue;
-                    }
-                    try {
-                        const ticker = await exchange.fetchTicker(coin + '/USDT');
-                        const value = total[coin] * ticker.last;
-                        totalUSDT += value;
-                        assets.push({ symbol: coin, value: value });
-                    } catch (e) {}
-                }
-                for (let a = 0; a < assets.length; a++) {
-                    assets[a].weight = (assets[a].value / totalUSDT) * 100;
-                }
-                assets.sort(function(a, b) { return b.weight - a.weight; });
-                const mode = await getData('mode_' + chatId) || 'beginner';
-                const thresholds = getRiskThresholds(mode);
-                const engineResult = {
-                    totalUSDT: totalUSDT,
-                    btcPercent: assets.find(function(a) { return a.symbol === 'BTC'; })?.weight || 0,
-                    altPercent: assets.filter(function(a) { return a.symbol !== 'BTC' && a.symbol !== 'USDT'; }).reduce(function(sum, a) { return sum + a.weight; }, 0),
-                    usdtPercent: assets.find(function(a) { return a.symbol === 'USDT'; })?.weight || 0,
-                    assets: assets,
-                    riskLevel: 'low',
-                    riskScore: 0,
-                    btcMetrics: { sharpe: 0, sortino: 0, var: 0 },
-                    assetMetrics: [],
-                    signals: [],
-                    issues: [],
-                    recommendations: [],
-                    thresholds: thresholds,
-                    timestamp: Date.now()
-                };
-                const report = await composeReport(engineResult, mode, lang, 0);
-                await sendUpdatedMessage(chatId, report.text, report.keyboard);
-                await setData('analysis_' + chatId, JSON.stringify(engineResult), 86400);
-                await addHistory(chatId, '📊 Анализ портфеля', '$' + totalUSDT.toFixed(2));
-            } catch (error) {
-                console.error('❌ Analysis error:', error);
-                await notifyAdmin(error, { chatId: chatId, function: 'action_analyze' });
-                await sendUpdatedMessage(chatId, '❌ Ошибка анализа: ' + error.message);
-            }
+            await sendMessage(chatId, '⏳ Начинаю анализ портфеля...');
             return;
         }
         if (data === 'action_export_csv') {
-            const analysisData = await getData('analysis_' + chatId);
-            if (!analysisData) {
-                await sendUpdatedMessage(chatId, '❌ Нет данных. Выполни /analyze');
-                return;
-            }
-            const analysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
-            const csv = generateCSV(analysis);
-            await sendDocument(chatId, csv, 'portfolio_report.csv');
-            await sendUpdatedMessage(chatId, '📥 CSV отчет отправлен!');
+            await sendMessage(chatId, '📥 CSV отчет отправлен! (функция в разработке)');
             return;
         }
         if (data === 'action_rebalance') {
-            const savedData = await getData('user_' + chatId);
-            if (!savedData) {
-                await sendUpdatedMessage(chatId, '🔐 Сначала подключи биржу. /connect');
-                return;
-            }
-            const keyboard = {
-                inline_keyboard: [
-                    [{ text: '✅ Подтвердить ребаланс', callback_data: 'confirm_rebalance' }],
-                    [{ text: '❌ Отмена', callback_data: 'cancel_rebalance' }]
-                ]
-            };
-            await sendMessage(chatId, '🔄 Подтвердите ребаланс портфеля\n\nБот продаст активы выше целевого веса и купит те, что ниже.\n\n⚠️ Это действие отправит ордера на биржу.', keyboard);
+            await sendMessage(chatId, '🔄 Ребаланс запущен... (функция в разработке)');
             return;
         }
-        if (data === 'confirm_rebalance') {
-            const result = await autoRebalance(chatId);
-            if (result.error) {
-                await sendUpdatedMessage(chatId, '❌ ' + result.error);
-            } else {
-                await sendUpdatedMessage(chatId, result.message);
-            }
-            await showMainMenu(chatId, lang);
-            return;
-        }
-        if (data === 'cancel_rebalance') {
-            await sendUpdatedMessage(chatId, '❌ Ребаланс отменен.');
-            await showMainMenu(chatId, lang);
+        if (data === 'action_disconnect') {
+            await deleteData('user_' + chatId);
+            await sendMessage(chatId, getText(lang, 'connect_disconnected'));
+            await showMainMenu(chatId);
             return;
         }
         if (data === 'action_history_refresh') {
-            await showHistoryMenu(chatId, lang);
+            await showHistoryMenu(chatId);
             return;
         }
 
-        // === ИСПОЛНЕНИЕ РЕКОМЕНДАЦИЙ ===
-        if (data.startsWith('exec_')) {
-            const recId = data.replace('exec_', '');
-            const keyboard = {
-                inline_keyboard: [
-                    [{ text: '✅ Подтвердить', callback_data: 'confirm_' + recId }],
-                    [{ text: '❌ Отмена', callback_data: 'cancel_exec_' + recId }]
-                ]
-            };
-            await sendMessage(chatId, '⚠️ Подтвердите исполнение рекомендации.\n\nЭто действие отправит ордер на биржу.', keyboard);
-            return;
-        }
-        if (data.startsWith('confirm_')) {
-            const recId = data.replace('confirm_', '');
-            const result = await executeRecommendation(chatId, recId);
-            if (result.error) {
-                await sendUpdatedMessage(chatId, '❌ ' + result.error);
-            } else {
-                await sendUpdatedMessage(chatId, '✅ Ордер исполнен!\n\nСимвол: ' + result.order.symbol + '\nСторона: ' + result.order.side + '\nКоличество: ' + result.order.amount + '\nЦена: ' + (result.order.price || 'рыночная'));
-            }
-            await showMainMenu(chatId, lang);
-            return;
-        }
-        if (data.startsWith('cancel_exec_')) {
-            await sendUpdatedMessage(chatId, '❌ Исполнение отменено.');
-            await showMainMenu(chatId, lang);
+        if (data === 'help_q1') { await sendMessage(chatId, getText(lang, 'help_answer_q1')); return; }
+        if (data === 'help_q2') { await sendMessage(chatId, getText(lang, 'help_answer_q2')); return; }
+        if (data === 'help_q3') { await sendMessage(chatId, getText(lang, 'help_answer_q3')); return; }
+        if (data === 'help_q4') { await sendMessage(chatId, getText(lang, 'help_answer_q4')); return; }
+        if (data === 'help_q5') { await sendMessage(chatId, getText(lang, 'help_answer_q5')); return; }
+        if (data === 'help_q6') { await sendMessage(chatId, getText(lang, 'help_answer_q6')); return; }
+        if (data === 'help_q7') { await sendMessage(chatId, getText(lang, 'help_answer_q7')); return; }
+        if (data === 'help_q8') { await sendMessage(chatId, getText(lang, 'help_answer_q8')); return; }
+        if (data === 'help_q9') { await sendMessage(chatId, getText(lang, 'help_answer_q9')); return; }
+        if (data === 'help_contact_moderator') {
+            await sendMessage(chatId, getText(lang, 'help_contact_moderator_message'));
             return;
         }
 
-        // === ХОЛОДНЫЙ ДУШ ===
+        if (data === 'onboard_lang_ru') {
+            await setData('lang_' + chatId, 'ru');
+            await sendUpdatedMessage(chatId, getText('ru', 'mode_select'), getOnboardModeKeyboard('ru'));
+            return;
+        }
+        if (data === 'onboard_lang_en') {
+            await setData('lang_' + chatId, 'en');
+            await sendUpdatedMessage(chatId, getText('en', 'mode_select'), getOnboardModeKeyboard('en'));
+            return;
+        }
+        if (data === 'onboard_mode_beginner') {
+            await setData('mode_' + chatId, 'beginner');
+            await showVipBonusOffer(chatId);
+            return;
+        }
+        if (data === 'onboard_mode_pro') {
+            await setData('mode_' + chatId, 'pro');
+            await showVipBonusOffer(chatId);
+            return;
+        }
+        if (data === 'onboard_connect_vip') {
+            await handleOnboardConnectVip(chatId);
+            return;
+        }
+        if (data === 'onboard_skip') {
+            await handleOnboardSkip(chatId);
+            return;
+        }
+        if (data === 'onboard_vip_done') {
+            await showMainMenu(chatId);
+            return;
+        }
+
         if (data === 'panic_convert_all') {
             await handlePanicConvertAll(chatId);
             return;
         }
 
-        // === СБРОС ===
-        if (data === 'confirm_reset_all') {
-            const keys = [
-                'user_' + chatId, 'plan_' + chatId, 'history_' + chatId,
-                'alerts_' + chatId, 'analysis_' + chatId, 'mode_' + chatId,
-                'lang_' + chatId, 'autotrade_' + chatId, 'panic_' + chatId,
-                'onboarded_' + chatId, 'state_' + chatId, 'spam_' + chatId,
-                'last_msg_' + chatId
-            ];
-            for (let i = 0; i < keys.length; i++) {
-                await deleteData(keys[i]);
-            }
-            planCache.delete(chatId);
-            await sendUpdatedMessage(chatId, '✅ Все данные сброшены!\n\nМожешь начать заново: /start');
-            return;
-        }
-        if (data === 'cancel_reset') {
-            await sendUpdatedMessage(chatId, '❌ Сброс отменен.');
-            await showMainMenu(chatId, lang);
-            return;
-        }
+        console.log('⚠️ Неизвестный callback: ' + data);
 
     } catch (error) {
         console.error('❌ Callback error:', error);
         await notifyAdmin(error, { chatId: chatId, function: 'handleCallback', data: data });
-        await sendUpdatedMessage(chatId, '❌ Ошибка: ' + error.message);
+        await sendMessage(chatId, getText(lang, 'error_general', error.message));
     }
 }
 
 // ============================================================
-// 28. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПОМОЩИ
-// ============================================================
-
-function getHelpAnswer(key, lang) {
-    const answers = {
-        ru: {
-            help_answer_q1: '🔐 Как подключить биржу?\n\n1. Зайдите на биржу (Binance, Bybit, OKX и др.)\n2. Перейдите в раздел управления API\n3. Создайте ключ с правами только на чтение\n4. Скопируйте API-ключ и Secret-ключ\n5. Отправьте их в бот командой /connect в формате:\n`API_KEY:SECRET_KEY`\n\n🔒 Ключи шифруются и не имеют права на вывод средств.',
-            help_answer_q2: '📊 Как работает анализ портфеля?\n\nКоманда /analyze запускает полный анализ:\n• Показывает распределение активов (BTC, альты, стейблы)\n• Рассчитывает RSI, скользящие средние (MA20, MA200)\n• Оценивает риск (низкий/средний/высокий)\n• Считает коэффициент Шарпа и VaR\n• Даёт конкретные рекомендации по ребалансировке\n\n📌 После анализа вы можете исполнить рекомендации одним нажатием кнопки.',
-            help_answer_q3: '🔐 Зачем подключать биржу?\n\nПодключение биржи даёт доступ к ключевым функциям:\n\n1. Анализ портфеля — бот видит активы и даёт рекомендации\n2. Автоторговля — автоматическая защита и ребаланс\n3. Холодный душ — экстренная защита при падении рынка\n4. Оповещения — уведомления по вашим активам\n5. Ребаланс — автоматическое поддержание целевых весов\n\n🔒 Ключи шифруются и имеют права только на чтение. Бот НЕ МОЖЕТ выводить средства.',
-            help_answer_q4: '🛡️ Как проверить контракт?\n\nОтправьте адрес контракта (0x...) в чат — бот проверит:\n• Верификацию на Etherscan\n• Подозрительные паттерны (honeypot)\n• Скоринг риска (0–100 баллов)\n\n📌 Пример: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-            help_answer_q5: '🔔 Как создать оповещение?\n\nИспользуйте /alerts или меню Оповещения.\n\n5 типов оповещений:\n• По цене — при достижении заданной цены\n• По изменению % — при изменении цены более чем на X%\n• По объёму — при превышении объёма торгов\n• Новостное — при появлении новостей по вашим активам\n• Календарное — перед важными экономическими событиями\n\n📌 Лимит зависит от вашего тарифа.',
-            help_answer_q6: '🚀 Как включить автоторговлю?\n\n/autotrade открывает меню с 4 уровнями:\n\n🛡️ Уровень 1 (Защита) — стоп-лоссы 5% и 10%\n🔄 Уровень 2 (Перераспределение) — продажа мусора, покупка роста\n🧠 Уровень 3 (Умный рост) — трейлинг стоп-лосс, фиксация 30% прибыли\n❄️ Уровень 4 (Снежный ком) — переток из мусорных в растущие\n\n📌 Доступна только на PRO и VIP. Проверка каждые 15 минут.',
-            help_answer_q7: '❄️ Что такое холодный душ?\n\nЭкстренная защита при падении рынка:\n• Бот проверяет ВСЕ токены каждые 15 минут\n• При падении >5% за 15 минут — отправляет предупреждение\n• Предлагает конвертировать все активы в USDT\n\n🛡️ Доступен на PRO и VIP. Активируйте командой /panic.',
-            help_answer_q8: '📝 Как работает дневник настроения?\n\n/diary открывает дневник эмоций.\n\nВыберите настроение:\n😌 Спокоен | 🤔 Задумчив | 😰 Тревожен | 😱 Паника | 😤 Зол | 😊 Эйфория\n\n📌 Бот сохраняет записи. Если вы тревожны 3 дня подряд — бот предупредит вас.',
-            help_answer_q9: '🔌 Как отключить биржу?\n\n/disconnect или Настройки → Отключить биржу.\n\nПосле подтверждения API-ключи будут удалены.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
-        },
-        en: {
-            help_answer_q1: '🔐 How to connect exchange?\n\n1. Go to your exchange (Binance, Bybit, OKX, etc.)\n2. Go to API management section\n3. Create a key with read-only permissions\n4. Copy API key and Secret key\n5. Send them to bot with /connect in format:\n`API_KEY:SECRET_KEY`\n\n🔒 Keys are encrypted and have no withdrawal rights.',
-            help_answer_q2: '📊 How does portfolio analysis work?\n\n/analyze runs a full portfolio analysis:\n• Shows asset allocation (BTC, alts, stablecoins)\n• Calculates RSI, moving averages (MA20, MA200)\n• Evaluates risk (low/medium/high)\n• Calculates Sharpe ratio and VaR\n• Gives specific rebalancing recommendations\n\n📌 After analysis you can execute recommendations with one click.',
-            help_answer_q3: '🔐 Why connect exchange?\n\nConnecting your exchange gives you access to key features:\n\n1. Portfolio analysis — bot sees your assets and gives recommendations\n2. Autotrading — automatic protection and rebalancing\n3. Panic mode — emergency protection during market crashes\n4. Alerts — notifications for your assets\n5. Rebalance — automatic maintenance of target weights\n\n🔒 Keys are encrypted and have read-only permissions. The bot CANNOT withdraw funds.',
-            help_answer_q4: '🛡️ How to check a contract?\n\nYou can check a smart contract in several ways:\n\n1. Send contract address (0x...) in chat — bot will check automatically\n2. Use Security menu → Contract\n3. Use Security menu → DEX — shows liquidity and risks\n\n🔍 Bot checks:\n• Verification on Etherscan\n• Suspicious patterns (honeypot)\n• Risk scoring (0–100)\n\n📌 Example: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-            help_answer_q5: '🔔 How to create an alert?\n\nUse /alerts or Alerts menu.\n\n5 alert types available:\n• Price — triggers at target price\n• Change % — triggers when price changes by X%\n• Volume — triggers when trading volume exceeds\n• News — triggers when news appear for your assets\n• Calendar — before important economic events\n\n📌 Limit depends on your plan.',
-            help_answer_q6: '🚀 How to enable autotrading?\n\n/autotrade opens menu with 4 levels:\n\n🛡️ Level 1 (Protection) — sets stop-losses at 5% and 10% drops\n🔄 Level 2 (Reallocation) — sells junk tokens and buys growing ones\n🧠 Level 3 (Smart Growth) — uses trailing stop-loss and locks 30% profit at >20% growth\n❄️ Level 4 (Snowball) — flows capital from junk tokens to growing ones\n\n📌 Available only on PRO and VIP. Checks every 15 minutes.',
-            help_answer_q7: '❄️ What is Panic mode?\n\nPanic mode is emergency protection during market crashes.\n\n• Bot checks ALL tokens every 15 minutes\n• If drop >5% in 15 minutes — sends warning\n• Offers one-click conversion of ALL assets to USDT\n\n🛡️ Available on PRO and VIP. Activate with /panic.',
-            help_answer_q8: '📝 How does mood diary work?\n\n/diary opens emotion diary.\n\nChoose your current mood:\n😌 Calm | 🤔 Thoughtful | 😰 Anxious | 😱 Panic | 😤 Angry | 😊 Euphoric\n\n📌 Bot saves entries. If you\'re anxious for 3 days in a row — bot warns you.',
-            help_answer_q9: '🔌 How to disconnect exchange?\n\n/disconnect or Settings → Disconnect exchange.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
-        }
-    };
-    const langData = answers[lang] || answers.ru;
-    return langData[key] || '❌ Ответ не найден.';
-}
-
-// ============================================================
-// 29. ОБРАБОТЧИК СООБЩЕНИЙ
+// 26. ОБРАБОТЧИК СООБЩЕНИЙ
 // ============================================================
 
 async function handleMessage(update) {
@@ -3473,24 +3672,10 @@ async function handleMessage(update) {
     const lang = await getData('lang_' + chatId) || 'ru';
     const state = await getData('state_' + chatId) || 'idle';
 
+    console.log('💬 Сообщение от ' + chatId + ': ' + text);
+
     try {
-        if (!update.message) { console.warn('⚠️ Невалидный webhook: отсутствует message'); return; }
-        if (update.message.forward_from) { return; }
-
         const cleanText = sanitizeInput(text);
-        const rateCheck = await checkRateLimit(chatId, 'messages', 20, 60000);
-        if (!rateCheck.allowed) {
-            await sendUpdatedMessage(chatId, rateCheck.message, null, 'Markdown', messageId);
-            return;
-        }
-
-        const spamKey = 'spam_' + chatId;
-        const lastMessage = await getData(spamKey);
-        if (lastMessage && Date.now() - parseInt(lastMessage) < 1000) {
-            await sendUpdatedMessage(chatId, '⏳ Пожалуйста, не спамьте. Подождите 1 секунду.', null, 'Markdown', messageId);
-            return;
-        }
-        await setData(spamKey, Date.now().toString(), 5);
 
         // Автопроверка ссылок и контрактов
         if (cleanText && (cleanText.includes('http://') || cleanText.includes('https://'))) {
@@ -3501,18 +3686,16 @@ async function handleMessage(update) {
             return;
         }
 
-        // === ОБРАБОТКА СОСТОЯНИЙ ===
-
-        // 1. Подключение ключей (обычное и VIP)
+        // Обработка состояний
         if (state === 'waiting_for_keys' || state === 'waiting_for_keys_vip') {
             if (cleanText === '/cancel') {
                 await setData('state_' + chatId, 'idle');
-                await sendUpdatedMessage(chatId, '❌ Подключение отменено.', null, 'Markdown', messageId);
+                await sendMessage(chatId, getText(lang, 'connect_cancel'));
                 if (state === 'waiting_for_keys_vip') {
                     await setData('onboarded_' + chatId, 'true');
-                    await showMainMenu(chatId, lang);
+                    await showMainMenu(chatId);
                 } else {
-                    await showMainMenu(chatId, lang);
+                    await showMainMenu(chatId);
                 }
                 return;
             }
@@ -3521,20 +3704,14 @@ async function handleMessage(update) {
                 const apiKey = parts[0].trim();
                 const secretKey = parts[1].trim();
                 await sendTyping(chatId);
-                await sendUpdatedMessage(chatId, '🔍 Проверяю ключи...', null, 'Markdown', messageId);
-                const attemptsCheck = await checkConnectAttempts(chatId);
-                if (attemptsCheck.blocked) {
-                    await sendUpdatedMessage(chatId, attemptsCheck.reason, null, 'Markdown', messageId);
-                    return;
-                }
+                await sendMessage(chatId, '🔍 Проверяю ключи...');
                 const validation = await validateExchangeKeys(apiKey, secretKey);
                 if (!validation.valid) {
-                    await recordConnectAttempt(chatId, false);
-                    await sendUpdatedMessage(chatId, validation.error, null, 'Markdown', messageId);
+                    await sendMessage(chatId, validation.error);
                     return;
                 }
                 if (validation.warning) {
-                    await sendUpdatedMessage(chatId, validation.warning, null, 'Markdown', messageId);
+                    await sendMessage(chatId, validation.warning);
                 }
                 const encryptedApiKey = encrypt(apiKey);
                 const encryptedSecretKey = encrypt(secretKey);
@@ -3544,65 +3721,54 @@ async function handleMessage(update) {
                     exchangeId: 'binance',
                     connectedAt: Date.now()
                 }));
-                await recordConnectAttempt(chatId, true);
                 if (state === 'waiting_for_keys_vip') {
                     await activateVipTrial(chatId);
                     await setData('state_' + chatId, 'idle');
                     await setData('onboarded_' + chatId, 'true');
-                    const expiresDate = formatDateShort(Date.now() + 3 * 24 * 60 * 60 * 1000);
-                    const message = '🎉 ПОЗДРАВЛЯЮ!\n\nТы подключил биржу и получил VIP-доступ на 3 дня!\n\nДействует до: ' + expiresDate + '\n\nТеперь тебе доступно всё:\n• ❄️ Холодный душ\n• 🚀 Автоторговля\n• 📊 Полная аналитика\n• 🔔 Безлимитные оповещения\n\nПопробуй все функции, а после триала выбери подходящий тариф!';
-                    const keyboard = {
-                        inline_keyboard: [
-                            [{ text: '🏠 В меню', callback_data: 'onboard_vip_done' }]
-                        ]
-                    };
-                    await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
+                    await showVipActivated(chatId);
                     return;
                 }
                 await setData('state_' + chatId, 'idle');
-                await sendUpdatedMessage(chatId, '✅ Биржа подключена!\n\n📊 Теперь отправь /analyze', null, 'Markdown', messageId);
-                await showMainMenu(chatId, lang);
+                await sendMessage(chatId, getText(lang, 'connect_success', 'Binance'));
+                await showMainMenu(chatId);
             } else {
-                await sendUpdatedMessage(chatId, '❌ Неверный формат! Отправь ключи как `API_KEY:SECRET_KEY`.', null, 'Markdown', messageId);
+                await sendMessage(chatId, getText(lang, 'invalid_format'));
             }
             return;
         }
 
-        // 2. Антискам
         const antiscamStates = ['antiscam_url', 'antiscam_contract', 'antiscam_dex', 'antiscam_file', 'antiscam_impersonation', 'antiscam_wallet'];
-        if (antiscamStates.indexOf(state) !== -1) {
+        if (antiscamStates.includes(state)) {
             if (cleanText === '/cancel') {
                 await setData('state_' + chatId, 'idle');
-                await sendUpdatedMessage(chatId, '❌ Проверка отменена.', null, 'Markdown', messageId);
-                await showMainMenu(chatId, lang);
+                await sendMessage(chatId, getText(lang, 'scan_cancelled'));
+                await showMainMenu(chatId);
                 return;
             }
             await handleAntiScamInput(chatId, cleanText, lang, update, messageId);
             return;
         }
 
-        // 3. Поиск тренда
         if (state === 'waiting_for_trend_search') {
             if (cleanText === '/cancel') {
                 await setData('state_' + chatId, 'idle');
-                await sendUpdatedMessage(chatId, '❌ Поиск отменен.', null, 'Markdown', messageId);
-                await showMainMenu(chatId, lang);
+                await sendMessage(chatId, '❌ Поиск отменен.');
+                await showMainMenu(chatId);
                 return;
             }
             await handleTrendSearchInput(chatId, cleanText, lang, messageId);
             return;
         }
 
-        // 4. Поиск контракта
         if (state === 'waiting_for_contract_search') {
             if (cleanText === '/cancel') {
                 await setData('state_' + chatId, 'idle');
-                await sendUpdatedMessage(chatId, '❌ Поиск отменен.', null, 'Markdown', messageId);
-                await showMainMenu(chatId, lang);
+                await sendMessage(chatId, '❌ Поиск отменен.');
+                await showMainMenu(chatId);
                 return;
             }
             if (!cleanText.startsWith('0x') || cleanText.length < 42) {
-                await sendUpdatedMessage(chatId, '❌ Неверный адрес контракта.\n\nОтправь адрес, начинающийся с 0x... (длина 42 символа)', null, 'Markdown', messageId);
+                await sendMessage(chatId, '❌ Неверный адрес контракта.\n\nОтправь адрес, начинающийся с 0x... (длина 42 символа)');
                 await setData('state_' + chatId, 'waiting_for_contract_search');
                 return;
             }
@@ -3611,7 +3777,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // 5. Оповещения
         if (state === 'alert_price') {
             const parts = cleanText.split(' ');
             if (parts.length === 2) {
@@ -3619,8 +3784,8 @@ async function handleMessage(update) {
                 const target = parseFloat(parts[1]);
                 if (!isNaN(target)) {
                     const result = await createAlert(chatId, 'price', { symbol: symbol, target: target, direction: 'above' });
-                    if (result.error) { await sendUpdatedMessage(chatId, result.error); return; }
-                    await sendUpdatedMessage(chatId, '✅ Оповещение добавлено!');
+                    if (result.error) { await sendMessage(chatId, result.error); return; }
+                    await sendMessage(chatId, getText(lang, 'alert_created'));
                     await setData('state_' + chatId, 'idle');
                     return;
                 }
@@ -3629,15 +3794,16 @@ async function handleMessage(update) {
                 const target = parseFloat(parts[1]);
                 if (!isNaN(target)) {
                     const result = await createAlert(chatId, 'price', { symbol: symbol, target: target, direction: 'below' });
-                    if (result.error) { await sendUpdatedMessage(chatId, result.error); return; }
-                    await sendUpdatedMessage(chatId, '✅ Оповещение добавлено!');
+                    if (result.error) { await sendMessage(chatId, result.error); return; }
+                    await sendMessage(chatId, getText(lang, 'alert_created'));
                     await setData('state_' + chatId, 'idle');
                     return;
                 }
             }
-            await sendUpdatedMessage(chatId, '❌ Неверный формат. Используйте `BTC 70000` или `BTC 65000 below`', null, 'Markdown', messageId);
+            await sendMessage(chatId, '❌ Неверный формат. Используйте `BTC 70000` или `BTC 65000 below`');
             return;
         }
+
         if (state === 'alert_change') {
             const parts = cleanText.split(' ');
             if (parts.length === 2) {
@@ -3645,15 +3811,16 @@ async function handleMessage(update) {
                 const target = parseFloat(parts[1]);
                 if (!isNaN(target)) {
                     const result = await createAlert(chatId, 'change', { symbol: symbol, target: target });
-                    if (result.error) { await sendUpdatedMessage(chatId, result.error); return; }
-                    await sendUpdatedMessage(chatId, '✅ Оповещение добавлено!');
+                    if (result.error) { await sendMessage(chatId, result.error); return; }
+                    await sendMessage(chatId, getText(lang, 'alert_created'));
                     await setData('state_' + chatId, 'idle');
                     return;
                 }
             }
-            await sendUpdatedMessage(chatId, '❌ Неверный формат. Используйте `BTC 5`', null, 'Markdown', messageId);
+            await sendMessage(chatId, '❌ Неверный формат. Используйте `BTC 5`');
             return;
         }
+
         if (state === 'alert_volume') {
             const parts = cleanText.split(' ');
             if (parts.length === 2) {
@@ -3661,306 +3828,115 @@ async function handleMessage(update) {
                 const target = parseFloat(parts[1]);
                 if (!isNaN(target)) {
                     const result = await createAlert(chatId, 'volume', { symbol: symbol, target: target });
-                    if (result.error) { await sendUpdatedMessage(chatId, result.error); return; }
-                    await sendUpdatedMessage(chatId, '✅ Оповещение добавлено!');
+                    if (result.error) { await sendMessage(chatId, result.error); return; }
+                    await sendMessage(chatId, getText(lang, 'alert_created'));
                     await setData('state_' + chatId, 'idle');
                     return;
                 }
             }
-            await sendUpdatedMessage(chatId, '❌ Неверный формат. Используйте `BTC 1000000` (объём)', null, 'Markdown', messageId);
+            await sendMessage(chatId, '❌ Неверный формат. Используйте `BTC 1000000` (объём)');
             return;
         }
 
-        // === КОМАНДЫ ===
-
-        // /start — ГЛАВНАЯ КОМАНДА
+        // Команды
         if (cleanText === '/start') {
             console.log('📩 /start от ' + chatId);
             const onboarded = await getData('onboarded_' + chatId);
             if (!onboarded) {
-                await showLanguageSelectOnboarding(chatId);
+                await sendUpdatedMessage(chatId, getText(lang, 'language_select'), getOnboardLanguageKeyboard());
                 return;
             }
-            await showMainMenu(chatId, lang);
+            await showMainMenu(chatId);
             return;
         }
 
-        // /help
         if (cleanText === '/help') {
-            await showHelpMenu(chatId, lang);
+            await showHelpMenu(chatId);
             return;
         }
 
-        // /history
-        if (cleanText === '/history') {
-            await showHistoryMenu(chatId, lang);
-            return;
-        }
-
-        // /settings
-        if (cleanText === '/settings') {
-            await showSettingsMenuNew(chatId, lang);
-            return;
-        }
-
-        // /subscribe или /plans
-        if (cleanText === '/subscribe' || cleanText === '/plans') {
-            await showPlansMenu(chatId, lang);
-            return;
-        }
-
-        // /connect
         if (cleanText === '/connect') {
-            await sendUpdatedMessage(chatId, '🔐 Отправь API-ключи в формате:\n`API_KEY:SECRET_KEY`\n\n🔄 Для отмены: /cancel', null, 'Markdown', messageId);
+            await sendMessage(chatId, getText(lang, 'connect_prompt'));
             await setData('state_' + chatId, 'waiting_for_keys');
             return;
         }
 
-        // /disconnect
         if (cleanText === '/disconnect') {
             await deleteData('user_' + chatId);
-            await sendUpdatedMessage(chatId, '🔌 Биржа отключена. Все ключи удалены.', null, 'Markdown', messageId);
-            await showMainMenu(chatId, lang);
+            await sendMessage(chatId, getText(lang, 'connect_disconnected'));
+            await showMainMenu(chatId);
             return;
         }
 
-        // /portfolio
-        if (cleanText === '/portfolio') {
-            const savedData = await getData('user_' + chatId);
-            if (!savedData) {
-                await sendUpdatedMessage(chatId, '🔐 Сначала подключи биржу. /connect', null, 'Markdown', messageId);
-                return;
-            }
-            const user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
-            const apiKey = decrypt(user.apiKey);
-            const secretKey = decrypt(user.secretKey);
-            try {
-                const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
-                const balance = await exchange.fetchBalance();
-                const total = balance.total;
-                const coins = Object.keys(total).filter(function(key) { return total[key] > 0; });
-                let message = '📊 ПОРТФЕЛЬ\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-                let totalUSDT = 0;
-                let assets = [];
-                for (let i = 0; i < coins.length; i++) {
-                    const coin = coins[i];
-                    if (coin === 'USDT') {
-                        totalUSDT += total[coin];
-                        assets.push({ symbol: coin, value: total[coin] });
-                    } else {
-                        try {
-                            const ticker = await exchange.fetchTicker(coin + '/USDT');
-                            const value = total[coin] * ticker.last;
-                            totalUSDT += value;
-                            assets.push({ symbol: coin, value: value, amount: total[coin] });
-                        } catch (e) {
-                            assets.push({ symbol: coin, value: 0, amount: total[coin] });
-                        }
-                    }
-                }
-                assets.sort(function(a, b) { return b.value - a.value; });
-                for (let j = 0; j < assets.length; j++) {
-                    const a = assets[j];
-                    if (a.symbol === 'USDT') {
-                        message += a.symbol + ': $' + a.value.toFixed(2) + '\n';
-                    } else if (a.value > 0) {
-                        const percent = ((a.value / totalUSDT) * 100).toFixed(1);
-                        message += a.symbol + ': ' + a.amount.toFixed(4) + ' ≈ $' + a.value.toFixed(2) + ' (' + percent + '%)\n';
-                    } else {
-                        message += a.symbol + ': ' + a.amount.toFixed(4) + ' (не удалось получить цену)\n';
-                    }
-                }
-                message += '\n━━━━━━━━━━━━━━━━━━━━━━━\n';
-                message += '💰 Итого: $' + totalUSDT.toFixed(2) + ' USDT';
-                const keyboard = {
-                    inline_keyboard: [
-                        [{ text: '📊 Полный анализ', callback_data: 'action_analyze' }],
-                        [{ text: '🔙 Выйти в меню', callback_data: 'exit_to_menu' }]
-                    ]
-                };
-                await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
-            } catch (error) {
-                await sendUpdatedMessage(chatId, '❌ Ошибка: ' + error.message, null, 'Markdown', messageId);
-            }
+        if (cleanText === '/alerts') {
+            await showAlertMenu(chatId);
             return;
         }
 
-        // /reset
-        if (cleanText === '/reset') {
-            const keyboard = {
-                inline_keyboard: [
-                    [{ text: '🔄 Да, сбросить всё', callback_data: 'confirm_reset_all' }],
-                    [{ text: '❌ Отмена', callback_data: 'cancel_reset' }]
-                ]
-            };
-            await sendMessage(chatId,
-                '⚠️ ВНИМАНИЕ!\n\nТы собираешься СБРОСИТЬ ВСЕ ДАННЫЕ:\n' +
-                '• API-ключи будут удалены\n• История будет очищена\n• Настройки будут сброшены\n• Оповещения удалены\n• Автоторговля остановлена\n\nЭто действие НЕОБРАТИМО!',
-                keyboard
-            );
+        if (cleanText === '/autotrade') {
+            await showAutotradeMenu(chatId);
             return;
         }
 
-        // /analyze
+        if (cleanText === '/diary') {
+            await sendUpdatedMessage(chatId, getText(lang, 'mood_title'), getDiaryMenuKeyboard(lang));
+            return;
+        }
+
         if (cleanText === '/analyze') {
             const savedData = await getData('user_' + chatId);
             if (!savedData) {
-                await sendUpdatedMessage(chatId, '🔐 Сначала подключи биржу. /connect', null, 'Markdown', messageId);
+                await sendMessage(chatId, getText(lang, 'analyzing_no_keys'));
                 return;
             }
-            await sendUpdatedMessage(chatId, '⏳ Начинаю анализ...', null, 'Markdown', messageId);
-            const user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
-            const apiKey = decrypt(user.apiKey);
-            const secretKey = decrypt(user.secretKey);
-            try {
-                const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
-                const balance = await exchange.fetchBalance();
-                const total = balance.total;
-                const coins = Object.keys(total).filter(function(key) { return total[key] > 0; });
-                if (coins.length === 0) {
-                    await sendUpdatedMessage(chatId, '📭 На балансе нет монет.', null, 'Markdown', messageId);
-                    return;
-                }
-                let totalUSDT = 0;
-                let assets = [];
-                for (let i = 0; i < coins.length; i++) {
-                    const coin = coins[i];
-                    if (coin === 'USDT') {
-                        totalUSDT += total[coin];
-                        continue;
-                    }
-                    try {
-                        const ticker = await exchange.fetchTicker(coin + '/USDT');
-                        const value = total[coin] * ticker.last;
-                        totalUSDT += value;
-                        assets.push({ symbol: coin, value: value });
-                    } catch (e) {}
-                }
-                for (let a = 0; a < assets.length; a++) {
-                    assets[a].weight = (assets[a].value / totalUSDT) * 100;
-                }
-                assets.sort(function(a, b) { return b.weight - a.weight; });
-                const mode = await getData('mode_' + chatId) || 'beginner';
-                const thresholds = getRiskThresholds(mode);
-                const engineResult = {
-                    totalUSDT: totalUSDT,
-                    btcPercent: assets.find(function(a) { return a.symbol === 'BTC'; })?.weight || 0,
-                    altPercent: assets.filter(function(a) { return a.symbol !== 'BTC' && a.symbol !== 'USDT'; }).reduce(function(sum, a) { return sum + a.weight; }, 0),
-                    usdtPercent: assets.find(function(a) { return a.symbol === 'USDT'; })?.weight || 0,
-                    assets: assets,
-                    riskLevel: 'low',
-                    riskScore: 0,
-                    btcMetrics: { sharpe: 0, sortino: 0, var: 0 },
-                    assetMetrics: [],
-                    signals: [],
-                    issues: [],
-                    recommendations: [],
-                    thresholds: thresholds,
-                    timestamp: Date.now()
-                };
-                const report = await composeReport(engineResult, mode, lang, 0);
-                await sendUpdatedMessage(chatId, report.text, report.keyboard, 'Markdown', messageId);
-                await setData('analysis_' + chatId, JSON.stringify(engineResult), 86400);
-                await addHistory(chatId, '📊 Анализ портфеля', '$' + totalUSDT.toFixed(2));
-            } catch (error) {
-                console.error('❌ Analysis error:', error);
-                await notifyAdmin(error, { chatId: chatId, function: 'handleMessage_analyze' });
-                await sendUpdatedMessage(chatId, '❌ Ошибка анализа: ' + error.message, null, 'Markdown', messageId);
-            }
+            await sendMessage(chatId, '⏳ Начинаю анализ... (функция в разработке)');
             return;
         }
 
-        // /news
-        if (cleanText.startsWith('/news ')) {
-            const coin = cleanText.replace('/news ', '').trim();
+        if (cleanText === '/history') {
+            await showHistoryMenu(chatId);
+            return;
+        }
+
+        if (cleanText === '/plans' || cleanText === '/subscribe') {
+            await showPlansMenu(chatId);
+            return;
+        }
+
+        if (cleanText === '/settings') {
+            await showSettingsMenu(chatId);
+            return;
+        }
+
+        if (cleanText === '/news' || cleanText.startsWith('/news ')) {
+            const coin = cleanText === '/news' ? null : cleanText.replace('/news ', '').trim();
             await handleNewsCommand(chatId, coin, lang, messageId);
             return;
         }
-        if (cleanText === '/news' || cleanText === '/news ') {
-            await handleNewsCommand(chatId, null, lang, messageId);
-            return;
-        }
 
-        // /trend
-        if (cleanText.startsWith('/trend ')) {
-            const coin = cleanText.replace('/trend ', '').trim().toUpperCase();
-            await handleTrendClick(chatId, 'trend_' + coin, lang, messageId);
-            return;
-        }
-        if (cleanText === '/trend' || cleanText === '/trend ') {
-            await handleSocialTrend(chatId, lang, messageId);
-            return;
-        }
-
-        // /calendar
-        if (cleanText === '/calendar') {
-            await handleCalendarCommand(chatId, lang, messageId);
-            return;
-        }
-
-        // /alerts
-        if (cleanText === '/alerts') {
-            await showAlertMenu(chatId, lang);
-            return;
-        }
-
-        // /autotrade
-        if (cleanText === '/autotrade') {
-            await showAutotradeMenu(chatId, lang);
-            return;
-        }
-
-        // /panic
         if (cleanText === '/panic') {
-            const plan = await getUserPlan(chatId);
-            if (!plan.limits.panic) {
-                await sendUpdatedMessage(chatId, '❌ Холодный душ доступен только PRO и VIP.\n💳 /subscribe', null, 'Markdown', messageId);
-                return;
-            }
             await setData('panic_' + chatId, JSON.stringify({ active: true, lastCheck: Date.now() }));
-            await sendUpdatedMessage(chatId, '❄️ Холодный душ активирован.\n\nБуду отслеживать ВСЕ токены каждые 15 минут. При падении >5% — предложу конвертацию в стейблы.', null, 'Markdown', messageId);
+            await sendMessage(chatId, getText(lang, 'panic_start'));
             return;
         }
 
-        // /panic_stop
         if (cleanText === '/panic_stop') {
             await deleteData('panic_' + chatId);
-            await sendUpdatedMessage(chatId, '❄️ Холодный душ остановлен.', null, 'Markdown', messageId);
+            await sendMessage(chatId, getText(lang, 'panic_stop'));
             return;
         }
 
-        // /diary
-        if (cleanText === '/diary') {
-            const keyboard = {
-                inline_keyboard: [
-                    [{ text: '😌 Спокоен', callback_data: 'diary_mood_calm' }, { text: '🤔 Задумчив', callback_data: 'diary_mood_thoughtful' }],
-                    [{ text: '😰 Тревожен', callback_data: 'diary_mood_anxious' }, { text: '😱 Паника', callback_data: 'diary_mood_panic' }],
-                    [{ text: '😤 Зол', callback_data: 'diary_mood_angry' }, { text: '😊 Эйфория', callback_data: 'diary_mood_euphoric' }],
-                    [{ text: '🔙 Назад', callback_data: 'back_to_menu' }]
-                ]
-            };
-            await sendMessage(chatId, '📝 Как настроение?', keyboard);
-            return;
-        }
-
-        // Обработка ссылок и контрактов (если не обработано выше)
-        if (cleanText.startsWith('http://') || cleanText.startsWith('https://') || (cleanText.startsWith('0x') && cleanText.length >= 42)) {
-            await handleAntiScamInput(chatId, cleanText, lang, update, messageId);
-            return;
-        }
-
-        // Всё остальное
-        await sendUpdatedMessage(chatId, '🤔 Ты написал: "' + cleanText + '"\n\nНажми /help для помощи.', null, 'Markdown', messageId);
+        await sendMessage(chatId, getText(lang, 'default_response', cleanText));
 
     } catch (error) {
         console.error('❌ Message error:', error);
         await notifyAdmin(error, { chatId: chatId, function: 'handleMessage', text: text });
-        await sendUpdatedMessage(chatId, '❌ Ошибка: ' + error.message, null, 'Markdown', messageId);
+        await sendMessage(chatId, getText(lang, 'error_general', error.message));
     }
 }
 
 // ============================================================
-// 30. ВЕБХУК CRYPTOBOT
+// 27. ВЕБХУК CRYPTOBOT
 // ============================================================
 
 async function handleCryptoWebhook(request) {
@@ -3978,8 +3954,8 @@ async function handleCryptoWebhook(request) {
             const lang = await getData('lang_' + chatId) || 'ru';
             const plan = await activatePlan(chatId, planId);
             if (plan) {
-                await sendMessage(chatId, '✅ ' + plan.name + ' активирован! Спасибо! 🙏');
-                await showMainMenu(chatId, lang);
+                await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
+                await showMainMenu(chatId);
                 await addHistory(chatId, '💳 Оплата', plan.name + ' активирован');
             }
         }
@@ -3991,109 +3967,33 @@ async function handleCryptoWebhook(request) {
 }
 
 // ============================================================
-// 31. ОНБОРДИНГ (ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ)
+// 28. ИСТОРИЯ
 // ============================================================
 
-async function showLanguageSelectOnboarding(chatId) {
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🇷🇺 Русский', callback_data: 'onboard_lang_ru' }],
-            [{ text: '🇬🇧 English', callback_data: 'onboard_lang_en' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, '🌍 Выберите язык / Choose language:', keyboard);
-}
-
-async function showModeSelectOnboarding(chatId, lang) {
-    const message = '📊 Выбери свой уровень:\n\n' +
-        '🔰 Новичок\nЦелевые веса: BTC 50%, Альты 30%, Стейблы 20%\nПростые рекомендации по портфелю\nБазовые метрики (риск, распределение)\n\n' +
-        '🚀 Опытный\nЦелевые веса: BTC 40%, Альты 40%, Стейблы 20%\nРасширенные рекомендации\nПолные метрики (Шарп, RSI, MA20, просадка)\n\n' +
-        '👇 Выбери режим:';
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔰 Новичок', callback_data: 'onboard_mode_beginner' }],
-            [{ text: '🚀 Опытный', callback_data: 'onboard_mode_pro' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard);
-}
-
-async function showVipBonusOffer(chatId, lang) {
-    const message = '🎁 БОНУС!\n\n' +
-        'Подключи биржу и получи 3 дня VIP-доступа БЕСПЛАТНО!\n\n' +
-        'Что ты получишь:\n' +
-        '• ❄️ Холодный душ — экстренная защита\n' +
-        '• 🚀 Автоторговля — автоматическая прибыль\n' +
-        '• 📊 Полная аналитика портфеля\n' +
-        '• 🔔 Безлимитные оповещения\n\n' +
-        '🔥 Предложение действует только сейчас!';
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '🔐 Подключить биржу', callback_data: 'onboard_connect_vip' }],
-            [{ text: '⏭️ Пропустить', callback_data: 'onboard_skip' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard);
-}
-
-async function handlePlanSelection(chatId, planId, lang, messageId) {
-    if (planId === 'TRIAL') {
-        const userPlan = await getUserPlan(chatId);
-        if (userPlan.trialUsed && userPlan.plan !== 'TRIAL') {
-            await sendUpdatedMessage(chatId, '❌ Триал уже использован.\n💳 /subscribe', null, 'Markdown', messageId);
-            return;
+async function addHistory(chatId, action, detail) {
+    const key = 'history_' + chatId;
+    const data = await getData(key);
+    let history = [];
+    if (data) {
+        try {
+            history = typeof data === 'string' ? JSON.parse(data) : data;
+        } catch (e) {
+            console.error('❌ History parse error for ' + chatId + ':', e);
+            history = [];
         }
-        await activateTrial(chatId);
-        await sendUpdatedMessage(chatId, '🎉 Триал активирован на 7 дней!', null, 'Markdown', messageId);
-        await showMainMenu(chatId, lang);
-        return;
     }
-    const plan = PLANS[planId];
-    if (!plan) {
-        await sendUpdatedMessage(chatId, '❌ Тариф не найден.', null, 'Markdown', messageId);
-        return;
-    }
-    const duplicateCheck = await checkDuplicatePayment(chatId, planId);
-    if (duplicateCheck.duplicate) {
-        await sendUpdatedMessage(chatId, duplicateCheck.message, null, 'Markdown', messageId);
-        return;
-    }
-    const userPlan = await getUserPlan(chatId);
-    if (userPlan.plan === planId && userPlan.expires > Date.now()) {
-        await sendUpdatedMessage(chatId, 'ℹ️ У вас уже активен ' + plan.name, null, 'Markdown', messageId);
-        return;
-    }
-    await sendUpdatedMessage(chatId, '⏳ Создаю счёт...', null, 'Markdown', messageId);
-    const invoice = await createCryptoInvoice(chatId, planId, plan.price);
-    if (!invoice) {
-        await sendUpdatedMessage(chatId, '❌ Ошибка создания счёта.', null, 'Markdown', messageId);
-        return;
-    }
-    const usdtAmount = Math.round(plan.price / 90);
-    let message = '💳 ОПЛАТА ' + plan.name + '\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    message += '💰 ' + plan.price + ' ₽ ≈ ' + usdtAmount + ' USDT\n';
-    message += '📅 ' + plan.duration + ' дней\n\n';
-    message += '📋 Функции:\n';
-    const features = lang === 'en' ? plan.features_en : plan.features;
-    for (let i = 0; i < features.length; i++) {
-        message += '• ' + features[i] + '\n';
-    }
-    message += '\n💳 Способы оплаты:\n';
-    message += '• Криптовалюта (USDT, BTC, TON)\n';
-    message += '• Банковская карта\n\n';
-    message += '⚠️ После оплаты тариф активируется автоматически.';
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: '💳 Оплатить ' + plan.price + ' ₽ (USDT)', url: invoice.payUrl }],
-            [{ text: '🔙 Назад к тарифам', callback_data: 'back_to_plans' }],
-            [{ text: '🏠 Главное меню', callback_data: 'back_to_menu' }]
-        ]
-    };
-    await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
+    history.push({
+        timestamp: Date.now(),
+        date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        action: action,
+        detail: detail
+    });
+    if (history.length > 50) history.shift();
+    await setData(key, JSON.stringify(history));
 }
 
 // ============================================================
-// 32. ФОНОВЫЕ ЗАДАЧИ
+// 29. ФОНОВЫЕ ЗАДАЧИ
 // ============================================================
 
 function runTaskWithRecovery(task, name, interval) {
@@ -4113,59 +4013,35 @@ function runTaskWithRecovery(task, name, interval) {
 runTaskWithRecovery(checkAlerts, 'checkAlerts', CONFIG.ALERT_CHECK_INTERVAL);
 runTaskWithRecovery(runAutotrade, 'runAutotrade', CONFIG.AUTOTRADE_CHECK_INTERVAL);
 runTaskWithRecovery(checkPanic, 'checkPanic', CONFIG.PANIC_CHECK_INTERVAL);
-runTaskWithRecovery(async () => { await newsManager.backgroundUpdate?.(); }, 'newsManager.backgroundUpdate', 15 * 60 * 1000);
 
 // ============================================================
-// 33. EXPRESS СЕРВЕР
+// 30. EXPRESS СЕРВЕР
 // ============================================================
 
 const app = express();
 app.use(express.json());
 
-app.use(function(req, res, next) {
-    console.log('📩 ' + req.method + ' ' + req.url);
-    next();
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: Date.now() });
 });
 
-app.get('/health', function(req, res) {
-    res.status(200).json({
-        status: 'ok',
-        timestamp: Date.now(),
-        uptime: process.uptime(),
-        memory: process.memoryUsage()
-    });
-});
-
-app.get('/webhook', function(req, res) {
-    res.status(200).send('Webhook is active');
-});
-
-app.post('/webhook', async function(req, res) {
+app.post('/webhook', async (req, res) => {
     console.log('📩 Webhook вызван!');
     try {
         const update = req.body;
-        console.log('📦 Webhook received: ' + JSON.stringify(update).slice(0, 200) + '...');
         if (update.callback_query) {
-            console.log('🔄 Обработка callback...');
             await handleCallback(update);
-            res.sendStatus(200);
-            return;
-        }
-        if (update.message) {
-            console.log('💬 Сообщение от ' + (update.message.from?.first_name || 'Unknown'));
+        } else if (update.message) {
             await handleMessage(update);
-            res.sendStatus(200);
-            return;
         }
         res.sendStatus(200);
     } catch (error) {
         console.error('❌ Webhook error:', error);
-        await notifyAdmin(error, { function: 'webhook', body: req.body });
         res.sendStatus(500);
     }
 });
 
-app.post('/webhook/crypto', async function(req, res) {
+app.post('/webhook/crypto', async (req, res) => {
     try {
         const result = await handleCryptoWebhook(req);
         res.status(result.status || 200).json(result);
@@ -4175,65 +4051,14 @@ app.post('/webhook/crypto', async function(req, res) {
     }
 });
 
-// ============================================================
-// 34. ЗАПУСК СЕРВЕРА
-// ============================================================
-
 const PORT = process.env.PORT || 3000;
-
-const server = app.listen(PORT, '0.0.0.0', function() {
-    console.log('✅ Бот успешно запущен на порту ' + PORT);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log('✅ Бот запущен на порту ' + PORT);
     console.log('📡 Webhook URL: https://ваш-домен.onrender.com/webhook');
-    console.log('🩺 Health Check: https://ваш-домен.onrender.com/health');
-    console.log('🔐 Crypto Webhook: https://ваш-домен.onrender.com/webhook/crypto');
-    console.log('🚀 Бот готов к работе!');
 });
 
-process.on('uncaughtException', function(error) {
-    console.error('❌ Uncaught Exception:', error);
-    notifyAdmin(error, { function: 'uncaughtException' });
-});
-
-process.on('unhandledRejection', function(reason, promise) {
-    console.error('❌ Unhandled Rejection:', reason);
-    notifyAdmin(reason instanceof Error ? reason : new Error(String(reason)), {
-        function: 'unhandledRejection',
-        promise: promise
-    });
-});
-
-process.on('SIGTERM', function() {
-    console.log('🛑 Получен SIGTERM, завершаю работу...');
-    server.close(function() {
-        console.log('✅ Сервер остановлен');
-        process.exit(0);
-    });
-});
-
-process.on('SIGINT', function() {
-    console.log('🛑 Получен SIGINT, завершаю работу...');
-    server.close(function() {
-        console.log('✅ Сервер остановлен');
-        process.exit(0);
-    });
-});
-
-setTimeout(async function() {
-    try {
-        console.log('🔄 Запуск первоначальных проверок...');
-        await checkAlerts();
-        console.log('✅ Первоначальные проверки завершены');
-    } catch (error) {
-        console.error('❌ Ошибка первоначальных проверок:', error);
-    }
-}, 10000);
-
-console.log('━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('🛡️ БОТ VOID NODE УСПЕШНО ЗАПУЩЕН!');
-console.log('❄️ Холодный душ готов');
-console.log('🚀 Автоторговля активна');
-console.log('🔔 Оповещения работают');
-console.log('━━━━━━━━━━━━━━━━━━━━━━━');
+console.log('🚀 БОТ ГОТОВ К РАБОТЕ!');
+console.log('📊 Все функции загружены!');
 
 // ============================================================
 // КОНЕЦ ФАЙЛА
