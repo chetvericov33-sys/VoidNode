@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 4.1
+// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 4.3 (ФИНАЛ)
 // ============================================================
 
 require('dotenv').config();
@@ -107,9 +107,8 @@ async function setData(key, value, ttl = null) { await VOID_KV.put(key, value, t
 async function deleteData(key) { await VOID_KV.delete(key); }
 
 // ============================================================
-// 2. SINGLE MESSAGE SYSTEM — ЧАТ НЕ ЗАСОРЯЕТСЯ
+// 2. SINGLE MESSAGE SYSTEM — УДАЛЯЕТ ВСЕ СТАРЫЕ СООБЩЕНИЯ
 // ============================================================
-
 async function getUserLastMessageId(chatId) {
     const key = 'last_msg_' + chatId;
     const data = await getData(key);
@@ -210,14 +209,38 @@ async function sendMessage(chatId, text, keyboard = null, parseMode = 'Markdown'
     }
 }
 
+// ГЛАВНАЯ ФУНКЦИЯ — УДАЛЯЕТ СТАРЫЕ СООБЩЕНИЯ И ОТПРАВЛЯЕТ НОВОЕ
 async function sendUpdatedMessage(chatId, text, keyboard = null, parseMode = 'Markdown', userMessageId = null) {
+    // Удаляем сообщение пользователя если оно есть
     if (userMessageId) {
         const msgExists = await checkMessageExists(chatId, userMessageId);
         if (msgExists) {
             await deleteUserMessageWithDelay(chatId, userMessageId, 1500);
         }
     }
+    // Удаляем последнее сообщение бота
     await deleteUserLastMessage(chatId);
+    // Если нет клавиатуры или в ней нет кнопки "Назад" — добавляем подпись с /exit
+    let hasBackButton = false;
+    if (keyboard && keyboard.inline_keyboard) {
+        for (const row of keyboard.inline_keyboard) {
+            for (const btn of row) {
+                if (btn.callback_data === 'back_to_menu' || btn.callback_data === 'exit_to_menu' || btn.callback_data === 'back_to_functions' || btn.callback_data === 'back_to_settings' || btn.callback_data === 'back_to_market' || btn.callback_data === 'back_to_security' || btn.callback_data === 'back_to_plans' || btn.callback_data === 'back_to_history') {
+                    hasBackButton = true;
+                    break;
+                }
+            }
+            if (hasBackButton) break;
+        }
+    }
+    if (!hasBackButton && keyboard) {
+        // Добавляем кнопку "Назад" если её нет
+        keyboard.inline_keyboard.push([{ text: '🔙 Назад', callback_data: 'back_to_menu' }]);
+    }
+    if (!hasBackButton && !keyboard) {
+        // Если нет клавиатуры — добавляем подпись с /exit
+        text = text + '\n\n━━━━━━━━━━━━━━━━━━━━━━━\n💡 Для выхода в меню отправьте /exit';
+    }
     const result = await sendMessage(chatId, text, keyboard, parseMode);
     if (result && result.ok) {
         const data = await result.json();
@@ -638,7 +661,7 @@ const LANGUAGES = {
         help_answer_q8: '📝 *Как работает дневник настроения?*\n\n/diary открывает дневник эмоций.\n\nВыберите настроение:\n😌 Спокоен | 🤔 Задумчив | 😰 Тревожен | 😱 Паника | 😤 Зол | 😊 Эйфория\n\n📌 Бот сохраняет записи. Если вы тревожны 3 дня подряд — бот предупредит вас.',
         help_answer_q9: '🔌 *Как отключить биржу?*\n\n/disconnect или *Настройки* → *Отключить биржу*.\n\nПосле подтверждения API-ключи будут удалены.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
         help_contact_moderator_message: '👤 *Связь с модератором*\n\nНапишите @clofeLEAN — он вам поможет!\n\n📌 Также вы можете задать вопрос в нашем чате поддержки:\n📱 [Чат поддержки](https://t.me/void_node_chat)\n\n⏳ Мы отвечаем в течение 15 минут (в рабочее время).',
-        market_menu: '📈 *Рынок*',
+        market_menu: '📈 Рынок',
         market_social: '📊 Соц.тренды',
         market_news: '📰 Новости',
         market_calendar: '📅 Календарь',
@@ -764,11 +787,11 @@ const LANGUAGES = {
         back_to_history: '🔙 Назад к истории',
         back_to_analyze: '🔙 Назад к анализу',
         about_title: 'ℹ️ *О БОТЕ*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Версия:* 4.1',
+        about_version: '📌 *Версия:* 4.3',
         about_created: '📅 *Создан:* 2024',
-        about_dev: '👨‍💻 *Разработчик:* @void_node_dev',
+        about_dev: '👨‍💻 *Разработчик:* @clofeLEAN',
         about_instruction: '📖 *ИНСТРУКЦИЯ:*\n\n1️⃣ **Подключи биржу** /connect\n2️⃣ **Анализируй портфель** /analyze\n3️⃣ **Проверяй безопасность** — отправь ссылку или контракт\n4️⃣ **Следи за рынком** /news\n5️⃣ **Получи AI-совет** /help',
-        about_links: '🔗 *ПОЛЕЗНЫЕ ССЫЛКИ:*\n\n📱 [Telegram](https://t.me/void_node_bot)',
+        about_links: '🔗 *ПОЛЕЗНЫЕ ССЫЛКИ:*\n\n📱 [Канал проекта](https://t.me/atifragility_node)',
         about_commands: '⚡ *Быстрые команды:*\n/analyze — анализ портфеля\n/connect — подключить биржу\n/news — новости, тренды, календарь\n/help — умная помощь',
         menu: '🔮 *Void Node — твой крипто-телохранитель*\n\n🏠 *Главное меню:*',
         main_analyze: '📊 Анализ портфеля',
@@ -878,7 +901,7 @@ const LANGUAGES = {
         help_answer_q8: '📝 *How does mood diary work?*\n\n/diary opens emotion diary.\n\nChoose your current mood:\n😌 Calm | 🤔 Thoughtful | 😰 Anxious | 😱 Panic | 😤 Angry | 😊 Euphoric\n\n📌 Bot saves entries. If you\'re anxious for 3 days in a row — bot warns you.',
         help_answer_q9: '🔌 *How to disconnect exchange?*\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
         help_contact_moderator_message: '👤 *Contact moderator*\n\nWrite to @clofeLEAN — he will help you!\n\n📌 Also you can ask in our support chat:\n📱 [Support chat](https://t.me/void_node_chat)\n\n⏳ We reply within 15 minutes (working hours).',
-        market_menu: '📈 *Market*',
+        market_menu: '📈 Market',
         market_social: '📊 Social trends',
         market_news: '📰 News',
         market_calendar: '📅 Calendar',
@@ -1004,11 +1027,11 @@ const LANGUAGES = {
         back_to_history: '🔙 Back to History',
         back_to_analyze: '🔙 Back to Analysis',
         about_title: 'ℹ️ *ABOUT BOT*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Version:* 4.1',
+        about_version: '📌 *Version:* 4.3',
         about_created: '📅 *Created:* 2024',
-        about_dev: '👨‍💻 *Developer:* @void_node_dev',
+        about_dev: '👨‍💻 *Developer:* @clofeLEAN',
         about_instruction: '📖 *INSTRUCTION:*\n\n1️⃣ **Connect exchange** /connect\n2️⃣ **Analyze portfolio** /analyze\n3️⃣ **Check security** — send link or contract\n4️⃣ **Follow market** /news\n5️⃣ **Get AI advice** /help',
-        about_links: '🔗 *USEFUL LINKS:*\n\n📱 [Telegram](https://t.me/void_node_bot)',
+        about_links: '🔗 *USEFUL LINKS:*\n\n📱 [Project channel](https://t.me/atifragility_node)',
         about_commands: '⚡ *Quick commands:*\n/analyze — portfolio analysis\n/connect — connect exchange\n/news — news, trends, calendar\n/help — smart help',
         menu: '🔮 *Void Node — your crypto guardian*\n\n🏠 *Main menu:*',
         main_analyze: '📊 Analyze portfolio',
@@ -1578,7 +1601,7 @@ function getBackKeyboard(lang) {
 async function showMainMenu(chatId) {
     try {
         const lang = await getData('lang_' + chatId) || 'ru';
-        console.log('📊 showMainMenu for ' + chatId);
+        console.log('📊 showMainMenu for ' + chatId + ' with lang: ' + lang);
         const userPlan = await getUserPlan(chatId);
         const mode = await getData('mode_' + chatId) || 'beginner';
         let userName = 'Friend';
@@ -2241,7 +2264,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 19. NEWS
+// 19. NEWS — WITH ENGLISH SUPPORT
 // ============================================================
 class NewsManager {
     constructor() {
@@ -2414,9 +2437,10 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         const article = result.articles.slice(0, 7)[i];
         const title = article.title?.length > 80 ? article.title.slice(0, 77) + '...' : article.title || 'News';
         const source = article.source?.name || 'Unknown';
-        const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString('ru-RU') : '';
+        const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US') : '';
         const description = article.description?.length > 120 ? article.description.slice(0, 117) + '...' : article.description || '';
         const assetTag = article.asset ? ' 🎯 ' + article.asset : '';
+        const readMoreText = lang === 'ru' ? 'Читать полностью' : 'Read more';
         report += '📌 ' + title + assetTag + '\n';
         report += '   📎 ' + source;
         if (date) report += ' | 📅 ' + date;
@@ -2424,11 +2448,13 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         if (description) {
             report += '   📝 ' + description + '\n';
         }
-        report += '   🔗 [Read more](' + article.url + ')\n\n';
+        report += '   🔗 [' + readMoreText + '](' + article.url + ')\n\n';
     }
     report += '━━━━━━━━━━━━━━━━━━━━━━━\n';
-    report += '📊 Found: ' + result.articles.length + ' news\n';
-    report += '🔄 /news — refresh';
+    const foundText = lang === 'ru' ? 'Найдено' : 'Found';
+    const refreshText = lang === 'ru' ? 'обновить' : 'refresh';
+    report += '📊 ' + foundText + ': ' + result.articles.length + ' news\n';
+    report += '🔄 /news — ' + refreshText;
     const keyboard = {
         inline_keyboard: [
             [{ text: '🔄 Refresh', callback_data: 'menu_news' }],
@@ -2483,6 +2509,7 @@ async function sendNewsReport(chatId, articles, coin, lang, messageId) {
         const source = article.source?.name || 'Unknown';
         const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString(isRu ? 'ru-RU' : 'en-US') : '';
         const description = article.description && article.description.length > 120 ? article.description.slice(0, 117) + '...' : article.description || '';
+        const readMoreText = isRu ? 'Читать полностью' : 'Read more';
         report += '📌 ' + title + '\n';
         report += '   📎 ' + source;
         if (date) report += ' | 📅 ' + date;
@@ -2490,11 +2517,13 @@ async function sendNewsReport(chatId, articles, coin, lang, messageId) {
         if (description) {
             report += '   📝 ' + description + '\n';
         }
-        report += '   🔗 [Read more](' + article.url + ')\n\n';
+        report += '   🔗 [' + readMoreText + '](' + article.url + ')\n\n';
     }
     report += '━━━━━━━━━━━━━━━━━━━━━━━\n';
-    report += '📊 Found: ' + count + ' news\n';
-    report += '🔄 /news ' + coin + ' — refresh';
+    const foundText = isRu ? 'Найдено' : 'Found';
+    const refreshText = isRu ? 'обновить' : 'refresh';
+    report += '📊 ' + foundText + ': ' + count + ' news\n';
+    report += '🔄 /news ' + coin + ' — ' + refreshText;
     const keyboard = {
         inline_keyboard: [
             [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
