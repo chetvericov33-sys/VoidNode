@@ -469,14 +469,14 @@ async function setUserLastMessageId(chatId, messageId) {
 }
 
 async function deleteUserLastMessage(chatId) {
-    const messageId = await getUserLastMessageId(chatId);
-    if (messageId) {
-        try {
+    try {
+        const messageId = await getUserLastMessageId(chatId);
+        if (messageId) {
             await botDeleteMessage(chatId, messageId);
             await deleteData('last_msg_' + chatId);
-        } catch (error) {
-            console.error('Failed to delete message:', error);
         }
+    } catch (error) {
+        console.error('deleteUserLastMessage error:', error);
     }
 }
 
@@ -2008,43 +2008,48 @@ function getMainMenuKeyboard(lang) {
 }
 
 async function showMainMenu(chatId, lang) {
-    var userPlan = await getUserPlan(chatId);
-    var mode = await getData('mode_' + chatId) || 'beginner';
-    var userName = 'Друг';
     try {
-        var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
-        var response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId })
-        });
-        var data = await response.json();
-        if (data.ok && data.result) {
-            userName = data.result.username || data.result.first_name || 'Друг';
-            if (userName.startsWith('@')) userName = userName.substring(1);
+        var userPlan = await getUserPlan(chatId);
+        var mode = await getData('mode_' + chatId) || 'beginner';
+        var userName = 'Друг';
+        try {
+            var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
+            var response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId })
+            });
+            var data = await response.json();
+            if (data.ok && data.result) {
+                userName = data.result.username || data.result.first_name || 'Друг';
+                if (userName.startsWith('@')) userName = userName.substring(1);
+            }
+        } catch (error) {
+            console.error('Ошибка получения username:', error);
         }
+        var userId = chatId;
+        var planName = userPlan.name || 'Триал';
+        var expiresDate = formatDateShort(userPlan.expires);
+        var modeDisplay = mode === 'beginner' ? 'Новичок' : 'Опытный';
+        var greeting = getText(lang, 'greeting_morning', userName);
+        var header = getText(lang, 'main_header', userName, modeDisplay, userId, planName, expiresDate);
+        var vipStatus = '';
+        var isVip = userPlan.plan === 'VIP' && userPlan.expires > Date.now();
+        if (isVip) {
+            var timeLeft = userPlan.expires - Date.now();
+            var daysLeft = Math.floor(timeLeft / (24 * 60 * 60 * 1000));
+            if (daysLeft <= 1) {
+                vipStatus = '\nVIP заканчивается завтра!';
+            } else {
+                vipStatus = '\nVIP активен (' + daysLeft + ' дн.)';
+            }
+        }
+        var message = greeting + '\n\n' + header + vipStatus + '\n\nVoid Node — твой крипто-телохранитель\n\nГлавное меню:';
+        await sendUpdatedMessage(chatId, message, getMainMenuKeyboard(lang));
     } catch (error) {
-        console.error('Ошибка получения username:', error);
+        console.error('showMainMenu error:', error);
+        await sendMessage(chatId, '⚠️ Ошибка загрузки меню. Попробуйте позже.');
     }
-    var userId = chatId;
-    var planName = userPlan.name || 'Триал';
-    var expiresDate = formatDateShort(userPlan.expires);
-    var modeDisplay = mode === 'beginner' ? 'Новичок' : 'Опытный';
-    var greeting = getText(lang, 'greeting_morning', userName);
-    var header = getText(lang, 'main_header', userName, modeDisplay, userId, planName, expiresDate);
-    var vipStatus = '';
-    var isVip = userPlan.plan === 'VIP' && userPlan.expires > Date.now();
-    if (isVip) {
-        var timeLeft = userPlan.expires - Date.now();
-        var daysLeft = Math.floor(timeLeft / (24 * 60 * 60 * 1000));
-        if (daysLeft <= 1) {
-            vipStatus = '\nVIP заканчивается завтра!';
-        } else {
-            vipStatus = '\nVIP активен (' + daysLeft + ' дн.)';
-        }
-    }
-    var message = greeting + '\n\n' + header + vipStatus + '\n\nVoid Node — твой крипто-телохранитель\n\nГлавное меню:';
-    await sendUpdatedMessage(chatId, message, getMainMenuKeyboard(lang));
 }
 
 async function showFunctionsMenu(chatId, lang) {
@@ -3499,8 +3504,8 @@ class VipReminderService {
             if (timeLeft <= 24 * 60 * 60 * 1000 && timeLeft > 23 * 60 * 60 * 1000 && !alreadyNotified) {
                 var expiresDate = formatDateShort(plan.expires);
                 var message = isRu
-                    ? 'Привет! Твой VIP-доступ заканчивается завтра (' + expiresDate + ').\n\nТы уже видел, как холодный душ спасает портфель.\nТы знаешь, как автоторговля приносит прибыль.\n\nЯ не хочу, чтобы ты терял эти возможности.\nПродли доступ сейчас — и оставайся под защитой.\n\n/subscribe — выбери свой тариф'
-                    : 'Hey! Your VIP access expires tomorrow (' + expiresDate + ').\n\nYou\'ve already seen how panic mode saves your portfolio.\nYou know how autotrading brings profit.\n\nI don\'t want you to lose these opportunities.\nRenew now — and stay protected.\n\n/subscribe — choose your plan';
+                    ? 'Привет! Твой VIP-доступ заканчивается завтра (' + expiresDate + ').\n\nТы уже видел, как холодный душ спасает портфель.\nТы знаешь, как автоторговля приносит прибыль.\n\nЯ не хочу, чтобы ты терял эти возможности.\nПродли доступ сейчас - и оставайся под защитой.\n\n/subscribe - выбери свой тариф'
+                    : 'Hey! Your VIP access expires tomorrow (' + expiresDate + ').\n\nYou\'ve already seen how panic mode saves your portfolio.\nYou know how autotrading brings profit.\n\nI don\'t want you to lose these opportunities.\nRenew now - and stay protected.\n\n/subscribe - choose your plan';
                 var keyboard = {
                     inline_keyboard: [
                         [{ text: isRu ? 'Выбрать тариф' : 'Choose plan', callback_data: 'menu_plans' }],
