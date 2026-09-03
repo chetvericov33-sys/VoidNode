@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 4.5 (ФИНАЛ)
+// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 4.6 (ФИНАЛ)
 // ============================================================
 
 require('dotenv').config();
@@ -332,6 +332,80 @@ function createProgressBarUI(value, max, length) {
 }
 
 // ============================================================
+// 4.1. ФУНКЦИИ ДЛЯ ФОРМАТИРОВАНИЯ СООБЩЕНИЙ (НОВЫЕ)
+// ============================================================
+
+function formatSection(title, emoji = '📌') {
+    return `\n${emoji} *${title}*\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
+}
+
+function formatSubSection(title, emoji = '•') {
+    return `\n${emoji} **${title}**`;
+}
+
+function formatValue(label, value, emoji = '') {
+    return `${emoji} ${label}: ${value}`;
+}
+
+function formatRecommendation(text, status = 'info') {
+    const emojis = {
+        success: '✅',
+        warning: '⚠️',
+        danger: '🔴',
+        info: '💡',
+        buy: '📈',
+        sell: '📉',
+        neutral: '⚪'
+    };
+    return `${emojis[status] || '•'} ${text}`;
+}
+
+function formatAssetLine(symbol, amount, value, weight, change = null) {
+    let line = `• *${symbol}*: ${amount.toFixed(4)} → $${value.toFixed(2)} (${weight.toFixed(1)}%)`;
+    if (change !== null && change !== 0 && !isNaN(change)) {
+        const sign = change > 0 ? '+' : '';
+        const emoji = change > 0 ? '📈' : '📉';
+        line += `  ${emoji} ${sign}${change.toFixed(2)}%`;
+    }
+    return line;
+}
+
+function getStatusEmoji(value, good, bad) {
+    if (value <= good) return '✅';
+    if (value <= bad) return '⚠️';
+    return '🔴';
+}
+
+function getRiskLabel(score) {
+    if (score > 70) return { emoji: '🔴', label: 'Высокий' };
+    if (score > 40) return { emoji: '🟡', label: 'Средний' };
+    return { emoji: '🟢', label: 'Низкий' };
+}
+
+function formatHelpAnswer(text, lang) {
+    const exitText = lang === 'ru' ? '\n\n━━━━━━━━━━━━━━━━━━━━━━━\n💡 Для выхода в меню отправьте /exit' : '\n\n━━━━━━━━━━━━━━━━━━━━━━━\n💡 To exit to menu send /exit';
+    return text + exitText;
+}
+
+function getCancelKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: getText(lang, 'cancel'), callback_data: 'cancel_action' }]
+        ]
+    };
+}
+
+function getErrorKeyboard(lang, retryCallback = null, helpCallback = 'menu_help') {
+    const buttons = [];
+    if (retryCallback) {
+        buttons.push([{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: retryCallback }]);
+    }
+    buttons.push([{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: helpCallback }]);
+    buttons.push([{ text: '🏠 ' + (lang === 'ru' ? 'В меню' : 'Main menu'), callback_data: 'back_to_menu' }]);
+    return { inline_keyboard: buttons };
+}
+
+// ============================================================
 // 5. PLANS
 // ============================================================
 const PLANS = {
@@ -585,8 +659,9 @@ async function checkLimit(chatId, feature) {
 }
 
 // ============================================================
-// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH) — ИСПРАВЛЕННАЯ
+// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH) — ОБНОВЛЕННАЯ
 // ============================================================
+
 const LANGUAGES = {
     ru: {
         // ОНБОРДИНГ
@@ -598,7 +673,7 @@ const LANGUAGES = {
         mode_beginner_btn: '🔰 Новичок',
         mode_pro_btn: '🚀 Опытный',
         
-        // ГЛАВНОЕ МЕНЮ
+        // ГЛАВНОЕ МЕНЮ (БЕЗ КНОПКИ НАЗАД)
         menu_title: '🔮 *Void Node — твой крипто-телохранитель*\n\n🏠 *Главное меню:*\n\n💡 Используйте кнопки ниже или быстрые команды:\n/analyze, /news, /help',
         main_functions: '📊 Функции',
         main_settings: '⚙️ Настройки',
@@ -620,33 +695,43 @@ const LANGUAGES = {
         settings_change_lang: '🌍 Сменить язык',
         settings_change_mode: '🧠 Сменить режим',
         
-        // ПОМОЩЬ
-        help_menu_title: '❓ *Помощь по боту*\n\nВыберите вопрос:',
+        // ПОМОЩЬ — С КРАТКИМИ ВЫЖИМКАМИ
+        help_menu_title: '❓ *Помощь по боту*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nВыберите вопрос:',
         help_q1: '🔐 Как подключить биржу?',
+        help_q1_desc: '📌 API-ключи: создание и подключение',
         help_q2: '📊 Как работает анализ портфеля?',
+        help_q2_desc: '📌 Полный разбор активов и рекомендации',
         help_q3: '🔐 Зачем подключать биржу?',
+        help_q3_desc: '📌 Доступ к анализу, автоторговле и защите',
         help_q4: '🛡️ Как проверить контракт?',
+        help_q4_desc: '📌 Проверка смарт-контрактов на безопасность',
         help_q5: '🔔 Как создать оповещение?',
+        help_q5_desc: '📌 5 типов оповещений для трейдеров',
         help_q6: '🚀 Как включить автоторговлю?',
+        help_q6_desc: '📌 4 уровня от защиты до снежного кома',
         help_q7: '❄️ Что такое холодный душ?',
+        help_q7_desc: '📌 Экстренная защита при падении рынка',
         help_q8: '📝 Как работает дневник настроения?',
+        help_q8_desc: '📌 Отслеживание эмоций для безопасной торговли',
         help_q9: '🔌 Как отключить биржу?',
+        help_q9_desc: '📌 Безопасное отключение API-ключей',
         help_contact_moderator: '👤 Написать модератору',
+        help_contact_moderator_desc: '📌 Связь с поддержкой',
         
-        // ОТВЕТЫ ПОМОЩИ
-        help_answer_q1: '🔐 *Как подключить биржу?*\n\n1. Зайдите на биржу (Binance, Bybit, OKX и др.)\n2. Перейдите в раздел управления API\n3. Создайте ключ с правами *только на чтение*\n4. Скопируйте API-ключ и Secret-ключ\n5. Отправьте их в бот командой /connect в формате:\n`API_KEY:SECRET_KEY`\n\n🔒 *Ключи шифруются и не имеют права на вывод средств.*',
-        help_answer_q2: '📊 *Как работает анализ портфеля?*\n\nКоманда /analyze запускает полный анализ:\n• Показывает распределение активов (BTC, альты, стейблы)\n• Рассчитывает RSI, скользящие средние (MA20, MA200)\n• Оценивает риск (низкий/средний/высокий)\n• Считает коэффициент Шарпа и VaR\n• Даёт конкретные рекомендации по ребалансировке\n\n📌 После анализа вы можете исполнить рекомендации одним нажатием кнопки.',
-        help_answer_q3: '🔐 *Зачем подключать биржу?*\n\nПодключение биржи даёт доступ к ключевым функциям:\n\n1. Анализ портфеля — бот видит активы и даёт рекомендации\n2. Автоторговля — автоматическая защита и ребаланс\n3. Холодный душ — экстренная защита при падении рынка\n4. Оповещения — уведомления по вашим активам\n5. Ребаланс — автоматическое поддержание целевых весов\n\n🔒 Ключи шифруются и имеют права только на чтение.',
-        help_answer_q4: '🛡️ *Как проверить контракт?*\n\nОтправьте адрес контракта (0x...) в чат — бот проверит:\n• Верификацию на Etherscan\n• Подозрительные паттерны (honeypot)\n• Скоринг риска (0–100 баллов)\n\n📌 Пример: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
-        help_answer_q5: '🔔 *Как создать оповещение?*\n\nИспользуйте /alerts или меню *Оповещения*.\n\n5 типов оповещений:\n• 📊 По цене — при достижении заданной цены\n• 📈 По изменению % — при изменении цены более чем на X%\n• 📊 По объёму — при превышении объёма торгов\n• 📰 Новостное — при появлении новостей по вашим активам\n• 📅 Календарное — перед важными экономическими событиями\n\n📌 Лимит зависит от вашего тарифа.',
-        help_answer_q6: '🚀 *Как включить автоторговлю?*\n\n/autotrade открывает меню с 4 уровнями:\n\n🛡️ *Уровень 1 (Защита)* — стоп-лоссы 5% и 10%\n🔄 *Уровень 2 (Перераспределение)* — продажа мусора, покупка роста\n🧠 *Уровень 3 (Умный рост)* — трейлинг стоп-лосс, фиксация 30% прибыли\n❄️ *Уровень 4 (Снежный ком)* — переток из мусорных в растущие\n\n📌 Доступна только на PRO и VIP.',
-        help_answer_q7: '❄️ *Что такое холодный душ?*\n\nЭкстренная защита при падении рынка:\n• Бот проверяет ВСЕ токены каждые 15 минут\n• При падении >5% за 15 минут — отправляет предупреждение\n• Предлагает конвертировать все активы в USDT\n\n🛡️ Доступен на PRO и VIP.',
-        help_answer_q8: '📝 *Как работает дневник настроения?*\n\n/diary открывает дневник эмоций.\n\nВыберите настроение:\n😌 Спокоен | 🤔 Задумчив | 😰 Тревожен | 😱 Паника | 😤 Зол | 😊 Эйфория\n\n📌 Бот сохраняет записи. Если вы тревожны 3 дня подряд — бот предупредит вас.',
-        help_answer_q9: '🔌 *Как отключить биржу?*\n\n/disconnect или *Настройки* → *Отключить биржу*.\n\nПосле подтверждения API-ключи будут удалены.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
-        help_contact_moderator_message: '👤 *Связь с модератором*\n\nНапишите @clofeLEAN — он вам поможет!',
+        // ОТВЕТЫ ПОМОЩИ — С ПОДПИСЬЮ /exit
+        help_answer_q1: '🔐 *Как подключить биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Зайдите на биржу (Binance, Bybit, OKX и др.)\n2️⃣ Перейдите в раздел управления API\n3️⃣ Создайте ключ с правами *только на чтение*\n4️⃣ Скопируйте API-ключ и Secret-ключ\n5️⃣ Отправьте их в бот командой /connect в формате:\n`API_KEY:SECRET_KEY`\n\n🔒 *Ключи шифруются и не имеют права на вывод средств.*',
+        help_answer_q2: '📊 *Как работает анализ портфеля?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nКоманда /analyze запускает полный анализ:\n\n✅ Показывает распределение активов (BTC, альты, стейблы)\n✅ Рассчитывает RSI, скользящие средние (MA20, MA200)\n✅ Оценивает риск (низкий/средний/высокий)\n✅ Считает коэффициент Шарпа и VaR\n✅ Даёт конкретные рекомендации по ребалансировке\n\n📌 После анализа вы можете исполнить рекомендации одним нажатием кнопки.',
+        help_answer_q3: '🔐 *Зачем подключать биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nПодключение биржи даёт доступ к ключевым функциям:\n\n1️⃣ Анализ портфеля — бот видит активы и даёт рекомендации\n2️⃣ Автоторговля — автоматическая защита и ребаланс\n3️⃣ Холодный душ — экстренная защита при падении рынка\n4️⃣ Оповещения — уведомления по вашим активам\n5️⃣ Ребаланс — автоматическое поддержание целевых весов\n\n🔒 Ключи шифруются и имеют права только на чтение.',
+        help_answer_q4: '🛡️ *Как проверить контракт?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nОтправьте адрес контракта (0x...) в чат — бот проверит:\n\n✅ Верификацию на Etherscan\n✅ Подозрительные паттерны (honeypot)\n✅ Скоринг риска (0–100 баллов)\n\n📌 Пример: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
+        help_answer_q5: '🔔 *Как создать оповещение?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nИспользуйте /alerts или меню *Оповещения*.\n\n5 типов оповещений:\n\n📊 По цене — при достижении заданной цены\n📈 По изменению % — при изменении цены более чем на X%\n📊 По объёму — при превышении объёма торгов\n📰 Новостное — при появлении новостей по вашим активам\n📅 Календарное — перед важными экономическими событиями\n\n📌 Лимит зависит от вашего тарифа.',
+        help_answer_q6: '🚀 *Как включить автоторговлю?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/autotrade открывает меню с 4 уровнями:\n\n🛡️ *Уровень 1 (Защита)* — стоп-лоссы 5% и 10%\n🔄 *Уровень 2 (Перераспределение)* — продажа мусора, покупка роста\n🧠 *Уровень 3 (Умный рост)* — трейлинг стоп-лосс, фиксация 30% прибыли\n❄️ *Уровень 4 (Снежный ком)* — переток из мусорных в растущие\n\n📌 Доступна только на PRO и VIP.',
+        help_answer_q7: '❄️ *Что такое холодный душ?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nЭкстренная защита при падении рынка:\n\n✅ Бот проверяет ВСЕ токены каждые 15 минут\n✅ При падении >5% за 15 минут — отправляет предупреждение\n✅ Предлагает конвертировать все активы в USDT\n\n🛡️ Доступен на PRO и VIP.',
+        help_answer_q8: '📝 *Как работает дневник настроения?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/diary открывает дневник эмоций.\n\nВыберите настроение:\n😌 Спокоен | 🤔 Задумчив | 😰 Тревожен | 😱 Паника | 😤 Зол | 😊 Эйфория\n\n📌 Бот сохраняет записи. Если вы тревожны 3 дня подряд — бот предупредит вас.',
+        help_answer_q9: '🔌 *Как отключить биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/disconnect или *Настройки* → *Отключить биржу*.\n\nПосле подтверждения API-ключи будут удалены.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
+        help_contact_moderator_message: '👤 *Связь с модератором*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nНапишите @clofeLEAN — он вам поможет!',
         
         // РЫНОК
-        market_menu: '📈 Рынок',
+        market_menu: '📈 *Рынок*\n\nВыберите раздел:',
         market_social: '📊 Соц.тренды',
         market_news: '📰 Новости',
         market_calendar: '📅 Календарь',
@@ -708,10 +793,10 @@ const LANGUAGES = {
         // ТАРИФЫ — С ПОДРОБНЫМИ ОПИСАНИЯМИ
         plans_title: '💳 *Тарифы*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nВыберите подходящий тариф:',
         plans_current: (plan, expires) => `📊 ${plan}\n📅 До: ${expires}`,
-        plans_trial: '🔰 *Триал*\n💰 0 ₽ • 7 дней\n\n📋 Что входит:\n• 📊 2 анализа портфеля в день\n• 🛡️ 3 антискам-проверки\n• 📈 Социальные тренды\n\n💡 *Идеально для:* знакомства с ботом и первичной оценки.',
-        plans_start: '⭐ *Старт*\n💰 500 ₽ • 30 дней\n\n📋 Что входит:\n• 📊 10 анализов портфеля в день\n• 🛡️ 15 антискам-проверок\n• 🔔 3 оповещения\n• 💬 AI-советник (5/день)\n\n💡 *Идеально для:* активных трейдеров, которым нужен ежедневный анализ.',
-        plans_pro: '🚀 *PRO*\n💰 1 000 ₽ • 30 дней\n\n📋 Что входит:\n• 📊 30 анализов портфеля в день\n• 🛡️ 50 антискам-проверок\n• 🔔 15 оповещений\n• ❄️ *Холодный душ* — защита от обвалов\n• 🚀 *Автоторговля* (3/день)\n• 🆘 Kill Switch\n\n💡 *Идеально для:* серьёзных трейдеров, которым нужна автоторговля и защита.',
-        plans_vip: '👑 *VIP*\n💰 1 500 ₽ • 30 дней\n\n📋 Что входит:\n• ВСЕ БЕЗЛИМИТНО\n• ❄️ Холодный душ (безлимит)\n• 🚀 Автоторговля (безлимит)\n• 🆘 Kill Switch\n• ⚡ Приоритетная поддержка 24/7\n\n💡 *Идеально для:* профессионалов, которым нужен полный контроль.',
+        plans_trial: '🔰 *Триал*\n💰 0 ₽ • 7 дней\n\n📋 *Что входит:*\n• 📊 2 анализа портфеля в день\n• 🛡️ 3 антискам-проверки\n• 📈 Социальные тренды\n\n💡 *Идеально для:* знакомства с ботом и первичной оценки.\n\n⚠️ После триала доступ к функциям ограничивается.',
+        plans_start: '⭐ *Старт*\n💰 500 ₽ • 30 дней\n\n📋 *Что входит:*\n• 📊 10 анализов портфеля в день\n• 🛡️ 15 антискам-проверок\n• 🔔 3 оповещения\n• 💬 AI-советник (5/день)\n\n💡 *Идеально для:* активных трейдеров, которым нужен ежедневный анализ.\n\n📌 *Ключевая ценность:* Полный набор базовых инструментов для уверенной торговли.',
+        plans_pro: '🚀 *PRO*\n💰 1 000 ₽ • 30 дней\n\n📋 *Что входит:*\n• 📊 30 анализов портфеля в день\n• 🛡️ 50 антискам-проверок\n• 🔔 15 оповещений\n• ❄️ *Защита от обвалов* — автоматическая конвертация в USDT при падении рынка\n• 🚀 *Автоматическая фиксация прибыли* и ребаланс портфеля (3/день)\n• 🆘 Kill Switch — экстренная остановка\n\n💡 *Идеально для:* серьёзных трейдеров, которым нужна автоторговля и защита.\n\n📌 *Ключевая ценность:* Полный контроль и защита капитала.',
+        plans_vip: '👑 *VIP*\n💰 1 500 ₽ • 30 дней\n\n📋 *Что входит:*\n• ✅ ВСЕ БЕЗЛИМИТНО\n• ❄️ *Защита от обвалов* — безлимит\n• 🚀 *Автоматическая фиксация прибыли* — безлимит\n• 🆘 Kill Switch — экстренная остановка\n• ⚡ Приоритетная поддержка 24/7\n\n💡 *Идеально для:* профессионалов, которым нужен полный контроль.\n\n📌 *Ключевая ценность:* Максимальная защита и автоматизация.',
         plans_select: '👇 *Выбери тариф:*',
         plans_payment_creating: '⏳ Создаю счёт...',
         plans_payment_error: '❌ Ошибка создания счёта.',
@@ -805,13 +890,13 @@ const LANGUAGES = {
         alert_list: '📋 *Ваши оповещения:*\n',
         alert_deleted: '✅ Оповещение удалено.',
         
-        // АВТОТОРГОВЛЯ
-        autotrade_menu: '🚀 *Автоторговля*\n\nВыберите уровень сложности:',
+        // АВТОТОРГОВЛЯ — С ПОДСКАЗКАМИ
+        autotrade_menu: '🚀 *Автоторговля*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nВыберите уровень сложности:',
         autotrade_level1: '🛡️ Уровень 1 (Защита)',
         autotrade_level2: '🔄 Уровень 2 (Перераспределение)',
         autotrade_level3: '🧠 Уровень 3 (Умный рост)',
         autotrade_level4: '❄️ Уровень 4 (Снежный ком)',
-        autotrade_level1_desc: '🛡️ *Уровень 1 (Защита)* — установит стоп-лоссы 5% и 10%',
+        autotrade_level1_desc: '🛡️ *Уровень 1 (Защита)* — установит стоп-лоссы 5% и 10% для защиты от падения',
         autotrade_level2_desc: '🔄 *Уровень 2 (Перераспределение)* — продаст мусорные токены и купит растущие',
         autotrade_level3_desc: '🧠 *Уровень 3 (Умный рост)* — будет двигать стоп-лосс вверх при росте и фиксировать 30% прибыли',
         autotrade_level4_desc: '❄️ *Уровень 4 (Снежный ком)* — переток из мусорных токенов в растущие, фиксация прибыли при +30%',
@@ -828,7 +913,7 @@ const LANGUAGES = {
         
         // О БОТЕ
         about_title: 'ℹ️ *О БОТЕ*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Версия:* 4.5',
+        about_version: '📌 *Версия:* 4.6',
         about_created: '📅 *Создан:* 2024',
         about_dev: '👨‍💻 *Разработчик:* @clofeLEAN',
         about_instruction: '📖 *ИНСТРУКЦИЯ:*\n\n1️⃣ **Подключи биржу** — /connect\n2️⃣ **Анализируй портфель** — /analyze\n3️⃣ **Проверяй безопасность** — отправь ссылку или контракт\n4️⃣ **Следи за рынком** — /news\n5️⃣ **Получи помощь** — /help',
@@ -836,7 +921,6 @@ const LANGUAGES = {
         about_commands: '⚡ *Быстрые команды:*\n/analyze — анализ портфеля\n/connect — подключить биржу\n/news — новости, тренды, календарь\n/help — помощь',
         
         // ОБЩИЕ
-        back_to_menu: '🔙 Выйти в меню',
         no_keys: '🔐 *Подключи биржу:* /connect',
         no_analysis_data: '❌ *Нет данных.* Выполни /analyze',
         default_response: (text) => `🤔 Ты написал: "${text}"\n\nНажми /help для помощи.`,
@@ -871,7 +955,7 @@ const LANGUAGES = {
         mode_beginner_btn: '🔰 Beginner',
         mode_pro_btn: '🚀 Experienced',
         
-        // MAIN MENU
+        // MAIN MENU (NO BACK BUTTON)
         menu_title: '🔮 *Void Node — your crypto guardian*\n\n🏠 *Main menu:*\n\n💡 Use buttons below or quick commands:\n/analyze, /news, /help',
         main_functions: '📊 Functions',
         main_settings: '⚙️ Settings',
@@ -893,33 +977,43 @@ const LANGUAGES = {
         settings_change_lang: '🌍 Change language',
         settings_change_mode: '🧠 Change mode',
         
-        // HELP
-        help_menu_title: '❓ *Help*\n\nSelect a question:',
+        // HELP — WITH SHORT DESCRIPTIONS
+        help_menu_title: '❓ *Help*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nSelect a question:',
         help_q1: '🔐 How to connect exchange?',
+        help_q1_desc: '📌 API keys: creation and connection',
         help_q2: '📊 How does portfolio analysis work?',
+        help_q2_desc: '📌 Full asset breakdown and recommendations',
         help_q3: '🔐 Why connect exchange?',
+        help_q3_desc: '📌 Access to analysis, autotrading and protection',
         help_q4: '🛡️ How to check a contract?',
+        help_q4_desc: '📌 Smart contract security check',
         help_q5: '🔔 How to create an alert?',
+        help_q5_desc: '📌 5 types of alerts for traders',
         help_q6: '🚀 How to enable autotrading?',
+        help_q6_desc: '📌 4 levels from protection to snowball',
         help_q7: '❄️ What is Panic mode?',
+        help_q7_desc: '📌 Emergency protection during market crashes',
         help_q8: '📝 How does mood diary work?',
+        help_q8_desc: '📌 Track emotions for safe trading',
         help_q9: '🔌 How to disconnect exchange?',
+        help_q9_desc: '📌 Safe API key removal',
         help_contact_moderator: '👤 Contact moderator',
+        help_contact_moderator_desc: '📌 Contact support',
         
-        // HELP ANSWERS
-        help_answer_q1: '🔐 *How to connect exchange?*\n\n1. Go to your exchange (Binance, Bybit, OKX, etc.)\n2. Go to API management section\n3. Create a key with *read-only* permissions\n4. Copy API key and Secret key\n5. Send them to bot with /connect in format:\n`API_KEY:SECRET_KEY`\n\n🔒 *Keys are encrypted and have no withdrawal rights.*',
-        help_answer_q2: '📊 *How does portfolio analysis work?*\n\n/analyze runs a full portfolio analysis:\n\n• Shows asset allocation (BTC, alts, stablecoins)\n• Calculates RSI, moving averages (MA20, MA200)\n• Evaluates risk (low/medium/high)\n• Calculates Sharpe ratio and VaR\n• Gives specific rebalancing recommendations\n\n📌 After analysis you can execute recommendations with one click.',
-        help_answer_q3: '🔐 *Why connect exchange?*\n\nConnecting your exchange gives you access to key features:\n\n1. Portfolio analysis — bot sees your assets and gives recommendations\n2. Autotrading — automatic protection and rebalancing\n3. Panic mode — emergency protection during market crashes\n4. Alerts — notifications for your assets\n5. Rebalance — automatic maintenance of target weights\n\n🔒 Keys are encrypted and have read-only permissions.',
-        help_answer_q4: '🛡️ *How to check a contract?*\n\nYou can check a smart contract in several ways:\n\n1. Send contract address (0x...) in chat — bot will check automatically\n2. Use *Security* menu → *Contract*\n3. Use *Security* menu → *DEX* — shows liquidity and risks\n\n🔍 Bot checks:\n• Verification on Etherscan\n• Suspicious patterns (honeypot)\n• Risk scoring (0–100)\n\n📌 Example: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
-        help_answer_q5: '🔔 *How to create an alert?*\n\nUse /alerts or *Alerts* menu.\n\n5 alert types available:\n• 📊 Price — triggers at target price\n• 📈 Change % — triggers when price changes by X%\n• 📊 Volume — triggers when trading volume exceeds\n• 📰 News — triggers when news appear for your assets\n• 📅 Calendar — before important economic events\n\n📌 Limit depends on your plan.',
-        help_answer_q6: '🚀 *How to enable autotrading?*\n\n/autotrade opens menu with 4 levels:\n\n🛡️ *Level 1 (Protection)* — sets stop-losses at 5% and 10% drops\n🔄 *Level 2 (Reallocation)* — sells junk tokens and buys growing ones\n🧠 *Level 3 (Smart Growth)* — uses trailing stop-loss and locks 30% profit at >20% growth\n❄️ *Level 4 (Snowball)* — flows capital from junk tokens to growing ones\n\n📌 Available only on PRO and VIP.',
-        help_answer_q7: '❄️ *What is Panic mode?*\n\nPanic mode is emergency protection during market crashes.\n\n• Bot checks ALL tokens every 15 minutes\n• If drop >5% in 15 minutes — sends warning\n• Offers one-click conversion of ALL assets to USDT\n\n🛡️ Available on PRO and VIP.',
-        help_answer_q8: '📝 *How does mood diary work?*\n\n/diary opens emotion diary.\n\nChoose your current mood:\n😌 Calm | 🤔 Thoughtful | 😰 Anxious | 😱 Panic | 😤 Angry | 😊 Euphoric\n\n📌 Bot saves entries. If you\'re anxious for 3 days in a row — bot warns you.',
-        help_answer_q9: '🔌 *How to disconnect exchange?*\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
-        help_contact_moderator_message: '👤 *Contact moderator*\n\nWrite to @clofeLEAN — he will help you!',
+        // HELP ANSWERS — WITH /exit signature
+        help_answer_q1: '🔐 *How to connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Go to your exchange (Binance, Bybit, OKX, etc.)\n2️⃣ Go to API management section\n3️⃣ Create a key with *read-only* permissions\n4️⃣ Copy API key and Secret key\n5️⃣ Send them to bot with /connect in format:\n`API_KEY:SECRET_KEY`\n\n🔒 *Keys are encrypted and have no withdrawal rights.*',
+        help_answer_q2: '📊 *How does portfolio analysis work?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/analyze runs a full portfolio analysis:\n\n✅ Shows asset allocation (BTC, alts, stablecoins)\n✅ Calculates RSI, moving averages (MA20, MA200)\n✅ Evaluates risk (low/medium/high)\n✅ Calculates Sharpe ratio and VaR\n✅ Gives specific rebalancing recommendations\n\n📌 After analysis you can execute recommendations with one click.',
+        help_answer_q3: '🔐 *Why connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nConnecting your exchange gives you access to key features:\n\n1️⃣ Portfolio analysis — bot sees your assets and gives recommendations\n2️⃣ Autotrading — automatic protection and rebalancing\n3️⃣ Panic mode — emergency protection during market crashes\n4️⃣ Alerts — notifications for your assets\n5️⃣ Rebalance — automatic maintenance of target weights\n\n🔒 Keys are encrypted and have read-only permissions.',
+        help_answer_q4: '🛡️ *How to check a contract?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nYou can check a smart contract in several ways:\n\n✅ Send contract address (0x...) in chat — bot will check automatically\n✅ Use *Security* menu → *Contract*\n✅ Use *Security* menu → *DEX* — shows liquidity and risks\n\n🔍 Bot checks:\n• Verification on Etherscan\n• Suspicious patterns (honeypot)\n• Risk scoring (0–100)\n\n📌 Example: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
+        help_answer_q5: '🔔 *How to create an alert?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nUse /alerts or *Alerts* menu.\n\n5 alert types available:\n\n📊 Price — triggers at target price\n📈 Change % — triggers when price changes by X%\n📊 Volume — triggers when trading volume exceeds\n📰 News — triggers when news appear for your assets\n📅 Calendar — before important economic events\n\n📌 Limit depends on your plan.',
+        help_answer_q6: '🚀 *How to enable autotrading?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/autotrade opens menu with 4 levels:\n\n🛡️ *Level 1 (Protection)* — sets stop-losses at 5% and 10% drops\n🔄 *Level 2 (Reallocation)* — sells junk tokens and buys growing ones\n🧠 *Level 3 (Smart Growth)* — uses trailing stop-loss and locks 30% profit at >20% growth\n❄️ *Level 4 (Snowball)* — flows capital from junk tokens to growing ones\n\n📌 Available only on PRO and VIP.',
+        help_answer_q7: '❄️ *What is Panic mode?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nPanic mode is emergency protection during market crashes.\n\n✅ Bot checks ALL tokens every 15 minutes\n✅ If drop >5% in 15 minutes — sends warning\n✅ Offers one-click conversion of ALL assets to USDT\n\n🛡️ Available on PRO and VIP.',
+        help_answer_q8: '📝 *How does mood diary work?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/diary opens emotion diary.\n\nChoose your current mood:\n😌 Calm | 🤔 Thoughtful | 😰 Anxious | 😱 Panic | 😤 Angry | 😊 Euphoric\n\n📌 Bot saves entries. If you\'re anxious for 3 days in a row — bot warns you.',
+        help_answer_q9: '🔌 *How to disconnect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
+        help_contact_moderator_message: '👤 *Contact moderator*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nWrite to @clofeLEAN — he will help you!',
         
         // MARKET
-        market_menu: '📈 Market',
+        market_menu: '📈 *Market*\n\nSelect section:',
         market_social: '📊 Social trends',
         market_news: '📰 News',
         market_calendar: '📅 Calendar',
@@ -981,10 +1075,10 @@ const LANGUAGES = {
         // PLANS — WITH DETAILED DESCRIPTIONS
         plans_title: '💳 *Plans*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nChoose a plan:',
         plans_current: (plan, expires) => `📊 ${plan}\n📅 Until: ${expires}`,
-        plans_trial: '🔰 *Trial*\n💰 0 ₽ • 7 days\n\n📋 What\'s included:\n• 📊 2 portfolio analyses per day\n• 🛡️ 3 anti-scam checks\n• 📈 Social trends\n\n💡 *Perfect for:* getting to know the bot and initial assessment.',
-        plans_start: '⭐ *Start*\n💰 500 ₽ • 30 days\n\n📋 What\'s included:\n• 📊 10 portfolio analyses per day\n• 🛡️ 15 anti-scam checks\n• 🔔 3 alerts\n• 💬 AI advisor (5/day)\n\n💡 *Perfect for:* active traders who need daily analysis.',
-        plans_pro: '🚀 *PRO*\n💰 1 000 ₽ • 30 days\n\n📋 What\'s included:\n• 📊 30 portfolio analyses per day\n• 🛡️ 50 anti-scam checks\n• 🔔 15 alerts\n• ❄️ *Panic mode* — crash protection\n• 🚀 *Autotrading* (3/day)\n• 🆘 Kill Switch\n\n💡 *Perfect for:* serious traders who need autotrading and protection.',
-        plans_vip: '👑 *VIP*\n💰 1 500 ₽ • 30 days\n\n📋 What\'s included:\n• ALL UNLIMITED\n• ❄️ Panic mode (unlimited)\n• 🚀 Autotrading (unlimited)\n• 🆘 Kill Switch\n• ⚡ 24/7 priority support\n\n💡 *Perfect for:* professionals who need full control.',
+        plans_trial: '🔰 *Trial*\n💰 0 ₽ • 7 days\n\n📋 *What\'s included:*\n• 📊 2 portfolio analyses per day\n• 🛡️ 3 anti-scam checks\n• 📈 Social trends\n\n💡 *Perfect for:* getting to know the bot and initial assessment.\n\n⚠️ After trial, access to functions is limited.',
+        plans_start: '⭐ *Start*\n💰 500 ₽ • 30 days\n\n📋 *What\'s included:*\n• 📊 10 portfolio analyses per day\n• 🛡️ 15 anti-scam checks\n• 🔔 3 alerts\n• 💬 AI advisor (5/day)\n\n💡 *Perfect for:* active traders who need daily analysis.\n\n📌 *Key value:* Full set of basic tools for confident trading.',
+        plans_pro: '🚀 *PRO*\n💰 1 000 ₽ • 30 days\n\n📋 *What\'s included:*\n• 📊 30 portfolio analyses per day\n• 🛡️ 50 anti-scam checks\n• 🔔 15 alerts\n• ❄️ *Crash protection* — automatic conversion to USDT during market drops\n• 🚀 *Automated profit taking* and portfolio rebalancing (3/day)\n• 🆘 Kill Switch — emergency stop\n\n💡 *Perfect for:* serious traders who need autotrading and protection.\n\n📌 *Key value:* Full control and capital protection.',
+        plans_vip: '👑 *VIP*\n💰 1 500 ₽ • 30 days\n\n📋 *What\'s included:*\n• ✅ ALL UNLIMITED\n• ❄️ *Crash protection* — unlimited\n• 🚀 *Automated profit taking* — unlimited\n• 🆘 Kill Switch — emergency stop\n• ⚡ 24/7 priority support\n\n💡 *Perfect for:* professionals who need full control.\n\n📌 *Key value:* Maximum protection and automation.',
         plans_select: '👇 *Select plan:*',
         plans_payment_creating: '⏳ Creating invoice...',
         plans_payment_error: '❌ Payment error.',
@@ -1078,13 +1172,13 @@ const LANGUAGES = {
         alert_list: '📋 *Your alerts:*\n',
         alert_deleted: '✅ Alert deleted.',
         
-        // AUTOTRADING
-        autotrade_menu: '🚀 *Autotrading*\n\nChoose difficulty level:',
+        // AUTOTRADING — WITH TOOLTIPS
+        autotrade_menu: '🚀 *Autotrading*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nChoose difficulty level:',
         autotrade_level1: '🛡️ Level 1 (Protection)',
         autotrade_level2: '🔄 Level 2 (Reallocation)',
         autotrade_level3: '🧠 Level 3 (Smart Growth)',
         autotrade_level4: '❄️ Level 4 (Snowball)',
-        autotrade_level1_desc: '🛡️ *Level 1 (Protection)* — sets stop-losses at 5% and 10%',
+        autotrade_level1_desc: '🛡️ *Level 1 (Protection)* — sets stop-losses at 5% and 10% to protect from drops',
         autotrade_level2_desc: '🔄 *Level 2 (Reallocation)* — sells junk tokens and buys growing ones',
         autotrade_level3_desc: '🧠 *Level 3 (Smart Growth)* — moves stop-loss up as price grows, locks 30% profit',
         autotrade_level4_desc: '❄️ *Level 4 (Snowball)* — flows capital from junk tokens to growing ones, locks profit at +30%',
@@ -1101,7 +1195,7 @@ const LANGUAGES = {
         
         // ABOUT
         about_title: 'ℹ️ *ABOUT BOT*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Version:* 4.5',
+        about_version: '📌 *Version:* 4.6',
         about_created: '📅 *Created:* 2024',
         about_dev: '👨‍💻 *Developer:* @clofeLEAN',
         about_instruction: '📖 *INSTRUCTION:*\n\n1️⃣ **Connect exchange** — /connect\n2️⃣ **Analyze portfolio** — /analyze\n3️⃣ **Check security** — send link or contract\n4️⃣ **Follow market** — /news\n5️⃣ **Get help** — /help',
@@ -1109,7 +1203,6 @@ const LANGUAGES = {
         about_commands: '⚡ *Quick commands:*\n/analyze — portfolio analysis\n/connect — connect exchange\n/news — news, trends, calendar\n/help — help',
         
         // COMMON
-        back_to_menu: '🔙 Back to menu',
         no_keys: '🔐 *Connect exchange:* /connect',
         no_analysis_data: '❌ *No data.* Run /analyze',
         default_response: (text) => `🤔 You wrote: "${text}"\n\nPress /help for help.`,
@@ -1423,8 +1516,10 @@ function checkImpersonation(username) {
 }
 
 // ============================================================
-// 13. ALL KEYBOARDS — С КНОПКОЙ "НАЗАД" ТОЛЬКО ГДЕ НУЖНО
+// 13. ALL KEYBOARDS — ОБНОВЛЕННЫЕ (БЕЗ КНОПКИ НАЗАД В ГЛАВНОМ МЕНЮ)
 // ============================================================
+
+// ГЛАВНОЕ МЕНЮ — БЕЗ КНОПКИ "НАЗАД"
 function getMainMenuKeyboard(lang) {
     return {
         inline_keyboard: [
@@ -1496,7 +1591,7 @@ function getSettingsMenuKeyboard(lang) {
         inline_keyboard: [
             [{ text: getText(lang, 'settings_change_lang'), callback_data: 'settings_change_lang' }],
             [{ text: getText(lang, 'settings_change_mode'), callback_data: 'settings_change_mode' }],
-            [{ text: '🔌 Disconnect exchange', callback_data: 'action_disconnect' }],
+            [{ text: '🔌 ' + (lang === 'ru' ? 'Отключить биржу' : 'Disconnect exchange'), callback_data: 'action_disconnect' }],
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
@@ -1537,16 +1632,16 @@ function getPlansMenuKeyboard(lang) {
 function getHelpMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'help_q1'), callback_data: 'help_q1' }],
-            [{ text: getText(lang, 'help_q2'), callback_data: 'help_q2' }],
-            [{ text: getText(lang, 'help_q3'), callback_data: 'help_q3' }],
-            [{ text: getText(lang, 'help_q4'), callback_data: 'help_q4' }],
-            [{ text: getText(lang, 'help_q5'), callback_data: 'help_q5' }],
-            [{ text: getText(lang, 'help_q6'), callback_data: 'help_q6' }],
-            [{ text: getText(lang, 'help_q7'), callback_data: 'help_q7' }],
-            [{ text: getText(lang, 'help_q8'), callback_data: 'help_q8' }],
-            [{ text: getText(lang, 'help_q9'), callback_data: 'help_q9' }],
-            [{ text: getText(lang, 'help_contact_moderator'), callback_data: 'help_contact_moderator' }],
+            [{ text: getText(lang, 'help_q1'), callback_data: 'help_q1' }, { text: getText(lang, 'help_q1_desc'), callback_data: 'help_q1' }],
+            [{ text: getText(lang, 'help_q2'), callback_data: 'help_q2' }, { text: getText(lang, 'help_q2_desc'), callback_data: 'help_q2' }],
+            [{ text: getText(lang, 'help_q3'), callback_data: 'help_q3' }, { text: getText(lang, 'help_q3_desc'), callback_data: 'help_q3' }],
+            [{ text: getText(lang, 'help_q4'), callback_data: 'help_q4' }, { text: getText(lang, 'help_q4_desc'), callback_data: 'help_q4' }],
+            [{ text: getText(lang, 'help_q5'), callback_data: 'help_q5' }, { text: getText(lang, 'help_q5_desc'), callback_data: 'help_q5' }],
+            [{ text: getText(lang, 'help_q6'), callback_data: 'help_q6' }, { text: getText(lang, 'help_q6_desc'), callback_data: 'help_q6' }],
+            [{ text: getText(lang, 'help_q7'), callback_data: 'help_q7' }, { text: getText(lang, 'help_q7_desc'), callback_data: 'help_q7' }],
+            [{ text: getText(lang, 'help_q8'), callback_data: 'help_q8' }, { text: getText(lang, 'help_q8_desc'), callback_data: 'help_q8' }],
+            [{ text: getText(lang, 'help_q9'), callback_data: 'help_q9' }, { text: getText(lang, 'help_q9_desc'), callback_data: 'help_q9' }],
+            [{ text: getText(lang, 'help_contact_moderator'), callback_data: 'help_contact_moderator' }, { text: getText(lang, 'help_contact_moderator_desc'), callback_data: 'help_contact_moderator' }],
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
@@ -1555,10 +1650,10 @@ function getHelpMenuKeyboard(lang) {
 function getAnalyzeMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: '📊 Full analysis', callback_data: 'action_analyze' }],
-            [{ text: '📥 CSV report', callback_data: 'action_export_csv' }],
-            [{ text: '🔄 Rebalance portfolio', callback_data: 'action_rebalance' }],
-            [{ text: '🚀 Autotrading', callback_data: 'autotrade_menu' }],
+            [{ text: '📊 ' + (lang === 'ru' ? 'Полный анализ' : 'Full analysis'), callback_data: 'action_analyze' }],
+            [{ text: '📥 ' + (lang === 'ru' ? 'CSV отчет' : 'CSV report'), callback_data: 'action_export_csv' }],
+            [{ text: '🔄 ' + (lang === 'ru' ? 'Ребаланс портфеля' : 'Rebalance portfolio'), callback_data: 'action_rebalance' }],
+            [{ text: '🚀 ' + (lang === 'ru' ? 'Автоторговля' : 'Autotrading'), callback_data: 'autotrade_menu' }],
             [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
@@ -1571,7 +1666,7 @@ function getAutotradeMenuKeyboard(lang) {
             [{ text: getText(lang, 'autotrade_level2'), callback_data: 'autotrade_level2' }],
             [{ text: getText(lang, 'autotrade_level3'), callback_data: 'autotrade_level3' }],
             [{ text: getText(lang, 'autotrade_level4'), callback_data: 'autotrade_level4' }],
-            [{ text: '⏹️ Stop', callback_data: 'autotrade_stop' }],
+            [{ text: '⏹️ ' + (lang === 'ru' ? 'Остановить' : 'Stop'), callback_data: 'autotrade_stop' }],
             [{ text: getText(lang, 'back_to_analyze'), callback_data: 'back_to_analyze' }]
         ]
     };
@@ -1585,7 +1680,7 @@ function getAlertMenuKeyboard(lang) {
             [{ text: getText(lang, 'alert_volume'), callback_data: 'alert_volume' }],
             [{ text: getText(lang, 'alert_news'), callback_data: 'alert_news' }],
             [{ text: getText(lang, 'alert_calendar'), callback_data: 'alert_calendar' }],
-            [{ text: '📋 List alerts', callback_data: 'alert_list' }],
+            [{ text: '📋 ' + (lang === 'ru' ? 'Список оповещений' : 'List alerts'), callback_data: 'alert_list' }],
             [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
@@ -1623,8 +1718,8 @@ function getOnboardModeKeyboard(lang) {
 function getVipBonusKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: '🔐 Connect exchange', callback_data: 'onboard_connect_vip' }],
-            [{ text: '⏭️ Skip', callback_data: 'onboard_skip' }]
+            [{ text: '🔐 ' + (lang === 'ru' ? 'Подключить биржу' : 'Connect exchange'), callback_data: 'onboard_connect_vip' }],
+            [{ text: '⏭️ ' + (lang === 'ru' ? 'Пропустить' : 'Skip'), callback_data: 'onboard_skip' }]
         ]
     };
 }
@@ -1633,14 +1728,6 @@ function getBackKeyboard(lang) {
     return {
         inline_keyboard: [
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
-        ]
-    };
-}
-
-function getCancelKeyboard(lang) {
-    return {
-        inline_keyboard: [
-            [{ text: getText(lang, 'cancel'), callback_data: 'cancel_action' }]
         ]
     };
 }
@@ -1775,7 +1862,7 @@ async function showAnalyzeMenu(chatId) {
     if (!savedData) {
         const keyboard = {
             inline_keyboard: [
-                [{ text: '🔐 Connect exchange', callback_data: 'menu_connect' }],
+                [{ text: '🔐 ' + (lang === 'ru' ? 'Подключить биржу' : 'Connect exchange'), callback_data: 'menu_connect' }],
                 [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
@@ -1819,7 +1906,7 @@ async function showHistoryMenu(chatId) {
     }
     const keyboard = {
         inline_keyboard: [
-            [{ text: '🔄 Refresh', callback_data: 'action_history_refresh' }],
+            [{ text: '🔄 ' + (lang === 'ru' ? 'Обновить' : 'Refresh'), callback_data: 'action_history_refresh' }],
             [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
@@ -1866,7 +1953,7 @@ async function showVipBonusOffer(chatId) {
 async function handleOnboardConnectVip(chatId) {
     const lang = await getData('lang_' + chatId) || 'ru';
     await setData('state_' + chatId, 'waiting_for_keys_vip');
-    await sendMessage(chatId, getText(lang, 'connect_prompt') + '\n\n' + getText(lang, 'back_to_menu'));
+    await sendMessage(chatId, getText(lang, 'connect_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
 }
 
 async function handleOnboardSkip(chatId) {
@@ -3158,7 +3245,7 @@ async function executeRecommendation(chatId, recId) {
 }
 
 // ============================================================
-// 26. CALLBACK HANDLER
+// 26. CALLBACK HANDLER — ОБНОВЛЕННЫЙ С УЛУЧШЕННЫМИ ОШИБКАМИ
 // ============================================================
 async function handleCallback(update) {
     const callback = update.callback_query;
@@ -3203,7 +3290,7 @@ async function handleCallback(update) {
         if (data === 'menu_news') { await handleNewsCommand(chatId, null, lang, null); return; }
         if (data === 'menu_calendar') { await handleCalendarCommand(chatId, lang, null); return; }
         if (data === 'menu_connect') {
-            await sendMessage(chatId, getText(lang, 'connect_prompt'));
+            await sendMessage(chatId, getText(lang, 'connect_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
             await setData('state_' + chatId, 'waiting_for_keys');
             return;
         }
@@ -3403,17 +3490,17 @@ async function handleCallback(update) {
         }
 
         // HELP
-        if (data === 'help_q1') { await sendMessage(chatId, getText(lang, 'help_answer_q1')); return; }
-        if (data === 'help_q2') { await sendMessage(chatId, getText(lang, 'help_answer_q2')); return; }
-        if (data === 'help_q3') { await sendMessage(chatId, getText(lang, 'help_answer_q3')); return; }
-        if (data === 'help_q4') { await sendMessage(chatId, getText(lang, 'help_answer_q4')); return; }
-        if (data === 'help_q5') { await sendMessage(chatId, getText(lang, 'help_answer_q5')); return; }
-        if (data === 'help_q6') { await sendMessage(chatId, getText(lang, 'help_answer_q6')); return; }
-        if (data === 'help_q7') { await sendMessage(chatId, getText(lang, 'help_answer_q7')); return; }
-        if (data === 'help_q8') { await sendMessage(chatId, getText(lang, 'help_answer_q8')); return; }
-        if (data === 'help_q9') { await sendMessage(chatId, getText(lang, 'help_answer_q9')); return; }
+        if (data === 'help_q1') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q1'), lang)); return; }
+        if (data === 'help_q2') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q2'), lang)); return; }
+        if (data === 'help_q3') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q3'), lang)); return; }
+        if (data === 'help_q4') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q4'), lang)); return; }
+        if (data === 'help_q5') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q5'), lang)); return; }
+        if (data === 'help_q6') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q6'), lang)); return; }
+        if (data === 'help_q7') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q7'), lang)); return; }
+        if (data === 'help_q8') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q8'), lang)); return; }
+        if (data === 'help_q9') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q9'), lang)); return; }
         if (data === 'help_contact_moderator') {
-            await sendMessage(chatId, getText(lang, 'help_contact_moderator_message'));
+            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_contact_moderator_message'), lang));
             return;
         }
 
@@ -3462,12 +3549,19 @@ async function handleCallback(update) {
         if (data === 'action_analyze') {
             const savedData = await getData('user_' + chatId);
             if (!savedData) {
-                await sendMessage(chatId, getText(lang, 'analyzing_no_keys'));
+                const errorKeyboard = {
+                    inline_keyboard: [
+                        [{ text: '🔐 ' + (lang === 'ru' ? 'Подключить биржу' : 'Connect exchange'), callback_data: 'menu_connect' }],
+                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'menu_help' }],
+                        [{ text: '🏠 ' + (lang === 'ru' ? 'В меню' : 'Main menu'), callback_data: 'back_to_menu' }]
+                    ]
+                };
+                await sendMessage(chatId, getText(lang, 'analyzing_no_keys'), errorKeyboard);
                 return;
             }
             
             // STEP 1: Начинаем анализ
-            await sendMessage(chatId, getText(lang, 'analyzing_step', 1, 4, 'Подключение к бирже...'));
+            await sendMessage(chatId, getText(lang, 'analyzing_step', 1, 4, lang === 'ru' ? 'Подключение к бирже...' : 'Connecting to exchange...'));
             
             try {
                 const user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
@@ -3475,7 +3569,7 @@ async function handleCallback(update) {
                 const secretKey = decrypt(user.secretKey);
                 
                 // STEP 2: Получение баланса
-                await sendMessage(chatId, getText(lang, 'analyzing_step', 2, 4, 'Получение баланса...'));
+                await sendMessage(chatId, getText(lang, 'analyzing_step', 2, 4, lang === 'ru' ? 'Получение баланса...' : 'Fetching balance...'));
                 const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
                 const balance = await exchange.fetchBalance();
                 const total = balance.total;
@@ -3487,7 +3581,7 @@ async function handleCallback(update) {
                 }
                 
                 // STEP 3: Запрос цен
-                await sendMessage(chatId, getText(lang, 'analyzing_step', 3, 4, 'Запрос цен...'));
+                await sendMessage(chatId, getText(lang, 'analyzing_step', 3, 4, lang === 'ru' ? 'Запрос цен...' : 'Fetching prices...'));
                 
                 let totalUSDT = 0;
                 let assets = [];
@@ -3538,7 +3632,7 @@ async function handleCallback(update) {
                 const mode = await getData('mode_' + chatId) || 'beginner';
                 
                 // STEP 4: Расчет рисков и сохранение
-                await sendMessage(chatId, getText(lang, 'analyzing_step', 4, 4, 'Расчет рисков...'));
+                await sendMessage(chatId, getText(lang, 'analyzing_step', 4, 4, lang === 'ru' ? 'Расчет рисков...' : 'Calculating risks...'));
                 
                 await setData('analysis_' + chatId, JSON.stringify({
                     totalUSDT: totalUSDT,
@@ -3636,12 +3730,12 @@ async function handleCallback(update) {
                 console.error('❌ Analysis error:', error);
                 const errorKeyboard = {
                     inline_keyboard: [
-                        [{ text: '🔄 Try again', callback_data: 'action_analyze' }],
-                        [{ text: '📖 Help', callback_data: 'menu_help' }],
-                        [{ text: '🏠 Main menu', callback_data: 'back_to_menu' }]
+                        [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'action_analyze' }],
+                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'menu_help' }],
+                        [{ text: '🏠 ' + (lang === 'ru' ? 'В меню' : 'Main menu'), callback_data: 'back_to_menu' }]
                     ]
                 };
-                await sendMessage(chatId, '❌ Analysis error: ' + error.message, errorKeyboard);
+                await sendMessage(chatId, '❌ ' + (lang === 'ru' ? 'Ошибка анализа' : 'Analysis error') + ': ' + error.message, errorKeyboard);
             }
             
             return;
@@ -3652,11 +3746,11 @@ async function handleCallback(update) {
             if (!analysisData) {
                 const errorKeyboard = {
                     inline_keyboard: [
-                        [{ text: '📊 Run analysis', callback_data: 'action_analyze' }],
-                        [{ text: '🏠 Main menu', callback_data: 'back_to_menu' }]
+                        [{ text: '📊 ' + (lang === 'ru' ? 'Запустить анализ' : 'Run analysis'), callback_data: 'action_analyze' }],
+                        [{ text: '🏠 ' + (lang === 'ru' ? 'В меню' : 'Main menu'), callback_data: 'back_to_menu' }]
                     ]
                 };
-                await sendMessage(chatId, '❌ No data. Run /analyze first', errorKeyboard);
+                await sendMessage(chatId, '❌ ' + (lang === 'ru' ? 'Нет данных. Запустите /analyze' : 'No data. Run /analyze first'), errorKeyboard);
                 return;
             }
             const analysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
@@ -3667,7 +3761,7 @@ async function handleCallback(update) {
         }
 
         if (data === 'action_rebalance') {
-            await sendMessage(chatId, '🔄 Rebalance started... (function in development)');
+            await sendMessage(chatId, '🔄 ' + (lang === 'ru' ? 'Ребаланс запущен... (функция в разработке)' : 'Rebalance started... (function in development)'));
             return;
         }
 
@@ -3677,16 +3771,16 @@ async function handleCallback(update) {
         console.error('❌ Callback error:', error);
         const errorKeyboard = {
             inline_keyboard: [
-                [{ text: '🔄 Try again', callback_data: 'back_to_menu' }],
-                [{ text: '📖 Help', callback_data: 'menu_help' }]
+                [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'back_to_menu' }],
+                [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'menu_help' }]
             ]
         };
-        await sendMessage(chatId, '❌ Error: ' + error.message, errorKeyboard);
+        await sendMessage(chatId, '❌ ' + (lang === 'ru' ? 'Ошибка' : 'Error') + ': ' + error.message, errorKeyboard);
     }
 }
 
 // ============================================================
-// 27. MESSAGE HANDLER
+// 27. MESSAGE HANDLER — ОБНОВЛЕННЫЙ С УЛУЧШЕННЫМИ СОСТОЯНИЯМИ
 // ============================================================
 async function handleMessage(update) {
     const chatId = update.message.chat.id;
@@ -3747,7 +3841,14 @@ async function handleMessage(update) {
                 await sendMessage(chatId, getText(lang, 'connect_success', 'Binance'));
                 await showMainMenu(chatId);
             } else {
-                await sendMessage(chatId, getText(lang, 'invalid_format'));
+                const errorKeyboard = {
+                    inline_keyboard: [
+                        [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'menu_connect' }],
+                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'help_q1' }],
+                        [{ text: '🏠 ' + (lang === 'ru' ? 'В меню' : 'Main menu'), callback_data: 'back_to_menu' }]
+                    ]
+                };
+                await sendMessage(chatId, getText(lang, 'invalid_format'), errorKeyboard);
             }
             return;
         }
@@ -3764,13 +3865,13 @@ async function handleMessage(update) {
             // Если пользователь ввел что-то неожиданное
             if (!state.includes('file') && !isValidUrl(cleanText) && !isValidContractAddress(cleanText)) {
                 const statePrompts = {
-                    'antiscam_url': 'ссылку',
-                    'antiscam_contract': 'адрес контракта (0x...)',
-                    'antiscam_dex': 'адрес контракта (0x...)',
-                    'antiscam_wallet': 'адрес кошелька (0x...)'
+                    'antiscam_url': lang === 'ru' ? 'ссылку' : 'link',
+                    'antiscam_contract': lang === 'ru' ? 'адрес контракта (0x...)' : 'contract address (0x...)',
+                    'antiscam_dex': lang === 'ru' ? 'адрес контракта (0x...)' : 'contract address (0x...)',
+                    'antiscam_wallet': lang === 'ru' ? 'адрес кошелька (0x...)' : 'wallet address (0x...)'
                 };
-                const expected = statePrompts[state] || 'данные для проверки';
-                await sendMessage(chatId, '⚠️ Я жду ' + expected + '.\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
+                const expected = statePrompts[state] || (lang === 'ru' ? 'данные для проверки' : 'data to check');
+                await sendMessage(chatId, '⚠️ ' + (lang === 'ru' ? 'Я жду ' : 'I\'m waiting for ') + expected + '.\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
                 return;
             }
             await handleAntiScamInput(chatId, cleanText, lang, update, messageId);
@@ -3919,8 +4020,9 @@ async function handleMessage(update) {
             if (!savedData) {
                 const errorKeyboard = {
                     inline_keyboard: [
-                        [{ text: '🔐 Connect exchange', callback_data: 'menu_connect' }],
-                        [{ text: '📖 Help', callback_data: 'menu_help' }]
+                        [{ text: '🔐 ' + (lang === 'ru' ? 'Подключить биржу' : 'Connect exchange'), callback_data: 'menu_connect' }],
+                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'menu_help' }],
+                        [{ text: '🏠 ' + (lang === 'ru' ? 'В меню' : 'Main menu'), callback_data: 'back_to_menu' }]
                     ]
                 };
                 await sendMessage(chatId, getText(lang, 'analyzing_no_keys'), errorKeyboard);
@@ -3928,7 +4030,7 @@ async function handleMessage(update) {
             }
             
             // STEP 1
-            await sendMessage(chatId, getText(lang, 'analyzing_step', 1, 4, 'Подключение к бирже...'));
+            await sendMessage(chatId, getText(lang, 'analyzing_step', 1, 4, lang === 'ru' ? 'Подключение к бирже...' : 'Connecting to exchange...'));
             
             try {
                 const user = typeof savedData === 'string' ? JSON.parse(savedData) : savedData;
@@ -3936,7 +4038,7 @@ async function handleMessage(update) {
                 const secretKey = decrypt(user.secretKey);
                 
                 // STEP 2
-                await sendMessage(chatId, getText(lang, 'analyzing_step', 2, 4, 'Получение баланса...'));
+                await sendMessage(chatId, getText(lang, 'analyzing_step', 2, 4, lang === 'ru' ? 'Получение баланса...' : 'Fetching balance...'));
                 const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
                 const balance = await exchange.fetchBalance();
                 const total = balance.total;
@@ -3948,7 +4050,7 @@ async function handleMessage(update) {
                 }
                 
                 // STEP 3
-                await sendMessage(chatId, getText(lang, 'analyzing_step', 3, 4, 'Запрос цен...'));
+                await sendMessage(chatId, getText(lang, 'analyzing_step', 3, 4, lang === 'ru' ? 'Запрос цен...' : 'Fetching prices...'));
                 
                 let totalUSDT = 0;
                 let assets = [];
@@ -3999,7 +4101,7 @@ async function handleMessage(update) {
                 const mode = await getData('mode_' + chatId) || 'beginner';
                 
                 // STEP 4
-                await sendMessage(chatId, getText(lang, 'analyzing_step', 4, 4, 'Расчет рисков...'));
+                await sendMessage(chatId, getText(lang, 'analyzing_step', 4, 4, lang === 'ru' ? 'Расчет рисков...' : 'Calculating risks...'));
                 
                 await setData('analysis_' + chatId, JSON.stringify({
                     totalUSDT: totalUSDT,
@@ -4096,12 +4198,12 @@ async function handleMessage(update) {
                 console.error('❌ Analysis error:', error);
                 const errorKeyboard = {
                     inline_keyboard: [
-                        [{ text: '🔄 Try again', callback_data: 'action_analyze' }],
-                        [{ text: '📖 Help', callback_data: 'menu_help' }],
-                        [{ text: '🏠 Main menu', callback_data: 'back_to_menu' }]
+                        [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'action_analyze' }],
+                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'menu_help' }],
+                        [{ text: '🏠 ' + (lang === 'ru' ? 'В меню' : 'Main menu'), callback_data: 'back_to_menu' }]
                     ]
                 };
-                await sendMessage(chatId, '❌ Analysis error: ' + error.message, errorKeyboard);
+                await sendMessage(chatId, '❌ ' + (lang === 'ru' ? 'Ошибка анализа' : 'Analysis error') + ': ' + error.message, errorKeyboard);
             }
             return;
         }
@@ -4139,14 +4241,20 @@ async function handleMessage(update) {
             return;
         }
 
+        // Если пользователь отправил /exit — показываем главное меню
+        if (cleanText === '/exit') {
+            await showMainMenu(chatId);
+            return;
+        }
+
         await sendMessage(chatId, getText(lang, 'default_response', cleanText));
 
     } catch (error) {
         console.error('❌ Message error:', error);
         const errorKeyboard = {
             inline_keyboard: [
-                [{ text: '🔄 Try again', callback_data: 'back_to_menu' }],
-                [{ text: '📖 Help', callback_data: 'menu_help' }]
+                [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'back_to_menu' }],
+                [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'menu_help' }]
             ]
         };
         await sendMessage(chatId, getText(lang, 'error_general', error.message), errorKeyboard);
@@ -4244,6 +4352,3 @@ app.listen(PORT, '0.0.0.0', () => {
 console.log('🚀 BOT READY!');
 console.log('📊 All functions loaded!');
 
-// ============================================================
-// END OF FILE
-// ============================================================
