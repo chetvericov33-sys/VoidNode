@@ -1,6 +1,6 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
-// ЧАСТЬ 1/6: ИМПОРТЫ, КОНФИГУРАЦИЯ, REDIS, ШИФРОВАНИЕ, БЕЗОПАСНОСТЬ
+// БОТ VOID NODE — ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ 4.0
+// ЧАСТЬ 1/3: ИМПОРТЫ, КОНФИГ, REDIS, СИСТЕМА ОДНОГО СООБЩЕНИЯ, ШИФРОВАНИЕ, ТАРИФЫ, ЛОКАЛИЗАЦИЯ
 // ============================================================
 
 require('dotenv').config();
@@ -10,7 +10,6 @@ const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'my-super-secret-key-32bytes!!';
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
@@ -29,32 +28,16 @@ if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
 }
 
 const CONFIG = {
-    MAX_POSITION_SIZE: 0.1,
-    STOP_LOSS_DEFAULT: 5,
-    CACHE_DURATION: 30000,
-    MAX_HISTORY_ENTRIES: 30,
-    COOLDOWN_ACTIONS: 3,
-    COOLDOWN_WINDOW: 600000,
-    COOLDOWN_BLOCK: 900000,
     MAX_RECOMMENDATIONS: 5,
-    CHECK_TIMEOUT: 30000,
-    UNDO_WINDOW: 10000,
-    PORTFOLIO_HISTORY_DAYS: 90,
     ALERT_CHECK_INTERVAL: 300000,
     AUTOTRADE_CHECK_INTERVAL: 900000,
     PANIC_CHECK_INTERVAL: 900000,
     MAX_ORDERS_PER_DAY: 10,
-    WHITELIST_SYMBOLS: ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT', 'DOT/USDT'],
-    TRUSTED_NEWS_DOMAINS: [
-        'cointelegraph.com', 'news.bitcoin.com', 'cryptopotato.com',
-        'beincrypto.com', 'coindesk.com', 'decrypt.co', 'theblock.co',
-        'cryptoslate.com', 'dailyhodl.com', 'u.today', 'ambcrypto.com',
-        'fxstreet.com', 'investing.com'
-    ]
+    WHITELIST_SYMBOLS: ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT', 'DOT/USDT']
 };
 
 // ============================================================
-// 2. REDIS ХРАНИЛИЩЕ С FALLBACK
+// 1. REDIS ХРАНИЛИЩЕ
 // ============================================================
 class RedisStorage {
     constructor() {
@@ -125,209 +108,161 @@ async function setData(key, value, ttl = null) { await VOID_KV.put(key, value, t
 async function deleteData(key) { await VOID_KV.delete(key); }
 
 // ============================================================
-// 3. ФУНКЦИИ БЕЗОПАСНОСТИ
+// 2. СИСТЕМА ОДНОГО СООБЩЕНИЯ (УДАЛЕНИЕ СТАРЫХ СООБЩЕНИЙ)
 // ============================================================
 
-// 3.1. ВАЛИДАЦИЯ API-КЛЮЧЕЙ
-async function validateExchangeKeys(apiKey, secretKey, exchangeId = 'binance') {
+async function getUserLastMessageId(chatId) {
+    const key = 'last_msg_' + chatId;
+    const data = await getData(key);
+    return data ? parseInt(data) : null;
+}
+
+async function setUserLastMessageId(chatId, messageId) {
+    const key = 'last_msg_' + chatId;
+    await setData(key, messageId.toString());
+}
+
+async function deleteUserLastMessage(chatId) {
     try {
-        const exchange = new ccxt[exchangeId]({
-            apiKey: apiKey,
-            secret: secretKey,
-            enableRateLimit: true,
-            timeout: 10000
-        });
-        await exchange.fetchBalance();
-        try {
-            await exchange.fetchWithdrawals();
-            return {
-                valid: true,
-                hasWithdrawPermissions: true,
-                warning: '⚠️ Ваш API-ключ имеет права на вывод средств. Рекомендуется использовать ключ только с правами на чтение.'
-            };
-        } catch (e) {
-            return { valid: true, hasWithdrawPermissions: false, warning: null };
+        const messageId = await getUserLastMessageId(chatId);
+        if (messageId) {
+            await botDeleteMessage(chatId, messageId);
+            await deleteData('last_msg_' + chatId);
         }
     } catch (error) {
-        return { valid: false, error: '❌ Неверные API-ключи или проблема с подключением к бирже.' };
+        console.error('❌ deleteUserLastMessage error:', error);
     }
 }
 
-// 3.2. ОГРАНИЧЕНИЕ ПОПЫТОК ПОДКЛЮЧЕНИЯ
-async function checkConnectAttempts(chatId) {
-    const key = 'connect_attempts_' + chatId;
-    const attempts = parseInt(await getData(key) || '0');
-    if (attempts >= 5) {
-        const lastAttempt = await getData('connect_attempts_time_' + chatId);
-        if (lastAttempt && Date.now() - parseInt(lastAttempt) < 3600000) {
-            return { blocked: true, reason: '⛔ Слишком много неудачных попыток. Попробуйте через час.' };
+async function botDeleteMessage(chatId, messageId) {
+    try {
+        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
+        const body = { chat_id: chatId, message_id: messageId };
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return response;
+    } catch (error) {
+        console.error('❌ Delete message error:', error);
+        return null;
+    }
+}
+
+async function deleteUserMessage(chatId, messageId) {
+    if (!messageId) return;
+    try {
+        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
+        const body = { chat_id: chatId, message_id: messageId };
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (error) {
+        console.error('❌ Failed to delete user message:', error);
+    }
+}
+
+async function deleteUserMessageWithDelay(chatId, messageId, delay) {
+    if (!messageId) return;
+    if (delay === undefined) delay = 1500;
+    setTimeout(async function() {
+        await deleteUserMessage(chatId, messageId);
+    }, delay);
+}
+
+async function checkMessageExists(chatId, messageId) {
+    try {
+        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getMessage';
+        const body = { chat_id: chatId, message_id: messageId };
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return response.ok;
+    } catch (error) {
+        return false;
+    }
+}
+
+async function sendMessage(chatId, text, keyboard = null, parseMode = 'Markdown') {
+    if (!text) return null;
+    try {
+        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
+        const body = {
+            chat_id: chatId,
+            text: text,
+            parse_mode: parseMode,
+            disable_web_page_preview: true
+        };
+        if (keyboard) body.reply_markup = keyboard;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return response;
+    } catch (error) {
+        console.error('❌ Send message error:', error);
+        return null;
+    }
+}
+
+async function sendUpdatedMessage(chatId, text, keyboard = null, parseMode = 'Markdown', userMessageId = null) {
+    if (userMessageId) {
+        const msgExists = await checkMessageExists(chatId, userMessageId);
+        if (msgExists) {
+            await deleteUserMessageWithDelay(chatId, userMessageId, 1500);
         }
     }
-    return { blocked: false };
-}
-
-async function recordConnectAttempt(chatId, success) {
-    const key = 'connect_attempts_' + chatId;
-    if (success) {
-        await deleteData(key);
-        await deleteData('connect_attempts_time_' + chatId);
-    } else {
-        const attempts = parseInt(await getData(key) || '0');
-        await setData(key, (attempts + 1).toString(), 3600);
-        await setData('connect_attempts_time_' + chatId, Date.now().toString(), 3600);
-    }
-}
-
-// 3.3. САНИТИЗАЦИЯ ВВОДА
-function sanitizeInput(text) {
-    if (!text) return '';
-    let sanitized = text
-        .replace(/[<>{}[\]`]/g, '')
-        .trim();
-    if (sanitized.length > 4096) sanitized = sanitized.slice(0, 4096);
-    return sanitized;
-}
-
-function isValidContractAddress(address) {
-    if (!address || typeof address !== 'string') return false;
-    const clean = address.trim();
-    if (!clean.startsWith('0x')) return false;
-    if (clean.length !== 42) return false;
-    return /^[0-9a-fA-F]{40}$/.test(clean.slice(2));
-}
-
-function isValidUrl(string) {
-    try {
-        const url = new URL(string);
-        return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch (_) { return false; }
-}
-
-// 3.4. RATE LIMITING
-async function checkRateLimit(chatId, action, maxRequests = 10, timeWindow = 60000) {
-    const key = 'rate_' + chatId + '_' + action;
-    const data = await getData(key);
-    const now = Date.now();
-    let count = 0, firstRequest = now;
-    if (data) {
-        try {
-            const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-            count = parsed.count || 0;
-            firstRequest = parsed.firstRequest || now;
-            if (now - firstRequest > timeWindow) { count = 0; firstRequest = now; }
-        } catch (e) { count = 0; firstRequest = now; }
-    }
-    if (count >= maxRequests) {
-        const resetTime = Math.ceil((firstRequest + timeWindow - now) / 1000);
-        return { allowed: false, message: '⏳ Слишком много запросов. Подождите ' + resetTime + ' секунд.' };
-    }
-    await setData(key, JSON.stringify({ count: count + 1, firstRequest: firstRequest }), Math.ceil(timeWindow / 1000));
-    return { allowed: true };
-}
-
-// 3.5. ВЕРИФИКАЦИЯ WEBHOOK CRYPTOBOT
-function verifyCryptoBotWebhook(body, headers) {
-    const signature = headers['crypto-pay-api-signature'];
-    if (!signature) return false;
-    const hash = crypto.createHmac('sha256', CRYPTOBOT_TOKEN)
-        .update(JSON.stringify(body))
-        .digest('hex');
-    return hash === signature;
-}
-
-// 3.6. ЗАЩИТА ОТ ДУБЛИРУЮЩИХ ПЛАТЕЖЕЙ
-async function checkDuplicatePayment(chatId, planId) {
-    const key = 'payment_duplicate_' + chatId + '_' + planId;
-    const existing = await getData(key);
-    if (existing) {
-        try {
-            const data = typeof existing === 'string' ? JSON.parse(existing) : existing;
-            if (Date.now() - data.createdAt < 900000) {
-                return { duplicate: true, message: '⏳ У вас уже есть активный платёж на этот тариф. Подождите 15 минут.' };
-            }
-        } catch (e) { await deleteData(key); }
-    }
-    await setData(key, JSON.stringify({ createdAt: Date.now(), planId: planId }), 3600);
-    return { duplicate: false };
-}
-
-// 3.7. ПРОВЕРКА ПОДОЗРИТЕЛЬНЫХ АККАУНТОВ
-async function checkSuspiciousUser(chatId) {
-    const key = 'account_age_' + chatId;
-    let accountAge = await getData(key);
-    if (!accountAge) {
-        try {
-            const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId })
-            });
-            const data = await response.json();
-            if (data.ok && data.result) {
-                accountAge = data.result.date || Date.now();
-                await setData(key, accountAge.toString(), 86400 * 30);
-            }
-        } catch (error) { console.error('❌ Ошибка получения возраста аккаунта:', error); }
-    }
-    if (accountAge && Date.now() - parseInt(accountAge) < 7 * 24 * 60 * 60 * 1000) {
-        return { suspicious: true, message: '⚠️ Ваш аккаунт был создан недавно. Будьте осторожны с подключением API-ключей.' };
-    }
-    return { suspicious: false };
-}
-
-// 3.8. АВТОМАТИЧЕСКАЯ ОЧИСТКА ДАННЫХ
-async function cleanupOldData() {
-    const now = Date.now();
-    const keys = await VOID_KV.list('');
-    for (const key of keys) {
-        const data = await getData(key.name);
-        if (!data) continue;
-        try {
-            const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-            if (parsed.timestamp && now - parsed.timestamp > 90 * 24 * 60 * 60 * 1000) {
-                await deleteData(key.name);
-                console.log('🗑️ Удалены старые данные:', key.name);
-            }
-        } catch (e) {
-            if (key.name.startsWith('state_') || key.name.startsWith('spam_') || key.name.startsWith('rate_')) {
-                await deleteData(key.name);
-            }
+    await deleteUserLastMessage(chatId);
+    const result = await sendMessage(chatId, text, keyboard, parseMode);
+    if (result && result.ok) {
+        const data = await result.json();
+        if (data.result && data.result.message_id) {
+            await setUserLastMessageId(chatId, data.result.message_id);
         }
     }
-}
-setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
-
-// 3.9. ФОРМАТ ДАТЫ "ДД.ММ.ГГ"
-function formatDateShort(date) {
-    const d = new Date(date);
-    const day = String(d.getDate()).padStart(2, '0');
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const year = String(d.getFullYear()).slice(-2);
-    return day + '.' + month + '.' + year;
+    return result;
 }
 
-// 3.10. УВЕДОМЛЕНИЯ АДМИНИСТРАТОРА
-const errorCache = new Map();
-async function notifyAdmin(error, context = {}) {
-    if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ваш_telegram_id') return;
-    const errorKey = error.message?.slice(0, 50) || 'unknown';
-    const now = Date.now();
-    if (errorCache.has(errorKey) && now - errorCache.get(errorKey) < 3600000) return;
-    errorCache.set(errorKey, now);
+async function sendTyping(chatId) {
     try {
-        const message = '🔴 КРИТИЧЕСКАЯ ОШИБКА БОТА\n\n' +
-            'Ошибка: ' + (error.message || 'Unknown error') + '\n' +
-            'Функция: ' + (context.function || 'unknown') + '\n' +
-            'Пользователь: ' + (context.chatId || 'unknown') + '\n' +
-            'Время: ' + new Date().toISOString() + '\n' +
-            'Стек:\n' + (error.stack || '').slice(0, 300);
-        await sendMessage(ADMIN_CHAT_ID, message);
-    } catch (e) { console.error('❌ Не удалось отправить уведомление админу:', e); }
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction?chat_id=${chatId}&action=typing`);
+    } catch (e) {}
+}
+
+async function answerCallback(callbackId, text = null, showAlert = false) {
+    try {
+        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/answerCallbackQuery';
+        const body = { callback_query_id: callbackId, show_alert: showAlert };
+        if (text) body.text = text;
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {}
+}
+
+async function sendDocument(chatId, content, filename) {
+    try {
+        const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendDocument';
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+        const blob = new Blob([content], { type: 'text/csv' });
+        formData.append('document', blob, filename);
+        await fetch(url, { method: 'POST', body: formData });
+    } catch (error) {
+        console.error('❌ Send document error:', error);
+    }
 }
 
 // ============================================================
-// 4. ШИФРОВАНИЕ (AES-256-GCM)
+// 3. ШИФРОВАНИЕ
 // ============================================================
 function encrypt(text) {
     try {
@@ -357,108 +292,40 @@ function decrypt(encoded) {
 }
 
 // ============================================================
-// 5. ФУНКЦИИ ОТПРАВКИ СООБЩЕНИЙ
+// 4. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================================
-async function sendMessage(chatId, text, keyboard = null, parseMode = 'Markdown') {
-    if (!text) return null;
+function sanitizeInput(text) {
+    if (!text) return '';
+    let sanitized = text.replace(/[<>{}[\]`]/g, '').trim();
+    if (sanitized.length > 4096) sanitized = sanitized.slice(0, 4096);
+    return sanitized;
+}
+
+function isValidContractAddress(address) {
+    if (!address || typeof address !== 'string') return false;
+    const clean = address.trim();
+    if (!clean.startsWith('0x')) return false;
+    if (clean.length !== 42) return false;
+    return /^[0-9a-fA-F]{40}$/.test(clean.slice(2));
+}
+
+function isValidUrl(string) {
     try {
-        const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-        const body = {
-            chat_id: chatId,
-            text: text,
-            parse_mode: parseMode,
-            disable_web_page_preview: true
-        };
-        if (keyboard) body.reply_markup = keyboard;
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        return response;
-    } catch (error) {
-        console.error('❌ Send message error:', error);
-        return null;
-    }
+        const url = new URL(string);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch (_) { return false; }
 }
 
-async function sendUpdatedMessage(chatId, text, keyboard = null, parseMode = 'Markdown', userMessageId = null) {
-    if (userMessageId) {
-        try {
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage?chat_id=${chatId}&message_id=${userMessageId}`);
-        } catch (e) {}
-    }
-    const result = await sendMessage(chatId, text, keyboard, parseMode);
-    return result;
-}
-
-async function sendTyping(chatId) {
-    try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction?chat_id=${chatId}&action=typing`);
-    } catch (e) {}
-}
-
-async function answerCallback(callbackId, text = null, showAlert = false) {
-    try {
-        const url = `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`;
-        const body = { callback_query_id: callbackId, show_alert: showAlert };
-        if (text) body.text = text;
-        await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-    } catch (e) {}
-}
-
-async function sendDocument(chatId, content, filename) {
-    try {
-        const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`;
-        const formData = new FormData();
-        formData.append('chat_id', chatId);
-        const blob = new Blob([content], { type: 'text/csv' });
-        formData.append('document', blob, filename);
-        await fetch(url, { method: 'POST', body: formData });
-    } catch (error) {
-        console.error('❌ Send document error:', error);
-    }
+function formatDateShort(date) {
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = String(d.getFullYear()).slice(-2);
+    return day + '.' + month + '.' + year;
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
-// ЧАСТЬ 2/6: БИРЖЕВЫЕ ФУНКЦИИ, ТАРИФЫ, ЛОКАЛИЗАЦИЯ
-// ============================================================
-
-// ============================================================
-// 6. БИРЖЕВЫЕ ФУНКЦИИ
-// ============================================================
-async function connectExchange(exchangeId, apiKey, secretKey) {
-    const exchange = new ccxt[exchangeId]({
-        apiKey: apiKey,
-        secret: secretKey,
-        enableRateLimit: true,
-        timeout: 30000
-    });
-    await exchange.fetchBalance();
-    return exchange;
-}
-
-function detectExchange(apiKey) {
-    const patterns = {
-        binance: /^vm[A-Za-z0-9]{60,}/,
-        bybit: /^B[A-Za-z0-9]{30,}/,
-        okx: /^[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}/,
-        kucoin: /^[a-zA-Z0-9]{24,}/,
-        gate: /^GT[A-Za-z0-9]{30,}/
-    };
-    for (const [exchange, pattern] of Object.entries(patterns)) {
-        if (pattern.test(apiKey)) return exchange;
-    }
-    return null;
-}
-
-// ============================================================
-// 7. ПЛАНЫ (ТАРИФЫ) — ПОЛНЫЙ ОБЪЕКТ
+// 5. ТАРИФЫ (PLANS)
 // ============================================================
 const PLANS = {
     TRIAL: {
@@ -771,7 +638,7 @@ async function checkLimit(chatId, feature) {
 }
 
 // ============================================================
-// 8. ПОЛНАЯ ЛОКАЛИЗАЦИЯ (РУССКИЙ + АНГЛИЙСКИЙ)
+// 6. ПОЛНАЯ ЛОКАЛИЗАЦИЯ (РУССКИЙ + АНГЛИЙСКИЙ) — ИСПРАВЛЕННАЯ
 // ============================================================
 const LANGUAGES = {
     ru: {
@@ -825,7 +692,7 @@ const LANGUAGES = {
         help_answer_q8: '📝 *Как работает дневник настроения?*\n\n/diary открывает дневник эмоций.\n\nВыберите настроение:\n😌 Спокоен | 🤔 Задумчив | 😰 Тревожен | 😱 Паника | 😤 Зол | 😊 Эйфория\n\n📌 Бот сохраняет записи. Если вы тревожны 3 дня подряд — бот предупредит вас.',
         help_answer_q9: '🔌 *Как отключить биржу?*\n\n/disconnect или *Настройки* → *Отключить биржу*.\n\nПосле подтверждения API-ключи будут удалены.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
         help_contact_moderator_message: '👤 *Связь с модератором*\n\nНапишите @clofeLEAN — он вам поможет!\n\n📌 Также вы можете задать вопрос в нашем чате поддержки:\n📱 [Чат поддержки](https://t.me/void_node_chat)\n\n⏳ Мы отвечаем в течение 15 минут (в рабочее время).',
-        market_menu: '📈 *Что вас интересует?*',
+        market_menu: '📈 *Рынок*',
         market_social: '📊 Соц.тренды',
         market_news: '📰 Новости',
         market_calendar: '📅 Календарь',
@@ -984,7 +851,7 @@ const LANGUAGES = {
         back_to_history: '🔙 Назад к истории',
         back_to_analyze: '🔙 Назад к анализу',
         about_title: 'ℹ️ *О БОТЕ*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Версия:* 3.8',
+        about_version: '📌 *Версия:* 4.0',
         about_created: '📅 *Создан:* 2024',
         about_dev: '👨‍💻 *Разработчик:* @void_node_dev',
         about_instruction: '📖 *ИНСТРУКЦИЯ:*\n\n1️⃣ **Подключи биржу** /connect\n2️⃣ **Анализируй портфель** /analyze\n3️⃣ **Проверяй безопасность** — отправь ссылку или контракт\n4️⃣ **Следи за рынком** /news\n5️⃣ **Получи AI-совет** /help',
@@ -1094,7 +961,7 @@ const LANGUAGES = {
         help_answer_q8: '📝 *How does mood diary work?*\n\n/diary opens emotion diary.\n\nChoose your current mood:\n😌 Calm | 🤔 Thoughtful | 😰 Anxious | 😱 Panic | 😤 Angry | 😊 Euphoric\n\n📌 Bot saves entries. If you\'re anxious for 3 days in a row — bot warns you.',
         help_answer_q9: '🔌 *How to disconnect exchange?*\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
         help_contact_moderator_message: '👤 *Contact moderator*\n\nWrite to @clofeLEAN — he will help you!\n\n📌 Also you can ask in our support chat:\n📱 [Support chat](https://t.me/void_node_chat)\n\n⏳ We reply within 15 minutes (working hours).',
-        market_menu: '📈 *What interests you?*',
+        market_menu: '📈 *Market*',
         market_social: '📊 Social trends',
         market_news: '📰 News',
         market_calendar: '📅 Calendar',
@@ -1253,7 +1120,7 @@ const LANGUAGES = {
         back_to_history: '🔙 Back to History',
         back_to_analyze: '🔙 Back to Analysis',
         about_title: 'ℹ️ *ABOUT BOT*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Version:* 3.8',
+        about_version: '📌 *Version:* 4.0',
         about_created: '📅 *Created:* 2024',
         about_dev: '👨‍💻 *Developer:* @void_node_dev',
         about_instruction: '📖 *INSTRUCTION:*\n\n1️⃣ **Connect exchange** /connect\n2️⃣ **Analyze portfolio** /analyze\n3️⃣ **Check security** — send link or contract\n4️⃣ **Follow market** /news\n5️⃣ **Get AI advice** /help',
@@ -1327,12 +1194,12 @@ function getText(lang, key, ...args) {
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
-// ЧАСТЬ 3/6: ВСЕ МЕНЮ И КЛАВИАТУРЫ
+// БОТ VOID NODE — ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ 4.0
+// ЧАСТЬ 2/3: ВСЕ МЕНЮ, КЛАВИАТУРЫ, ОНБОРДИНГ, АНТИСКАМ, ТРЕНДЫ
 // ============================================================
 
 // ============================================================
-// 9. ВСЕ КЛАВИАТУРЫ (ИНЛАЙН КНОПКИ)
+// 7. ВСЕ КЛАВИАТУРЫ (ИНЛАЙН КНОПКИ)
 // ============================================================
 
 function getMainMenuKeyboard(lang) {
@@ -1358,7 +1225,7 @@ function getFunctionsMenuKeyboard(lang) {
         inline_keyboard: [
             [{ text: getText(lang, 'functions_analyze'), callback_data: 'menu_analyze' }],
             [{ text: getText(lang, 'functions_security'), callback_data: 'menu_security' }],
-            [{ text: '📈 ' + getText(lang, 'market_menu'), callback_data: 'menu_market' }],
+            [{ text: getText(lang, 'market_menu'), callback_data: 'menu_market' }],
             [{ text: getText(lang, 'functions_history'), callback_data: 'menu_history' }],
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
@@ -1580,7 +1447,7 @@ function getBackKeyboard(lang) {
 }
 
 // ============================================================
-// 10. ВСЕ МЕНЮ (ФУНКЦИИ ПОКАЗА)
+// 8. ВСЕ МЕНЮ (ФУНКЦИИ ПОКАЗА)
 // ============================================================
 
 async function showMainMenu(chatId) {
@@ -1768,7 +1635,7 @@ async function showAboutMenu(chatId) {
 }
 
 // ============================================================
-// 11. ОНБОРДИНГ
+// 9. ОНБОРДИНГ
 // ============================================================
 async function showLanguageSelectOnboarding(chatId) {
     await sendUpdatedMessage(chatId, '🌍 Выберите язык / Choose language:', getOnboardLanguageKeyboard());
@@ -1814,12 +1681,7 @@ async function showVipActivated(chatId) {
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
-// ЧАСТЬ 4/6: АНТИСКАМ, ТРЕНДЫ, НОВОСТИ, КАЛЕНДАРЬ
-// ============================================================
-
-// ============================================================
-// 12. АНТИСКАМ ФУНКЦИИ
+// 10. АНТИСКАМ ФУНКЦИИ
 // ============================================================
 
 async function checkContract(address) {
@@ -1920,7 +1782,7 @@ function checkImpersonation(username) {
 }
 
 // ============================================================
-// 13. ОБРАБОТЧИКИ АНТИСКАМА
+// 11. ОБРАБОТЧИКИ АНТИСКАМА
 // ============================================================
 
 async function handleAntiScamInput(chatId, text, lang, update, messageId) {
@@ -2138,7 +2000,7 @@ async function handleWalletCheck(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 14. АВТОМАТИЧЕСКАЯ ПРОВЕРКА
+// 12. АВТОМАТИЧЕСКАЯ ПРОВЕРКА
 // ============================================================
 async function autoCheckLinks(chatId, text, lang, messageId) {
     const urls = text.match(/https?:\/\/[^\s]+/g);
@@ -2183,7 +2045,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 15. ТРЕНДЫ (СОЦИАЛЬНЫЕ)
+// 13. ТРЕНДЫ (СОЦИАЛЬНЫЕ) — БЕЗ TWITTER И REDDIT
 // ============================================================
 
 const TICKER_TO_COINGECKO = {
@@ -2256,8 +2118,7 @@ async function handleTrendClick(chatId, data, lang, messageId) {
         const marketCap = dataObj.market_data?.market_cap?.usd || 0;
         const volume24h = dataObj.market_data?.total_volume?.usd || 0;
         const rank = dataObj.market_cap_rank || 'Нет данных';
-        const twitterFollowers = dataObj.community_data?.twitter_followers || 0;
-        const redditSubscribers = dataObj.community_data?.subreddit_subscribers || 0;
+        
         let trend = 'Нейтральный';
         let rec = '';
         if (change24h > 5) {
@@ -2278,8 +2139,6 @@ async function handleTrendClick(chatId, data, lang, messageId) {
             '📊 Объем 24ч: $' + (volume24h / 1e6).toFixed(1) + 'M\n' +
             '💰 Рыночная капа: $' + (marketCap / 1e9).toFixed(2) + 'B\n' +
             '🏆 Ранг: #' + rank + '\n' +
-            '🐦 Twitter: ' + (twitterFollowers > 0 ? (twitterFollowers / 1000).toFixed(1) + 'K' : 'Нет данных') + '\n' +
-            '📡 Reddit: ' + (redditSubscribers > 0 ? (redditSubscribers / 1000).toFixed(1) + 'K' : 'Нет данных') + '\n' +
             '📌 Тренд: ' + trend + '\n\n' +
             '💡 ' + rec + '\n\n' +
             '🕐 Обновлено: только что\n📡 Источник: CoinGecko';
@@ -2360,7 +2219,12 @@ async function handleContractSearch(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 16. НОВОСТИ
+// БОТ VOID NODE — ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ 4.0
+// ЧАСТЬ 3/3: НОВОСТИ, КАЛЕНДАРЬ, ОПОВЕЩЕНИЯ, АВТОТОРГОВЛЯ, ХОЛОДНЫЙ ДУШ, ОБРАБОТЧИКИ, СЕРВЕР
+// ============================================================
+
+// ============================================================
+// 14. НОВОСТИ
 // ============================================================
 
 class NewsManager {
@@ -2626,12 +2490,7 @@ async function sendNewsReport(chatId, articles, coin, lang, messageId) {
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
-// ЧАСТЬ 5/6: КАЛЕНДАРЬ, ОПОВЕЩЕНИЯ, АВТОТОРГОВЛЯ, ХОЛОДНЫЙ ДУШ
-// ============================================================
-
-// ============================================================
-// 17. КАЛЕНДАРЬ ТРЕЙДЕРА
+// 15. КАЛЕНДАРЬ ТРЕЙДЕРА
 // ============================================================
 
 async function handleCalendarCommand(chatId, lang, messageId) {
@@ -2697,7 +2556,7 @@ async function sendCalendarReport(chatId, events, lang, messageId) {
 }
 
 // ============================================================
-// 18. ОПОВЕЩЕНИЯ
+// 16. ОПОВЕЩЕНИЯ
 // ============================================================
 
 async function createAlert(chatId, type, params) {
@@ -2786,7 +2645,7 @@ async function checkAlerts() {
 }
 
 // ============================================================
-// 19. АВТОТОРГОВЛЯ
+// 17. АВТОТОРГОВЛЯ
 // ============================================================
 
 async function runAutotrade() {
@@ -2872,7 +2731,7 @@ async function runAutotrade() {
 }
 
 // ============================================================
-// 20. СТРАТЕГИЯ "СНЕЖНЫЙ КОМ" (УРОВЕНЬ 4)
+// 18. СТРАТЕГИЯ "СНЕЖНЫЙ КОМ" (УРОВЕНЬ 4)
 // ============================================================
 
 class SnowballTracker {
@@ -3008,7 +2867,7 @@ async function runSnowballStrategy(chatId) {
 }
 
 // ============================================================
-// 21. ХОЛОДНЫЙ ДУШ (ПРОВЕРКА ВСЕХ ТОКЕНОВ)
+// 19. ХОЛОДНЫЙ ДУШ (ПРОВЕРКА ВСЕХ ТОКЕНОВ)
 // ============================================================
 
 async function checkPanic() {
@@ -3117,12 +2976,36 @@ async function handlePanicConvertAll(chatId) {
 }
 
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ ВЕРСИЯ 3.8
-// ЧАСТЬ 6/6: ОБРАБОТЧИКИ, СЕРВЕР, ЗАПУСК
+// 20. БИРЖЕВЫЕ ФУНКЦИИ
 // ============================================================
 
+async function connectExchange(exchangeId, apiKey, secretKey) {
+    const exchange = new ccxt[exchangeId]({
+        apiKey: apiKey,
+        secret: secretKey,
+        enableRateLimit: true,
+        timeout: 30000
+    });
+    await exchange.fetchBalance();
+    return exchange;
+}
+
+function detectExchange(apiKey) {
+    const patterns = {
+        binance: /^vm[A-Za-z0-9]{60,}/,
+        bybit: /^B[A-Za-z0-9]{30,}/,
+        okx: /^[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}/,
+        kucoin: /^[a-zA-Z0-9]{24,}/,
+        gate: /^GT[A-Za-z0-9]{30,}/
+    };
+    for (const [exchange, pattern] of Object.entries(patterns)) {
+        if (pattern.test(apiKey)) return exchange;
+    }
+    return null;
+}
+
 // ============================================================
-// 22. ЗАГРУЗКА КЛЮЧЕЙ ПОЛЬЗОВАТЕЛЯ
+// 21. ЗАГРУЗКА КЛЮЧЕЙ ПОЛЬЗОВАТЕЛЯ
 // ============================================================
 
 async function loadUserKeys(chatId) {
@@ -3145,7 +3028,73 @@ async function loadUserKeys(chatId) {
 }
 
 // ============================================================
-// 23. ИСПОЛНЕНИЕ РЕКОМЕНДАЦИЙ
+// 22. ИСТОРИЯ
+// ============================================================
+
+async function addHistory(chatId, action, detail) {
+    const key = 'history_' + chatId;
+    const data = await getData(key);
+    let history = [];
+    if (data) {
+        try {
+            history = typeof data === 'string' ? JSON.parse(data) : data;
+        } catch (e) {
+            console.error('❌ History parse error for ' + chatId + ':', e);
+            history = [];
+        }
+    }
+    history.push({
+        timestamp: Date.now(),
+        date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        action: action,
+        detail: detail
+    });
+    if (history.length > 50) history.shift();
+    await setData(key, JSON.stringify(history));
+}
+
+// ============================================================
+// 23. ПЛАТЕЖИ (CRYPTOBOT)
+// ============================================================
+
+async function createCryptoInvoice(chatId, planId, amountRub) {
+    const url = 'https://pay.crypt.bot/api/createInvoice';
+    const usdtAmount = Math.round(amountRub / 90);
+    const plan = PLANS[planId];
+    if (amountRub === 0) return { payUrl: null, invoiceId: null };
+    const body = {
+        asset: 'USDT',
+        amount: usdtAmount,
+        description: 'Void Node - ' + plan.name + ' (' + amountRub + ' RUB ≈ ' + usdtAmount + ' USDT)',
+        payload: 'plan_' + planId + '_' + chatId,
+        paid_btn_name: 'openBot',
+        paid_btn_url: 'https://t.me/' + BOT_USERNAME + '?start=activate_' + planId,
+        hidden_message: '✅ Тариф ' + plan.name + ' активирован! Спасибо! 🙏'
+    };
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Crypto-Pay-API-Token': CRYPTOBOT_TOKEN
+            },
+            body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (data.ok) {
+            return { payUrl: data.result.pay_url, invoiceId: data.result.invoice_id };
+        } else {
+            console.error('❌ CryptoBot error:', data.error);
+            return null;
+        }
+    } catch (error) {
+        console.error('❌ Invoice creation error:', error);
+        return null;
+    }
+}
+
+// ============================================================
+// 24. ИСПОЛНЕНИЕ РЕКОМЕНДАЦИЙ
 // ============================================================
 
 async function executeRecommendation(chatId, recId) {
@@ -3203,7 +3152,7 @@ async function executeRecommendation(chatId, recId) {
 }
 
 // ============================================================
-// 24. КОМПОЗИЦИЯ ОТЧЕТА
+// 25. КОМПОЗИЦИЯ ОТЧЕТА
 // ============================================================
 
 function createProgressBarUI(value, max, length) {
@@ -3357,7 +3306,7 @@ async function composeReport(engineResult, mode, lang, dailyChange) {
 }
 
 // ============================================================
-// 25. ОБРАБОТЧИК CALLBACK
+// 26. ОБРАБОТЧИК CALLBACK
 // ============================================================
 
 async function handleCallback(update) {
@@ -3376,6 +3325,9 @@ async function handleCallback(update) {
         if (data === 'back_to_analyze') { await showAnalyzeMenu(chatId); return; }
         if (data === 'back_to_help') { await showHelpMenu(chatId); return; }
         if (data === 'back_to_market') { await showMarketMenu(chatId); return; }
+        if (data === 'back_to_security') { await showSecurityMenu(chatId); return; }
+        if (data === 'back_to_plans') { await showPlansMenu(chatId); return; }
+        if (data === 'back_to_history') { await showHistoryMenu(chatId); return; }
 
         if (data === 'menu_functions') { await showFunctionsMenu(chatId); return; }
         if (data === 'menu_settings_new') { await showSettingsMenu(chatId); return; }
@@ -3656,13 +3608,12 @@ async function handleCallback(update) {
 
     } catch (error) {
         console.error('❌ Callback error:', error);
-        await notifyAdmin(error, { chatId: chatId, function: 'handleCallback', data: data });
-        await sendMessage(chatId, getText(lang, 'error_general', error.message));
+        await sendMessage(chatId, '❌ Ошибка: ' + error.message);
     }
 }
 
 // ============================================================
-// 26. ОБРАБОТЧИК СООБЩЕНИЙ
+// 27. ОБРАБОТЧИК СООБЩЕНИЙ
 // ============================================================
 
 async function handleMessage(update) {
@@ -3705,14 +3656,6 @@ async function handleMessage(update) {
                 const secretKey = parts[1].trim();
                 await sendTyping(chatId);
                 await sendMessage(chatId, '🔍 Проверяю ключи...');
-                const validation = await validateExchangeKeys(apiKey, secretKey);
-                if (!validation.valid) {
-                    await sendMessage(chatId, validation.error);
-                    return;
-                }
-                if (validation.warning) {
-                    await sendMessage(chatId, validation.warning);
-                }
                 const encryptedApiKey = encrypt(apiKey);
                 const encryptedSecretKey = encrypt(secretKey);
                 await setData('user_' + chatId, JSON.stringify({
@@ -3930,22 +3873,17 @@ async function handleMessage(update) {
 
     } catch (error) {
         console.error('❌ Message error:', error);
-        await notifyAdmin(error, { chatId: chatId, function: 'handleMessage', text: text });
         await sendMessage(chatId, getText(lang, 'error_general', error.message));
     }
 }
 
 // ============================================================
-// 27. ВЕБХУК CRYPTOBOT
+// 28. ВЕБХУК CRYPTOBOT
 // ============================================================
 
 async function handleCryptoWebhook(request) {
     try {
         const update = request.body;
-        if (!verifyCryptoBotWebhook(update, request.headers)) {
-            console.warn('⚠️ Недействительная подпись webhook CryptoBot');
-            return { status: 401, error: 'Invalid signature' };
-        }
         if (update.update_type === 'invoice_paid') {
             const payload = update.payload;
             const parts = payload.split('_');
@@ -3967,32 +3905,6 @@ async function handleCryptoWebhook(request) {
 }
 
 // ============================================================
-// 28. ИСТОРИЯ
-// ============================================================
-
-async function addHistory(chatId, action, detail) {
-    const key = 'history_' + chatId;
-    const data = await getData(key);
-    let history = [];
-    if (data) {
-        try {
-            history = typeof data === 'string' ? JSON.parse(data) : data;
-        } catch (e) {
-            console.error('❌ History parse error for ' + chatId + ':', e);
-            history = [];
-        }
-    }
-    history.push({
-        timestamp: Date.now(),
-        date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        action: action,
-        detail: detail
-    });
-    if (history.length > 50) history.shift();
-    await setData(key, JSON.stringify(history));
-}
-
-// ============================================================
 // 29. ФОНОВЫЕ ЗАДАЧИ
 // ============================================================
 
@@ -4002,7 +3914,6 @@ function runTaskWithRecovery(task, name, interval) {
             await task();
         } catch (error) {
             console.error('❌ ' + name + ' error:', error);
-            await notifyAdmin(error, { function: name });
         } finally {
             setTimeout(run, interval);
         }
