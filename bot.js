@@ -3243,7 +3243,6 @@ async function autoRebalance(chatId) {
         return { error: 'Ошибка ребаланса: ' + error.message };
     }
 }
-
 class NewsManager {
     constructor() {
         this.updateInterval = 15 * 60 * 1000;
