@@ -681,7 +681,7 @@ async function checkLimit(chatId, feature) {
 }
 
 // ============================================================
-// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH) — ИСПРАВЛЕННАЯ
+// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH) — С ИСПРАВЛЕННЫМИ КАВЫЧКАМИ
 // ============================================================
 
 const LANGUAGES = {
@@ -730,11 +730,11 @@ const LANGUAGES = {
         help_q9: '🔌 Как отключить биржу?',
         help_contact_moderator: '👤 Написать модератору',
         
-        // ОТВЕТЫ ПОМОЩИ — С ИСПРАВЛЕННЫМИ СИНТАКСИЧЕСКИМИ ОШИБКАМИ
-        help_answer_q1: '🔐 *Как подключить биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Зайдите на биржу (Binance, Bybit, OKX и др.)\n2️⃣ Перейдите в раздел управления API\n3️⃣ Создайте ключ с правами *только на чтение*\n4️⃣ Скопируйте API-ключ и Secret-ключ\n5️⃣ Отправьте их в бот командой /connect в формате:\n`API_KEY:SECRET_KEY`\n\n🔒 *Ключи шифруются и не имеют права на вывод средств.*',
+        // ОТВЕТЫ ПОМОЩИ — С ИСПРАВЛЕННЫМИ КАВЫЧКАМИ (БЕЗ ОБРАТНЫХ)
+        help_answer_q1: '🔐 *Как подключить биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Зайдите на биржу (Binance, Bybit, OKX и др.)\n2️⃣ Перейдите в раздел управления API\n3️⃣ Создайте ключ с правами *только на чтение*\n4️⃣ Скопируйте API-ключ и Secret-ключ\n5️⃣ Отправьте их в бот командой /connect в формате:\n"API_KEY:SECRET_KEY"\n\n🔒 *Ключи шифруются и не имеют права на вывод средств.*',
         help_answer_q2: '📊 *Как работает анализ портфеля?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nКоманда /analyze запускает полный анализ:\n\n✅ Показывает распределение активов (BTC, альты, стейблы)\n✅ Рассчитывает RSI, скользящие средние (MA20, MA200)\n✅ Оценивает риск (низкий/средний/высокий)\n✅ Считает коэффициент Шарпа и VaR\n✅ Даёт конкретные рекомендации по ребалансировке\n\n📌 После анализа вы можете исполнить рекомендации одним нажатием кнопки.',
         help_answer_q3: '🔐 *Зачем подключать биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nПодключение биржи даёт доступ к ключевым функциям:\n\n1️⃣ Анализ портфеля — бот видит активы и даёт рекомендации\n2️⃣ Автоторговля — автоматическая защита и ребаланс\n3️⃣ Холодный душ — экстренная защита при падении рынка\n4️⃣ Оповещения — уведомления по вашим активам\n5️⃣ Ребаланс — автоматическое поддержание целевых весов\n\n🔒 Ключи шифруются и имеют права только на чтение.',
-        help_answer_q4: '🛡️ *Как проверить контракт?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nОтправьте адрес контракта (0x...) в чат — бот проверит:\n\n✅ Верификацию на Etherscan\n✅ Подозрительные паттерны (honeypot)\n✅ Скоринг риска (0–100 баллов)\n\n📌 Пример: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
+        help_answer_q4: '🛡️ *Как проверить контракт?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nОтправьте адрес контракта (0x...) в чат — бот проверит:\n\n✅ Верификацию на Etherscan\n✅ Подозрительные паттерны (honeypot)\n✅ Скоринг риска (0–100 баллов)\n\n📌 Пример: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"',
         help_answer_q5: '🔔 *Как создать оповещение?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nИспользуйте /alerts или меню *Оповещения*.\n\n5 типов оповещений:\n\n📊 По цене — при достижении заданной цены\n📈 По изменению % — при изменении цены более чем на X%\n📊 По объёму — при превышении объёма торгов\n📰 Новостное — при появлении новостей по вашим активам\n📅 Календарное — перед важными экономическими событиями\n\n📌 Лимит зависит от вашего тарифа.',
         help_answer_q6: '🚀 *Как включить автоторговлю?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/autotrade открывает меню с 4 уровнями:\n\n🛡️ *Уровень 1 (Защита)* — стоп-лоссы 5% и 10%\n🔄 *Уровень 2 (Перераспределение)* — продажа мусора, покупка роста\n🧠 *Уровень 3 (Умный рост)* — трейлинг стоп-лосс, фиксация 30% прибыли\n❄️ *Уровень 4 (Снежный ком)* — переток из мусорных в растущие\n\n📌 Доступна только на PRO и VIP.',
         help_answer_q7: '❄️ *Что такое холодный душ?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nЭкстренная защита при падении рынка:\n\n✅ Бот проверяет ВСЕ токены каждые 15 минут\n✅ При падении >5% за 15 минут — отправляет предупреждение\n✅ Предлагает конвертировать все активы в USDT\n\n🛡️ Доступен на PRO и VIP.',
@@ -866,7 +866,7 @@ const LANGUAGES = {
         scan_result_danger: (type, reason) => `🔴 *ОПАСНО*\n\n${type} содержит угрозы:\n${reason}`,
         
         // ПОДКЛЮЧЕНИЕ
-        connect_prompt: '🔐 *Подключи биржу*\n\n📋 Отправь API-ключи в формате:\n`API_KEY:SECRET_KEY`\n\n🔄 Для отмены: /cancel',
+        connect_prompt: '🔐 *Подключи биржу*\n\n📋 Отправь API-ключи в формате:\n"API_KEY:SECRET_KEY"\n\n🔄 Для отмены: /cancel',
         connect_success: (exchange) => `✅ *Биржа ${exchange} подключена!*\n\n📊 Теперь отправь /analyze`,
         connect_fail: '❌ *Не удалось подключить биржу.*\n\nПроверь ключи и попробуй ещё раз.',
         connect_cancel: '❌ *Подключение отменено.*',
@@ -876,7 +876,7 @@ const LANGUAGES = {
         connect_undo: '⏳ Ключи будут удалены через 10 секунд. Отмена: /undo',
         connect_undo_success: '✅ *Отмена выполнена!* Ключи сохранены.',
         connect_disconnected: '🔌 *Биржа отключена.* Все ключи удалены.',
-        invalid_format: '❌ *Неверный формат!* Отправь ключи как `API_KEY:SECRET_KEY`.',
+        invalid_format: '❌ *Неверный формат!* Отправь ключи как "API_KEY:SECRET_KEY".',
         
         // КНОПКИ НАВИГАЦИИ
         back_to_menu: '🔙 Выйти в меню',
@@ -896,8 +896,8 @@ const LANGUAGES = {
         alert_volume: '📊 По объёму',
         alert_news: '📰 Новостное',
         alert_calendar: '📅 Календарное',
-        alert_create_price: '📊 *Создать ценовое оповещение*\n\nВведите символ и цену в формате:\n`BTC 70000` (выше) или `BTC 65000 below`\n🔄 /cancel — отмена',
-        alert_create_change: '📈 *Создать оповещение по изменению %*\n\nВведите символ и % в формате:\n`BTC 5` (изменение >5% за час)\n🔄 /cancel — отмена',
+        alert_create_price: '📊 *Создать ценовое оповещение*\n\nВведите символ и цену в формате:\n"BTC 70000" (выше) или "BTC 65000 below"\n🔄 /cancel — отмена',
+        alert_create_change: '📈 *Создать оповещение по изменению %*\n\nВведите символ и % в формате:\n"BTC 5" (изменение >5% за час)\n🔄 /cancel — отмена',
         alert_created: '✅ Оповещение создано!',
         alert_list: '📋 *Ваши оповещения:*\n',
         alert_deleted: '✅ Оповещение удалено.',
@@ -1002,11 +1002,11 @@ const LANGUAGES = {
         help_q9: '🔌 How to disconnect exchange?',
         help_contact_moderator: '👤 Contact moderator',
         
-        // HELP ANSWERS — WITH FIXED SYNTAX
-        help_answer_q1: '🔐 *How to connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Go to your exchange (Binance, Bybit, OKX, etc.)\n2️⃣ Go to API management section\n3️⃣ Create a key with *read-only* permissions\n4️⃣ Copy API key and Secret key\n5️⃣ Send them to bot with /connect in format:\n`API_KEY:SECRET_KEY`\n\n🔒 *Keys are encrypted and have no withdrawal rights.*',
+        // HELP ANSWERS — WITH FIXED QUOTES (NO BACKTICKS)
+        help_answer_q1: '🔐 *How to connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Go to your exchange (Binance, Bybit, OKX, etc.)\n2️⃣ Go to API management section\n3️⃣ Create a key with *read-only* permissions\n4️⃣ Copy API key and Secret key\n5️⃣ Send them to bot with /connect in format:\n"API_KEY:SECRET_KEY"\n\n🔒 *Keys are encrypted and have no withdrawal rights.*',
         help_answer_q2: '📊 *How does portfolio analysis work?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/analyze runs a full portfolio analysis:\n\n✅ Shows asset allocation (BTC, alts, stablecoins)\n✅ Calculates RSI, moving averages (MA20, MA200)\n✅ Evaluates risk (low/medium/high)\n✅ Calculates Sharpe ratio and VaR\n✅ Gives specific rebalancing recommendations\n\n📌 After analysis you can execute recommendations with one click.',
         help_answer_q3: '🔐 *Why connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nConnecting your exchange gives you access to key features:\n\n1️⃣ Portfolio analysis — bot sees your assets and gives recommendations\n2️⃣ Autotrading — automatic protection and rebalancing\n3️⃣ Panic mode — emergency protection during market crashes\n4️⃣ Alerts — notifications for your assets\n5️⃣ Rebalance — automatic maintenance of target weights\n\n🔒 Keys are encrypted and have read-only permissions.',
-        help_answer_q4: '🛡️ *How to check a contract?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nYou can check a smart contract in several ways:\n\n✅ Send contract address (0x...) in chat — bot will check automatically\n✅ Use *Security* menu → *Contract*\n✅ Use *Security* menu → *DEX* — shows liquidity and risks\n\n🔍 Bot checks:\n• Verification on Etherscan\n• Suspicious patterns (honeypot)\n• Risk scoring (0–100)\n\n📌 Example: `0x742d35Cc6634C0532925a3b844Bc454e4438f44e`',
+        help_answer_q4: '🛡️ *How to check a contract?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nYou can check a smart contract in several ways:\n\n✅ Send contract address (0x...) in chat — bot will check automatically\n✅ Use *Security* menu → *Contract*\n✅ Use *Security* menu → *DEX* — shows liquidity and risks\n\n🔍 Bot checks:\n• Verification on Etherscan\n• Suspicious patterns (honeypot)\n• Risk scoring (0–100)\n\n📌 Example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"',
         help_answer_q5: '🔔 *How to create an alert?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nUse /alerts or *Alerts* menu.\n\n5 alert types available:\n\n📊 Price — triggers at target price\n📈 Change % — triggers when price changes by X%\n📊 Volume — triggers when trading volume exceeds\n📰 News — triggers when news appear for your assets\n📅 Calendar — before important economic events\n\n📌 Limit depends on your plan.',
         help_answer_q6: '🚀 *How to enable autotrading?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/autotrade opens menu with 4 levels:\n\n🛡️ *Level 1 (Protection)* — sets stop-losses at 5% and 10% drops\n🔄 *Level 2 (Reallocation)* — sells junk tokens and buys growing ones\n🧠 *Level 3 (Smart Growth)* — uses trailing stop-loss and locks 30% profit at >20% growth\n❄️ *Level 4 (Snowball)* — flows capital from junk tokens to growing ones\n\n📌 Available only on PRO and VIP.',
         help_answer_q7: '❄️ *What is Panic mode?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nPanic mode is emergency protection during market crashes.\n\n✅ Bot checks ALL tokens every 15 minutes\n✅ If drop >5% in 15 minutes — sends warning\n✅ Offers one-click conversion of ALL assets to USDT\n\n🛡️ Available on PRO and VIP.',
@@ -1138,7 +1138,7 @@ const LANGUAGES = {
         scan_result_danger: (type, reason) => `🔴 *DANGER*\n\n${type} contains threats:\n${reason}`,
         
         // CONNECTION
-        connect_prompt: '🔐 *Connect exchange*\n\n📋 Send API keys as:\n`API_KEY:SECRET_KEY`\n\n🔄 To cancel: /cancel',
+        connect_prompt: '🔐 *Connect exchange*\n\n📋 Send API keys as:\n"API_KEY:SECRET_KEY"\n\n🔄 To cancel: /cancel',
         connect_success: (exchange) => `✅ *${exchange} connected!*\n\n📊 Now send /analyze`,
         connect_fail: '❌ *Failed to connect.*\n\nCheck your keys and try again.',
         connect_cancel: '❌ *Cancelled.*',
@@ -1148,7 +1148,7 @@ const LANGUAGES = {
         connect_undo: '⏳ Keys will be deleted in 10 seconds. Undo: /undo',
         connect_undo_success: '✅ *Undo successful!* Keys saved.',
         connect_disconnected: '🔌 *Exchange disconnected.* All keys deleted.',
-        invalid_format: '❌ *Invalid format!* Send as `API_KEY:SECRET_KEY`.',
+        invalid_format: '❌ *Invalid format!* Send as "API_KEY:SECRET_KEY".',
         
         // NAVIGATION BUTTONS
         back_to_menu: '🔙 Back to menu',
@@ -1168,8 +1168,8 @@ const LANGUAGES = {
         alert_volume: '📊 Volume',
         alert_news: '📰 News',
         alert_calendar: '📅 Calendar',
-        alert_create_price: '📊 *Create price alert*\n\nEnter symbol and price in format:\n`BTC 70000` (above) or `BTC 65000 below`\n🔄 /cancel — cancel',
-        alert_create_change: '📈 *Create change % alert*\n\nEnter symbol and % in format:\n`BTC 5` (change >5% per hour)\n🔄 /cancel — cancel',
+        alert_create_price: '📊 *Create price alert*\n\nEnter symbol and price in format:\n"BTC 70000" (above) or "BTC 65000 below"\n🔄 /cancel — cancel',
+        alert_create_change: '📈 *Create change % alert*\n\nEnter symbol and % in format:\n"BTC 5" (change >5% per hour)\n🔄 /cancel — cancel',
         alert_created: '✅ Alert created!',
         alert_list: '📋 *Your alerts:*\n',
         alert_deleted: '✅ Alert deleted.',
@@ -3433,7 +3433,7 @@ async function handleCallback(update) {
         }
         if (data === 'alert_volume') {
             await setData('state_' + chatId, 'alert_volume');
-            await sendMessage(chatId, '📊 Create volume alert\n\nEnter symbol and volume in format:\n`BTC 1000000`\n🔄 /cancel — cancel\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
+            await sendMessage(chatId, '📊 Create volume alert\n\nEnter symbol and volume in format:\n"BTC 1000000"\n🔄 /cancel — cancel\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
             return;
         }
         if (data === 'alert_news') {
@@ -3953,7 +3953,7 @@ async function handleMessage(update) {
                     return;
                 }
             }
-            await sendMessage(chatId, '❌ Invalid format. Use `BTC 70000` or `BTC 65000 below`\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
+            await sendMessage(chatId, '❌ Invalid format. Use "BTC 70000" or "BTC 65000 below"\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
             return;
         }
 
@@ -3970,7 +3970,7 @@ async function handleMessage(update) {
                     return;
                 }
             }
-            await sendMessage(chatId, '❌ Invalid format. Use `BTC 5`\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
+            await sendMessage(chatId, '❌ Invalid format. Use "BTC 5"\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
             return;
         }
 
@@ -3987,7 +3987,7 @@ async function handleMessage(update) {
                     return;
                 }
             }
-            await sendMessage(chatId, '❌ Invalid format. Use `BTC 1000000` (volume)\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
+            await sendMessage(chatId, '❌ Invalid format. Use "BTC 1000000" (volume)\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
             return;
         }
 
@@ -4370,3 +4370,4 @@ console.log('📊 All functions loaded!');
 // ============================================================
 // END OF FILE
 // ============================================================
+
