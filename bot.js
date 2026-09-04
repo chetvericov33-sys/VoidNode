@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 4.6 (ФИНАЛ)
+// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 0.1
 // ============================================================
 
 require('dotenv').config();
@@ -218,7 +218,6 @@ async function sendUpdatedMessage(chatId, text, keyboard = null, parseMode = 'Ma
     }
     await deleteUserLastMessage(chatId);
     
-    // Добавляем кнопку "Назад" только если не skipBackButton и есть клавиатура
     if (!skipBackButton && keyboard && keyboard.inline_keyboard) {
         let hasBackButton = false;
         for (const row of keyboard.inline_keyboard) {
@@ -718,7 +717,7 @@ const LANGUAGES = {
         settings_change_lang: '🌍 Сменить язык',
         settings_change_mode: '🧠 Сменить режим',
         
-        // ПОМОЩЬ — ТОЛЬКО ВОПРОСЫ (БЕЗ ОПИСАНИЙ)
+        // ПОМОЩЬ — ТОЛЬКО ВОПРОСЫ
         help_menu_title: '❓ *Помощь по боту*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nВыберите вопрос:',
         help_q1: '🔐 Как подключить биржу?',
         help_q2: '📊 Как работает анализ портфеля?',
@@ -731,7 +730,7 @@ const LANGUAGES = {
         help_q9: '🔌 Как отключить биржу?',
         help_contact_moderator: '👤 Написать модератору',
         
-        // ОТВЕТЫ ПОМОЩИ (БЕЗ ПОДПИСИ /exit, ОНА ДОБАВЛЯЕТСЯ ЧЕРЕЗ formatHelpAnswer)
+        // ОТВЕТЫ ПОМОЩИ — С ИСПРАВЛЕННЫМИ СИНТАКСИЧЕСКИМИ ОШИБКАМИ
         help_answer_q1: '🔐 *Как подключить биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Зайдите на биржу (Binance, Bybit, OKX и др.)\n2️⃣ Перейдите в раздел управления API\n3️⃣ Создайте ключ с правами *только на чтение*\n4️⃣ Скопируйте API-ключ и Secret-ключ\n5️⃣ Отправьте их в бот командой /connect в формате:\n`API_KEY:SECRET_KEY`\n\n🔒 *Ключи шифруются и не имеют права на вывод средств.*',
         help_answer_q2: '📊 *Как работает анализ портфеля?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nКоманда /analyze запускает полный анализ:\n\n✅ Показывает распределение активов (BTC, альты, стейблы)\n✅ Рассчитывает RSI, скользящие средние (MA20, MA200)\n✅ Оценивает риск (низкий/средний/высокий)\n✅ Считает коэффициент Шарпа и VaR\n✅ Даёт конкретные рекомендации по ребалансировке\n\n📌 После анализа вы можете исполнить рекомендации одним нажатием кнопки.',
         help_answer_q3: '🔐 *Зачем подключать биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nПодключение биржи даёт доступ к ключевым функциям:\n\n1️⃣ Анализ портфеля — бот видит активы и даёт рекомендации\n2️⃣ Автоторговля — автоматическая защита и ребаланс\n3️⃣ Холодный душ — экстренная защита при падении рынка\n4️⃣ Оповещения — уведомления по вашим активам\n5️⃣ Ребаланс — автоматическое поддержание целевых весов\n\n🔒 Ключи шифруются и имеют права только на чтение.',
@@ -924,7 +923,7 @@ const LANGUAGES = {
         panic_convert: '🔄 Конвертировать всё в USDT',
         panic_converted: '✅ Конвертация выполнена. Портфель в безопасности.',
         
-        // О БОТЕ — С ИСПРАВЛЕННЫМИ ВЕРСИЕЙ И ДАТОЙ
+        // О БОТЕ
         about_title: 'ℹ️ *О БОТЕ*\n━━━━━━━━━━━━━━━━━━━━━━━',
         about_version: '📌 *Версия:* 0.1',
         about_created: '📅 *Создан:* 01.09.2026',
@@ -990,7 +989,7 @@ const LANGUAGES = {
         settings_change_lang: '🌍 Change language',
         settings_change_mode: '🧠 Change mode',
         
-        // HELP — ONLY QUESTIONS (NO DESCRIPTIONS)
+        // HELP — ONLY QUESTIONS
         help_menu_title: '❓ *Help*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nSelect a question:',
         help_q1: '🔐 How to connect exchange?',
         help_q2: '📊 How does portfolio analysis work?',
@@ -1003,7 +1002,7 @@ const LANGUAGES = {
         help_q9: '🔌 How to disconnect exchange?',
         help_contact_moderator: '👤 Contact moderator',
         
-        // HELP ANSWERS (WITHOUT /exit signature, added via formatHelpAnswer)
+        // HELP ANSWERS — WITH FIXED SYNTAX
         help_answer_q1: '🔐 *How to connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Go to your exchange (Binance, Bybit, OKX, etc.)\n2️⃣ Go to API management section\n3️⃣ Create a key with *read-only* permissions\n4️⃣ Copy API key and Secret key\n5️⃣ Send them to bot with /connect in format:\n`API_KEY:SECRET_KEY`\n\n🔒 *Keys are encrypted and have no withdrawal rights.*',
         help_answer_q2: '📊 *How does portfolio analysis work?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/analyze runs a full portfolio analysis:\n\n✅ Shows asset allocation (BTC, alts, stablecoins)\n✅ Calculates RSI, moving averages (MA20, MA200)\n✅ Evaluates risk (low/medium/high)\n✅ Calculates Sharpe ratio and VaR\n✅ Gives specific rebalancing recommendations\n\n📌 After analysis you can execute recommendations with one click.',
         help_answer_q3: '🔐 *Why connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nConnecting your exchange gives you access to key features:\n\n1️⃣ Portfolio analysis — bot sees your assets and gives recommendations\n2️⃣ Autotrading — automatic protection and rebalancing\n3️⃣ Panic mode — emergency protection during market crashes\n4️⃣ Alerts — notifications for your assets\n5️⃣ Rebalance — automatic maintenance of target weights\n\n🔒 Keys are encrypted and have read-only permissions.',
@@ -1015,7 +1014,7 @@ const LANGUAGES = {
         help_answer_q9: '🔌 *How to disconnect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
         help_contact_moderator_message: '👤 *Contact moderator*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nWrite to @clofeLEAN — he will help you!',
         
-        // MARKET (NO ASTERISKS)
+        // MARKET
         market_menu: '📈 Market',
         market_social: '📊 Social trends',
         market_news: '📰 News',
@@ -1196,7 +1195,7 @@ const LANGUAGES = {
         panic_convert: '🔄 Convert all to USDT',
         panic_converted: '✅ Conversion completed. Portfolio is safe.',
         
-        // ABOUT — WITH FIXED VERSION AND DATE
+        // ABOUT
         about_title: 'ℹ️ *ABOUT BOT*\n━━━━━━━━━━━━━━━━━━━━━━━',
         about_version: '📌 *Version:* 0.1',
         about_created: '📅 *Created:* 01.09.2026',
@@ -1228,7 +1227,7 @@ const LANGUAGES = {
         greeting_morning: (name) => `☀️ *Good morning, ${name}!*`,
         greeting_afternoon: (name) => `☀️ *Good afternoon, ${name}!*`,
         greeting_evening: (name) => `🌙 *Good evening, ${name}!*`,
-        main_header: (name, mode, id, plan, expires) => `👤 *${name}* | ${mode} | 🆔 ID: ${id}\n💳 Plan: ${plan} (until ${expires})`,
+        main_header: (name, mode, id, plan, expires) => `👤 *${name}* | ${mode} | 🆔 ID: ${id}\n💳 Plan: ${plan} (until ${expires})',
     }
 };
 
@@ -1632,7 +1631,7 @@ function getPlansMenuKeyboard(lang) {
     };
 }
 
-// МЕНЮ ПОМОЩИ — ТОЛЬКО ВОПРОСЫ (БЕЗ ОПИСАНИЙ)
+// МЕНЮ ПОМОЩИ — ТОЛЬКО ВОПРОСЫ
 function getHelpMenuKeyboard(lang) {
     return {
         inline_keyboard: [
@@ -1764,7 +1763,6 @@ async function showMainMenu(chatId) {
         const userId = chatId;
         const planName = userPlan.name || 'Trial';
         const expiresDate = formatDateShort(userPlan.expires);
-        // ИСПРАВЛЕНИЕ: Режим на русском языке
         const modeDisplay = mode === 'beginner' 
             ? (lang === 'ru' ? 'Новичок' : 'Beginner') 
             : (lang === 'ru' ? 'Опытный' : 'Experienced');
@@ -1786,7 +1784,6 @@ async function showMainMenu(chatId) {
         }
         const header = getText(lang, 'main_header', userName, modeDisplay, userId, planName, expiresDate);
         const message = greeting + '\n\n' + header + vipStatus + '\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' + getText(lang, 'menu_title');
-        // skipBackButton = true — убираем кнопку "Назад" из главного меню
         await sendUpdatedMessage(chatId, message, getMainMenuKeyboard(lang), 'Markdown', null, true);
         console.log('✅ Menu sent for ' + chatId);
     } catch (error) {
@@ -1807,7 +1804,6 @@ async function showSecurityMenu(chatId) {
 
 async function showMarketMenu(chatId) {
     const lang = await getData('lang_' + chatId) || 'ru';
-    // ИСПРАВЛЕНИЕ: убраны звездочки, просто "Рынок" / "Market"
     await sendUpdatedMessage(chatId, '📈 ' + (lang === 'ru' ? 'Рынок' : 'Market'), getMarketMenuKeyboard(lang));
 }
 
@@ -2168,7 +2164,6 @@ async function handleAntiScamInput(chatId, text, lang, update, messageId) {
     }
     const state = await getData('state_' + chatId);
     
-    // Если пользователь нажал "Отмена"
     if (text === '/cancel' || text === '❌ Отмена' || text === '❌ Cancel') {
         await setData('state_' + chatId, 'idle');
         await sendUpdatedMessage(chatId, getText(lang, 'scan_cancelled'), null, 'Markdown', messageId);
@@ -2866,7 +2861,6 @@ async function runAutotrade() {
         const keysUser = await loadUserKeys(chatId);
         if (!keysUser) continue;
         
-        // Проверка плана пользователя
         const userPlan = await getUserPlan(chatId);
         if (!userPlan.limits.autotrade || userPlan.limits.autotrade === false) {
             await deleteData(key.name);
@@ -2998,7 +2992,6 @@ async function runSnowballStrategy(chatId) {
     const keysUser = await loadUserKeys(chatId);
     if (!keysUser) return { error: '❌ No API keys' };
     
-    // Проверка плана
     const userPlan = await getUserPlan(chatId);
     if (!userPlan.limits.autotrade || userPlan.limits.autotrade === false) {
         return { error: '❌ Autotrading not available on your plan' };
@@ -3282,7 +3275,6 @@ async function handleCallback(update) {
     console.log('🔄 Callback: ' + data + ' from ' + chatId);
 
     try {
-        // CANCEL ACTION
         if (data === 'cancel_action') {
             await setData('state_' + chatId, 'idle');
             await sendUpdatedMessage(chatId, getText(lang, 'scan_cancelled'), null, 'Markdown');
@@ -3290,7 +3282,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Navigation
         if (data === 'back_to_menu') { await showMainMenu(chatId); return; }
         if (data === 'back_to_functions') { await showFunctionsMenu(chatId); return; }
         if (data === 'back_to_settings') { await showSettingsMenu(chatId); return; }
@@ -3301,7 +3292,6 @@ async function handleCallback(update) {
         if (data === 'back_to_plans') { await showPlansMenu(chatId); return; }
         if (data === 'back_to_history') { await showHistoryMenu(chatId); return; }
 
-        // Menus
         if (data === 'menu_functions') { await showFunctionsMenu(chatId); return; }
         if (data === 'menu_settings_new') { await showSettingsMenu(chatId); return; }
         if (data === 'menu_plans') { await showPlansMenu(chatId); return; }
@@ -3320,7 +3310,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Settings
         if (data === 'settings_change_lang') { await showLanguageSelect(chatId); return; }
         if (data === 'settings_change_mode') { await showModeSelect(chatId); return; }
         if (data === 'lang_ru') {
@@ -3348,7 +3337,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Antiscam
         if (data === 'antiscam_url') {
             await setData('state_' + chatId, 'antiscam_url');
             await sendMessage(chatId, getText(lang, 'scan_link') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
@@ -3380,7 +3368,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Trends
         if (data === 'trend_search_menu') {
             await showTrendSearchMenu(chatId);
             return;
@@ -3400,14 +3387,12 @@ async function handleCallback(update) {
             return;
         }
 
-        // Plans
         if (data.startsWith('plan_')) {
             const plan = data.replace('plan_', '');
             await handlePlanSelection(chatId, plan, lang, null);
             return;
         }
 
-        // Autotrading
         if (data === 'autotrade_menu') { await showAutotradeMenu(chatId); return; }
         if (data === 'autotrade_level1') {
             await setData('autotrade_' + chatId, JSON.stringify({ level: 1, active: true, lastCheck: Date.now() }));
@@ -3435,7 +3420,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Alerts
         if (data === 'alert_menu') { await showAlertMenu(chatId); return; }
         if (data === 'alert_price') {
             await setData('state_' + chatId, 'alert_price');
@@ -3493,7 +3477,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Diary
         if (data.startsWith('diary_mood_')) {
             const mood = data.replace('diary_mood_', '');
             await setData('diary_' + chatId, mood);
@@ -3502,7 +3485,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Actions
         if (data === 'action_disconnect') {
             await deleteData('user_' + chatId);
             await sendMessage(chatId, getText(lang, 'connect_disconnected'));
@@ -3556,7 +3538,6 @@ async function handleCallback(update) {
             return;
         }
 
-        // Onboarding
         if (data === 'onboard_lang_ru') {
             await setData('lang_' + chatId, 'ru');
             await sendUpdatedMessage(chatId, getText('ru', 'mode_select'), getOnboardModeKeyboard('ru'));
@@ -3612,7 +3593,6 @@ async function handleCallback(update) {
                 return;
             }
             
-            // STEP 1: Начинаем анализ
             await sendMessage(chatId, getText(lang, 'analyzing_step', 1, 4, lang === 'ru' ? 'Подключение к бирже...' : 'Connecting to exchange...'));
             
             try {
@@ -3620,7 +3600,6 @@ async function handleCallback(update) {
                 const apiKey = decrypt(user.apiKey);
                 const secretKey = decrypt(user.secretKey);
                 
-                // STEP 2: Получение баланса
                 await sendMessage(chatId, getText(lang, 'analyzing_step', 2, 4, lang === 'ru' ? 'Получение баланса...' : 'Fetching balance...'));
                 const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
                 const balance = await exchange.fetchBalance();
@@ -3632,7 +3611,6 @@ async function handleCallback(update) {
                     return;
                 }
                 
-                // STEP 3: Запрос цен
                 await sendMessage(chatId, getText(lang, 'analyzing_step', 3, 4, lang === 'ru' ? 'Запрос цен...' : 'Fetching prices...'));
                 
                 let totalUSDT = 0;
@@ -3683,7 +3661,6 @@ async function handleCallback(update) {
                 assets.sort((a, b) => b.value - a.value);
                 const mode = await getData('mode_' + chatId) || 'beginner';
                 
-                // STEP 4: Расчет рисков и сохранение
                 await sendMessage(chatId, getText(lang, 'analyzing_step', 4, 4, lang === 'ru' ? 'Расчет рисков...' : 'Calculating risks...'));
                 
                 await setData('analysis_' + chatId, JSON.stringify({
@@ -3697,7 +3674,6 @@ async function handleCallback(update) {
                     timestamp: Date.now()
                 }), 86400);
                 
-                // ФОРМИРУЕМ ОТЧЕТ
                 let report = getText(lang, 'analyzing_done') + '\n\n';
                 report += '📊 PORTFOLIO ANALYSIS\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
                 report += '💰 Total value: $' + totalUSDT.toFixed(2) + ' USDT\n';
@@ -3846,7 +3822,6 @@ async function handleMessage(update) {
     try {
         const cleanText = sanitizeInput(text);
 
-        // Auto-check links and contracts
         if (cleanText && (cleanText.includes('http://') || cleanText.includes('https://'))) {
             await autoCheckLinks(chatId, cleanText, lang, messageId);
         }
@@ -3855,7 +3830,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // State: waiting for keys
         if (state === 'waiting_for_keys' || state === 'waiting_for_keys_vip') {
             if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
                 await setData('state_' + chatId, 'idle');
@@ -3905,7 +3879,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // Antiscam states
         const antiscamStates = ['antiscam_url', 'antiscam_contract', 'antiscam_dex', 'antiscam_file', 'antiscam_impersonation', 'antiscam_wallet'];
         if (antiscamStates.includes(state)) {
             if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
@@ -3914,7 +3887,6 @@ async function handleMessage(update) {
                 await showMainMenu(chatId);
                 return;
             }
-            // Если пользователь ввел что-то неожиданное
             if (!state.includes('file') && !isValidUrl(cleanText) && !isValidContractAddress(cleanText)) {
                 const statePrompts = {
                     'antiscam_url': lang === 'ru' ? 'ссылку' : 'link',
@@ -3930,7 +3902,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // Trend search
         if (state === 'waiting_for_trend_search') {
             if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
                 await setData('state_' + chatId, 'idle');
@@ -3942,7 +3913,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // Contract search
         if (state === 'waiting_for_contract_search') {
             if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
                 await setData('state_' + chatId, 'idle');
@@ -3960,7 +3930,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // Alerts
         if (state === 'alert_price') {
             const parts = cleanText.split(' ');
             if (parts.length === 2) {
@@ -4022,7 +3991,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // Commands
         if (cleanText === '/start') {
             console.log('📩 /start from ' + chatId);
             const onboarded = await getData('onboarded_' + chatId);
@@ -4081,7 +4049,6 @@ async function handleMessage(update) {
                 return;
             }
             
-            // STEP 1
             await sendMessage(chatId, getText(lang, 'analyzing_step', 1, 4, lang === 'ru' ? 'Подключение к бирже...' : 'Connecting to exchange...'));
             
             try {
@@ -4089,7 +4056,6 @@ async function handleMessage(update) {
                 const apiKey = decrypt(user.apiKey);
                 const secretKey = decrypt(user.secretKey);
                 
-                // STEP 2
                 await sendMessage(chatId, getText(lang, 'analyzing_step', 2, 4, lang === 'ru' ? 'Получение баланса...' : 'Fetching balance...'));
                 const exchange = await connectExchange(user.exchangeId, apiKey, secretKey);
                 const balance = await exchange.fetchBalance();
@@ -4101,7 +4067,6 @@ async function handleMessage(update) {
                     return;
                 }
                 
-                // STEP 3
                 await sendMessage(chatId, getText(lang, 'analyzing_step', 3, 4, lang === 'ru' ? 'Запрос цен...' : 'Fetching prices...'));
                 
                 let totalUSDT = 0;
@@ -4152,7 +4117,6 @@ async function handleMessage(update) {
                 assets.sort((a, b) => b.value - a.value);
                 const mode = await getData('mode_' + chatId) || 'beginner';
                 
-                // STEP 4
                 await sendMessage(chatId, getText(lang, 'analyzing_step', 4, 4, lang === 'ru' ? 'Расчет рисков...' : 'Calculating risks...'));
                 
                 await setData('analysis_' + chatId, JSON.stringify({
@@ -4293,7 +4257,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // Если пользователь отправил /exit — показываем главное меню
         if (cleanText === '/exit') {
             await showMainMenu(chatId);
             return;
@@ -4404,3 +4367,6 @@ app.listen(PORT, '0.0.0.0', () => {
 console.log('🚀 BOT READY!');
 console.log('📊 All functions loaded!');
 
+// ============================================================
+// END OF FILE
+// ============================================================
