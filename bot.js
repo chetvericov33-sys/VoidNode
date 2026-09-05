@@ -700,7 +700,7 @@ async function checkLimit(chatId, feature) {
 }
 
 // ============================================================
-// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH) — ИСПРАВЛЕННАЯ
+// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH)
 // ============================================================
 
 var LANGUAGES = {
@@ -1504,7 +1504,7 @@ function checkImpersonation(username) {
 }
 
 // ============================================================
-// 13. ALL KEYBOARDS — ОБНОВЛЕННЫЕ
+// 13. ALL KEYBOARDS
 // ============================================================
 
 function getMainMenuKeyboard(lang) {
@@ -1825,8 +1825,10 @@ async function showPlansMenu(chatId) {
     var lang = await getData('lang_' + chatId) || 'ru';
     var userPlan = await getUserPlan(chatId);
     var expiresDate = formatDateShort(userPlan.expires);
+    var planName = userPlan && userPlan.name ? userPlan.name : 'Trial';
+    var planExpires = expiresDate || 'N/A';
     var message = getText(lang, 'plans_title') + '\n';
-    message += getText(lang, 'plans_current', [userPlan.name, expiresDate]) + '\n\n';
+    message += getText(lang, 'plans_current', [planName, planExpires]) + '\n\n';
     message += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     message += getText(lang, 'plans_trial') + '\n\n';
     message += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
@@ -2018,10 +2020,9 @@ async function handleTrendClick(chatId, data, lang, messageId) {
         var coinId = TICKER_TO_COINGECKO[coin] || coin.toLowerCase();
         var dataObj = await getCachedCoinGecko(coinId);
         if (!dataObj) {
-            var url = 'https://api.coingecko.com/api/v3/coins/' + coinId;
+            var url = 'https://api.coingecko.com/api/v3/coins/' + coinId + '?x_cg_demo_api_key=' + COINGECKO_API_KEY;
             var response = await fetch(url, {
                 headers: {
-                    'x-cg-pro-api-key': COINGECKO_API_KEY,
                     'Accept': 'application/json'
                 }
             });
@@ -2138,7 +2139,7 @@ async function handleContractSearch(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 17. ANTISCAM HANDLERS — С КНОПКОЙ ОТМЕНЫ
+// 17. ANTISCAM HANDLERS
 // ============================================================
 async function handleAntiScamInput(chatId, text, lang, update, messageId) {
     var check = await checkLimit(chatId, 'antiscam');
@@ -2408,7 +2409,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 19. NEWS — WITH ENGLISH SUPPORT
+// 19. NEWS
 // ============================================================
 class NewsManager {
     constructor() {
@@ -2564,7 +2565,16 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
     } else {
         report += '🕐 Just updated\n';
     }
-    report += '📌 Your assets: ' + result.assets.map(function(a) { return a.symbol; }).join(', ') + '\n\n';
+    
+    // ИСПРАВЛЕНИЕ: проверка на существование assets
+    var assetsList = '';
+    if (result.assets && Array.isArray(result.assets) && result.assets.length > 0) {
+        assetsList = result.assets.map(function(a) { return a.symbol; }).join(', ');
+    } else {
+        assetsList = 'BTC, ETH, SOL, BNB, ADA';
+    }
+    report += '📌 Your assets: ' + assetsList + '\n\n';
+    
     if (result.articles.length === 0) {
         report += getText(lang, 'news_no_news') + '\n\nTry refreshing in 5-10 minutes';
         var keyboard = {
@@ -3177,7 +3187,7 @@ async function handlePanicConvertAll(chatId) {
 }
 
 // ============================================================
-// 25. PORTFOLIO ANALYSIS — FULLY WORKING WITH PROGRESS INDICATOR
+// 25. PORTFOLIO ANALYSIS
 // ============================================================
 function generateCSV(engineResult) {
     var csv = 'Asset,Value(USDT),Percentage\n';
@@ -3252,7 +3262,7 @@ async function executeRecommendation(chatId, recId) {
 }
 
 // ============================================================
-// 26. CALLBACK HANDLER — ОБНОВЛЕННЫЙ
+// 26. CALLBACK HANDLER
 // ============================================================
 async function handleCallback(update) {
     var callback = update.callback_query;
@@ -3565,7 +3575,7 @@ async function handleCallback(update) {
         }
 
         // ============================================================
-        // PORTFOLIO ANALYSIS — FULLY WORKING WITH PROGRESS INDICATOR
+        // PORTFOLIO ANALYSIS
         // ============================================================
         if (data === 'action_analyze') {
             var savedData = await getData('user_' + chatId);
@@ -3800,7 +3810,7 @@ async function handleCallback(update) {
 }
 
 // ============================================================
-// 27. MESSAGE HANDLER — ОБНОВЛЕННЫЙ
+// 27. MESSAGE HANDLER
 // ============================================================
 async function handleMessage(update) {
     var chatId = update.message.chat.id;
