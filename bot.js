@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 0.1
+// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 0.1 (С AI СОВЕТНИКОМ)
 // ============================================================
 
 require('dotenv').config();
@@ -19,6 +19,7 @@ const BOT_USERNAME = process.env.BOT_USERNAME;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 if (!BOT_TOKEN) { console.error('BOT_TOKEN not found'); process.exit(1); }
 if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
@@ -1522,6 +1523,7 @@ function getFunctionsMenuKeyboard(lang) {
         inline_keyboard: [
             [{ text: getText(lang, 'functions_analyze'), callback_data: 'menu_analyze' }],
             [{ text: getText(lang, 'functions_security'), callback_data: 'menu_security' }],
+            [{ text: '🤖 ' + (lang === 'ru' ? 'AI Советник' : 'AI Advisor'), callback_data: 'menu_ai' }],
             [{ text: getText(lang, 'market_menu'), callback_data: 'menu_market' }],
             [{ text: getText(lang, 'functions_history'), callback_data: 'menu_history' }],
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
@@ -2566,7 +2568,6 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         report += '🕐 Just updated\n';
     }
     
-    // ИСПРАВЛЕНИЕ: проверка на существование assets
     var assetsList = '';
     if (result.assets && Array.isArray(result.assets) && result.assets.length > 0) {
         assetsList = result.assets.map(function(a) { return a.symbol; }).join(', ');
@@ -3309,6 +3310,12 @@ async function handleCallback(update) {
             return;
         }
 
+        // --- AI Советник ---
+        if (data === 'menu_ai') {
+            await handleAICommand(chatId, '', lang, null);
+            return;
+        }
+
         if (data === 'settings_change_lang') { await showLanguageSelect(chatId); return; }
         if (data === 'settings_change_mode') { await showModeSelect(chatId); return; }
         if (data === 'lang_ru') {
@@ -4037,6 +4044,13 @@ async function handleMessage(update) {
             return;
         }
 
+        // --- AI Советник ---
+        if (cleanText === '/ai' || cleanText.startsWith('/ai ')) {
+            var question = cleanText === '/ai' ? '' : cleanText.replace('/ai ', '');
+            await handleAICommand(chatId, question, lang, messageId);
+            return;
+        }
+
         if (cleanText === '/analyze') {
             var savedData = await getData('user_' + chatId);
             if (!savedData) {
@@ -4329,7 +4343,607 @@ runTaskWithRecovery(runAutotrade, 'runAutotrade', CONFIG.AUTOTRADE_CHECK_INTERVA
 runTaskWithRecovery(checkPanic, 'checkPanic', CONFIG.PANIC_CHECK_INTERVAL);
 
 // ============================================================
-// 30. EXPRESS SERVER
+// 30. AI СОВЕТНИК — ПОЛНАЯ РЕАЛИЗАЦИЯ
+// ============================================================
+
+// Проверяем наличие ключа OpenRouter
+var HAS_OPENROUTER = typeof OPENROUTER_API_KEY !== 'undefined' && OPENROUTER_API_KEY && OPENROUTER_API_KEY.length > 10;
+
+// Бесплатные модели OpenRouter
+var FREE_MODELS = [
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'mistralai/mistral-7b-instruct:free',
+    'google/gemma-2-9b-it:free',
+    'microsoft/phi-3-mini-128k-instruct:free'
+];
+
+var CURRENT_AI_MODEL = FREE_MODELS[0];
+
+// ============================================================
+// 30.1. AI КОНТЕКСТ
+// ============================================================
+class AIContext {
+    constructor() {
+        this.contexts = new Map();
+        this.maxHistory = 20;
+    }
+
+    getContext(chatId) {
+        if (!this.contexts.has(chatId)) {
+            this.contexts.set(chatId, {
+                history: [],
+                lastAnalysis: null,
+                lastNews: null,
+                lastSnowball: null
+            });
+        }
+        return this.contexts.get(chatId);
+    }
+
+    addMessage(chatId, role, content) {
+        var context = this.getContext(chatId);
+        context.history.push({ role: role, content: content, timestamp: Date.now() });
+        if (context.history.length > this.maxHistory) {
+            context.history.shift();
+        }
+    }
+
+    async refreshData(chatId, lang) {
+        var context = this.getContext(chatId);
+        
+        // 1. Анализ портфеля
+        var analysisData = await getData('analysis_' + chatId);
+        if (analysisData) {
+            context.lastAnalysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
+            context.lastAnalysis.timestamp = Date.now();
+        }
+        
+        // 2. Новости (NewsManager)
+        var newsResult = await newsManager.getPersonalizedNews(chatId, lang);
+        if (newsResult && !newsResult.error) {
+            context.lastNews = newsResult;
+        }
+        
+        // 3. Динамика токенов (SnowballTracker)
+        var keysUser = await loadUserKeys(chatId);
+        if (keysUser) {
+            try {
+                var exchange = await connectExchange(keysUser.exchangeId, keysUser.apiKey, keysUser.secretKey);
+                var balance = await exchange.fetchBalance();
+                var total = balance.total;
+                var tokens = [];
+                for (var symbol in total) {
+                    if (total.hasOwnProperty(symbol) && symbol !== 'USDT' && total[symbol] > 0.0001) {
+                        try {
+                            var ticker = await exchange.fetchTicker(symbol + '/USDT');
+                            if (ticker && ticker.last) {
+                                tokens.push({
+                                    symbol: symbol,
+                                    amount: total[symbol],
+                                    price: ticker.last,
+                                    value: total[symbol] * ticker.last,
+                                    change24h: ticker.percentage || 0,
+                                    volume24h: ticker.quoteVolume || 0
+                                });
+                            }
+                        } catch (e) {}
+                    }
+                }
+                tokens.sort(function(a, b) { return b.change24h - a.change24h; });
+                context.lastSnowball = {
+                    tokens: tokens,
+                    timestamp: Date.now(),
+                    best: tokens[0] || null,
+                    worst: tokens[tokens.length - 1] || null
+                };
+            } catch (e) {
+                console.error('AI Snowball refresh error:', e);
+            }
+        }
+        
+        return context;
+    }
+
+    getSystemPrompt(lang) {
+        if (lang === 'ru') {
+            return 'Ты профессиональный крипто-советник. Твоя задача — защищать пользователя от глупых решений.\n\n' +
+                'Ты обязан:\n' +
+                '1. Быть честным — не придумывай факты, используй только данные из портфеля\n' +
+                '2. Не соглашаться с пользователем, если он хочет сделать что-то рискованное\n' +
+                '3. Предупреждать о рисках, даже если пользователь не спрашивает\n' +
+                '4. Давать конкретные цифры и проценты из портфеля\n' +
+                '5. Если у тебя нет данных — скажи это честно и предложи выполнить /analyze\n' +
+                '6. Быть кратким — максимум 3-5 предложений на ответ\n' +
+                '7. Использовать эмодзи для наглядности (📈📉⚠️✅🔴🟢)\n\n' +
+                'Ты НЕ должен:\n' +
+                '- Давать финансовые советы "купи/продай"\n' +
+                '- Предсказывать цену\n' +
+                '- Придумывать данные, которых нет в портфеле\n' +
+                '- Соглашаться с пользователем, если он хочет рискнуть\n\n' +
+                'Если пользователь просит совет по конкретной монете — скажи, что у тебя нет данных и предложи проверить через /trend или /news';
+        } else {
+            return 'You are a professional crypto advisor. Your task is to protect the user from stupid decisions.\n\n' +
+                'You must:\n' +
+                '1. Be honest — don\'t make up facts, use only portfolio data\n' +
+                '2. Disagree with the user if they want to do something risky\n' +
+                '3. Warn about risks, even if the user doesn\'t ask\n' +
+                '4. Give specific numbers and percentages from the portfolio\n' +
+                '5. If you don\'t have data — say so honestly and suggest running /analyze\n' +
+                '6. Be brief — maximum 3-5 sentences per response\n' +
+                '7. Use emojis for clarity (📈📉⚠️✅🔴🟢)\n\n' +
+                'You MUST NOT:\n' +
+                '- Give financial advice "buy/sell"\n' +
+                '- Predict price\n' +
+                '- Make up data not in the portfolio\n' +
+                '- Agree with the user if they want to take risks\n\n' +
+                'If the user asks for advice on a specific coin — say you don\'t have data and suggest checking via /trend or /news';
+        }
+    }
+
+    buildPrompt(chatId, userQuestion, lang) {
+        var context = this.getContext(chatId);
+        var prompt = this.getSystemPrompt(lang) + '\n\n';
+        
+        if (context.lastAnalysis) {
+            var a = context.lastAnalysis;
+            prompt += (lang === 'ru' ? '📊 ПОРТФЕЛЬ:\n' : '📊 PORTFOLIO:\n');
+            prompt += (lang === 'ru' ? 'Общая стоимость: $' : 'Total value: $') + a.totalUSDT.toFixed(2) + '\n';
+            prompt += 'BTC: ' + a.btcPercent.toFixed(1) + '% | Alts: ' + a.altPercent.toFixed(1) + '% | Stables: ' + a.usdtPercent.toFixed(1) + '%\n';
+            if (a.assets && a.assets.length > 0) {
+                prompt += (lang === 'ru' ? 'Активы: ' : 'Assets: ');
+                var assetStrings = a.assets.slice(0, 5).map(function(asset) {
+                    return asset.symbol + ' (' + asset.weight.toFixed(1) + '%)';
+                });
+                prompt += assetStrings.join(', ') + '\n';
+            }
+            prompt += '\n';
+        } else {
+            prompt += (lang === 'ru' ? '⚠️ Нет данных о портфеле. Выполни /analyze.\n\n' : '⚠️ No portfolio data. Run /analyze.\n\n');
+        }
+
+        if (context.lastNews && context.lastNews.articles && context.lastNews.articles.length > 0) {
+            prompt += (lang === 'ru' ? '📰 СВЕЖИЕ НОВОСТИ ПО ПОРТФЕЛЮ:\n' : '📰 LATEST NEWS FOR YOUR PORTFOLIO:\n');
+            var topNews = context.lastNews.articles.slice(0, 3);
+            for (var i = 0; i < topNews.length; i++) {
+                var article = topNews[i];
+                prompt += '• ' + (article.title || 'News') + ' (' + (article.asset || '') + ')\n';
+            }
+            prompt += '\n';
+        }
+
+        if (context.lastSnowball && context.lastSnowball.tokens && context.lastSnowball.tokens.length > 0) {
+            prompt += (lang === 'ru' ? '📈 ДИНАМИКА ТОКЕНОВ (24h):\n' : '📈 TOKEN DYNAMICS (24h):\n');
+            var top5 = context.lastSnowball.tokens.slice(0, 5);
+            for (var i = 0; i < top5.length; i++) {
+                var t = top5[i];
+                var sign = t.change24h > 0 ? '+' : '';
+                prompt += '• ' + t.symbol + ': ' + sign + t.change24h.toFixed(1) + '%\n';
+            }
+            prompt += '\n';
+        }
+
+        if (context.history.length > 0) {
+            prompt += (lang === 'ru' ? '💬 ИСТОРИЯ ДИАЛОГА:\n' : '💬 CONVERSATION HISTORY:\n');
+            var lastMessages = context.history.slice(-5);
+            for (var i = 0; i < lastMessages.length; i++) {
+                var msg = lastMessages[i];
+                prompt += (msg.role === 'user' ? '👤 ' : '🤖 ') + msg.content + '\n';
+            }
+            prompt += '\n';
+        }
+
+        prompt += (lang === 'ru' ? '❓ Вопрос пользователя: ' : '❓ User question: ') + userQuestion + '\n\n';
+        prompt += (lang === 'ru' ? '📌 ТВОЙ ОТВЕТ:' : '📌 YOUR RESPONSE:');
+        
+        return prompt;
+    }
+
+    generateResponse(chatId, question, lang) {
+        var context = this.getContext(chatId);
+        var lowerQ = question.toLowerCase();
+        var isRu = lang === 'ru';
+        
+        // Проверка лимитов AI
+        var limitCheck = null;
+        try {
+            // В синхронной функции не можем использовать await, проверка будет в handleAICommand
+        } catch (e) {}
+        
+        // --- 1. Вопрос о портфеле ---
+        if (lowerQ.includes('портфель') || lowerQ.includes('portfolio') || 
+            lowerQ.includes('актив') || lowerQ.includes('asset') ||
+            lowerQ.includes('баланс') || lowerQ.includes('balance')) {
+            
+            if (!context.lastAnalysis) {
+                return isRu ? 
+                    '⚠️ У меня нет данных о твоем портфеле.\n\nВыполни /analyze, чтобы я мог помочь тебе с анализом.' :
+                    '⚠️ I don\'t have data about your portfolio.\n\nRun /analyze so I can help you with analysis.';
+            }
+            
+            var a = context.lastAnalysis;
+            var riskEmoji = a.riskLevel === 'high' ? '🔴' : a.riskLevel === 'medium' ? '🟡' : '🟢';
+            var riskText = isRu ? 
+                (a.riskLevel === 'high' ? 'Высокий' : a.riskLevel === 'medium' ? 'Средний' : 'Низкий') :
+                (a.riskLevel === 'high' ? 'High' : a.riskLevel === 'medium' ? 'Medium' : 'Low');
+            
+            var response = isRu ? 
+                '📊 *ТВОЙ ПОРТФЕЛЬ*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' :
+                '📊 *YOUR PORTFOLIO*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+            
+            response += (isRu ? '💰 Общая стоимость: $' : '💰 Total value: $') + a.totalUSDT.toFixed(2) + '\n';
+            response += (isRu ? '📊 Распределение:\n' : '📊 Allocation:\n');
+            response += '  BTC: ' + a.btcPercent.toFixed(1) + '%\n';
+            response += '  Alts: ' + a.altPercent.toFixed(1) + '%\n';
+            response += '  Stables: ' + a.usdtPercent.toFixed(1) + '%\n\n';
+            response += riskEmoji + ' ' + (isRu ? 'Риск: ' : 'Risk: ') + riskText + '\n\n';
+            
+            if (a.riskLevel === 'high') {
+                response += isRu ? 
+                    '⚠️ *ВНИМАНИЕ!* Высокий риск. Рекомендую увеличить долю стейблов до 20-30%.\n\n🛡️ Включи автоторговлю (Уровень 1) для защиты.' :
+                    '⚠️ *WARNING!* High risk. I recommend increasing stables to 20-30%.\n\n🛡️ Enable autotrading (Level 1) for protection.';
+            } else if (a.riskLevel === 'medium') {
+                response += isRu ? 
+                    '🟡 Средний риск. Портфель сбалансирован, но есть пространство для улучшения.\n\n📌 Регулярно обновляй анализ (/analyze).' :
+                    '🟡 Medium risk. Portfolio is balanced, but there is room for improvement.\n\n📌 Regularly update analysis (/analyze).';
+            } else {
+                response += isRu ? 
+                    '🟢 Низкий риск. Хорошо диверсифицированный портфель. Молодец! 👍' :
+                    '🟢 Low risk. Well diversified portfolio. Good job! 👍';
+            }
+            
+            return response;
+        }
+        
+        // --- 2. Вопрос о риске ---
+        if (lowerQ.includes('риск') || lowerQ.includes('risk') || 
+            lowerQ.includes('опасн') || lowerQ.includes('danger')) {
+            
+            if (!context.lastAnalysis) {
+                return isRu ? 
+                    '⚠️ Чтобы оценить риск, выполни /analyze.' :
+                    '⚠️ To assess risk, run /analyze.';
+            }
+            
+            var a = context.lastAnalysis;
+            var riskEmoji = a.riskLevel === 'high' ? '🔴' : a.riskLevel === 'medium' ? '🟡' : '🟢';
+            var riskText = isRu ? 
+                (a.riskLevel === 'high' ? 'Высокий' : a.riskLevel === 'medium' ? 'Средний' : 'Низкий') :
+                (a.riskLevel === 'high' ? 'High' : a.riskLevel === 'medium' ? 'Medium' : 'Low');
+            
+            var response = isRu ?
+                '📊 *ОЦЕНКА РИСКА*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+                riskEmoji + ' Уровень риска: *' + riskText + '*\n\n' :
+                '📊 *RISK ASSESSMENT*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+                riskEmoji + ' Risk level: *' + riskText + '*\n\n';
+            
+            if (a.riskLevel === 'high') {
+                response += isRu ?
+                    '⚠️ *Что делать:*\n• Увеличь долю стейблов до 20-30%\n• Не открывай крупные позиции\n• Установи стоп-лоссы\n\n💡 Включи автоторговлю (Уровень 1) для защиты.' :
+                    '⚠️ *What to do:*\n• Increase stables to 20-30%\n• Don\'t open large positions\n• Set stop-losses\n\n💡 Enable autotrading (Level 1) for protection.';
+            } else if (a.riskLevel === 'medium') {
+                response += isRu ?
+                    '🟡 Риск умеренный. Рекомендую:\n• Следить за концентрацией активов\n• Диверсифицировать альты\n• Держать 20% в стейблах' :
+                    '🟡 Moderate risk. I recommend:\n• Monitor asset concentration\n• Diversify alts\n• Keep 20% in stables';
+            } else {
+                response += isRu ?
+                    '🟢 Отлично! Риск низкий. Продолжай в том же духе. 👍\n\n📌 Совет: регулярно обновляй анализ (/analyze).' :
+                    '🟢 Great! Low risk. Keep it up. 👍\n\n📌 Tip: regularly update analysis (/analyze).';
+            }
+            
+            return response;
+        }
+        
+        // --- 3. Вопрос о конкретной монете ---
+        var coinMatch = question.match(/(BTC|ETH|SOL|BNB|ADA|XRP|DOGE|SHIB|MATIC|DOT|AVAX|LINK|UNI|PEPE|ARB|OP|APT|SUI|NEAR|ATOM|LTC|BCH|FIL|FTM|AAVE|MKR|CRV|SNX|COMP|ZEC|XLM|ALGO|HBAR|RUNE|FLOW|WAVES|NEO|DASH|KSM|ENJ|CHZ|SAND|MANA|AXS|GALA|GRT|REN|BAT|ZIL|ICX|EGLD|VRA|CKB|MINA|CELO|KAVA|INJ|SEI|TIA|PYTH|JUP|ONDO|STRK|ENA|ZK|VANA|MOVE|LAYER|ME|BIO)\b/i);
+        
+        if (coinMatch) {
+            var coin = coinMatch[0].toUpperCase();
+            if (context.lastSnowball && context.lastSnowball.tokens) {
+                var token = context.lastSnowball.tokens.find(function(t) { return t.symbol === coin; });
+                if (token) {
+                    var sign = token.change24h > 0 ? '+' : '';
+                    var emoji = token.change24h > 5 ? '📈' : token.change24h < -5 ? '📉' : '➡️';
+                    var response = isRu ?
+                        '📊 *' + coin + '*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+                        '💰 Цена: $' + token.price.toFixed(2) + '\n' +
+                        '📊 24h: ' + sign + token.change24h.toFixed(1) + '% ' + emoji + '\n' +
+                        '💵 Объем: $' + (token.volume24h / 1000000).toFixed(1) + 'M\n\n' :
+                        '📊 *' + coin + '*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+                        '💰 Price: $' + token.price.toFixed(2) + '\n' +
+                        '📊 24h: ' + sign + token.change24h.toFixed(1) + '% ' + emoji + '\n' +
+                        '💵 Volume: $' + (token.volume24h / 1000000).toFixed(1) + 'M\n\n';
+                    
+                    if (token.change24h > 5) {
+                        response += isRu ?
+                            '📈 ' + coin + ' сильно растет. Но будь осторожен — коррекция может быть резкой.\n\n⚠️ Не рекомендую покупать на пике.' :
+                            '📈 ' + coin + ' is rising strongly. But be careful — correction can be sharp.\n\n⚠️ I don\'t recommend buying at the peak.';
+                    } else if (token.change24h < -5) {
+                        response += isRu ?
+                            '📉 ' + coin + ' падает. Если у тебя есть этот актив — проверь, не пора ли зафиксировать убыток.\n\n🛡️ Включи защиту (Уровень 1 автоторговли).' :
+                            '📉 ' + coin + ' is falling. If you have this asset — check if it\'s time to cut losses.\n\n🛡️ Enable protection (Autotrading Level 1).';
+                    } else {
+                        response += isRu ?
+                            '➡️ ' + coin + ' стабилен. Хорошее время для анализа, но не для спешных решений.' :
+                            '➡️ ' + coin + ' is stable. Good time for analysis, but not for rushed decisions.';
+                    }
+                    
+                    return response;
+                }
+            }
+            
+            return isRu ?
+                '🤔 У меня нет данных по ' + coin + ' в твоем портфеле.\n\n📌 Проверь через /news ' + coin + ' или /trend для ' + coin :
+                '🤔 I don\'t have data for ' + coin + ' in your portfolio.\n\n📌 Check via /news ' + coin + ' or /trend for ' + coin;
+        }
+        
+        // --- 4. Вопрос о новостях ---
+        if (lowerQ.includes('новост') || lowerQ.includes('news')) {
+            if (context.lastNews && context.lastNews.articles && context.lastNews.articles.length > 0) {
+                var response = isRu ? '📰 *СВЕЖИЕ НОВОСТИ*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' : '📰 *LATEST NEWS*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+                var top3 = context.lastNews.articles.slice(0, 3);
+                for (var i = 0; i < top3.length; i++) {
+                    var article = top3[i];
+                    response += '📌 ' + (article.title || 'News') + '\n';
+                    if (article.asset) response += '   🎯 ' + article.asset + '\n';
+                    if (article.source && article.source.name) response += '   📎 ' + article.source.name + '\n';
+                    response += '━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+                }
+                response += isRu ? '💡 Хочешь больше новостей? /news' : '💡 Want more news? /news';
+                return response;
+            }
+            return isRu ?
+                '📭 Новостей по твоим активам пока нет.\n\n💡 Попробуй /news или /news BTC' :
+                '📭 No news for your assets yet.\n\n💡 Try /news or /news BTC';
+        }
+        
+        // --- 5. Совет по действию (защита от глупых решений) ---
+        if (lowerQ.includes('стоит') || lowerQ.includes('should') || 
+            lowerQ.includes('надо') || lowerQ.includes('нужно') ||
+            lowerQ.includes('покупат') || lowerQ.includes('buy') ||
+            lowerQ.includes('продав') || lowerQ.includes('sell') ||
+            lowerQ.includes('входить') || lowerQ.includes('enter') ||
+            lowerQ.includes('выходить') || lowerQ.includes('exit')) {
+            
+            var response = isRu ?
+                '⚠️ *Я НЕ ДАЮ СОВЕТОВ "КУПИТЬ/ПРОДАТЬ"*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+                'Это рискованно и запрещено правилами.\n\n' +
+                'Вместо этого я могу:\n' +
+                '📊 Показать текущее состояние портфеля\n' +
+                '📈 Рассказать о рисках\n' +
+                '📰 Показать новости по активам\n' +
+                '🛡️ Посоветовать защитные стратегии\n\n' +
+                '💡 Выполни /analyze для полного анализа.\n' +
+                '🔄 Или задай конкретный вопрос о портфеле.' :
+                '⚠️ *I DO NOT GIVE "BUY/SELL" ADVICE*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+                'This is risky and prohibited.\n\n' +
+                'Instead I can:\n' +
+                '📊 Show current portfolio state\n' +
+                '📈 Tell about risks\n' +
+                '📰 Show news for your assets\n' +
+                '🛡️ Recommend protection strategies\n\n' +
+                '💡 Run /analyze for full analysis.\n' +
+                '🔄 Or ask a specific question about your portfolio.';
+            
+            return response;
+        }
+        
+        // --- 6. Приветствие ---
+        if (lowerQ.includes('привет') || lowerQ.includes('hello') || lowerQ.includes('hi') || lowerQ.includes('здравствуй')) {
+            var name = 'друг';
+            try {
+                var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
+                var response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId })
+                });
+                var data = await response.json();
+                if (data.ok && data.result) {
+                    name = data.result.username || data.result.first_name || 'друг';
+                }
+            } catch (e) {}
+            
+            return isRu ?
+                '👋 Привет, ' + name + '! Я твой крипто-советник.\n\n' +
+                'Я помогаю:\n' +
+                '📊 Анализировать портфель\n' +
+                '📈 Оценивать риски\n' +
+                '📰 Следить за новостями\n' +
+                '🛡️ Защищать от глупых решений\n\n' +
+                'Задай мне вопрос или выполни /analyze для полного анализа.' :
+                '👋 Hello, ' + name + '! I\'m your crypto advisor.\n\n' +
+                'I help:\n' +
+                '📊 Analyze portfolio\n' +
+                '📈 Assess risks\n' +
+                '📰 Follow news\n' +
+                '🛡️ Protect from stupid decisions\n\n' +
+                'Ask me a question or run /analyze for full analysis.';
+        }
+        
+        // --- 7. Дефолтный ответ ---
+        var response = isRu ?
+            '🤔 *Я тебя понял, но мне нужно больше информации.*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+            'Я могу помочь с:\n' +
+            '📊 Анализом портфеля — спроси "какой мой портфель?"\n' +
+            '📈 Рисками — спроси "какой риск?"\n' +
+            '📰 Новостями — спроси "что нового?"\n' +
+            '🪙 Конкретными монетами — спроси "что с BTC?"\n\n' +
+            '⚠️ Я не даю советов "купить/продать". Я защищаю тебя от рисков.\n\n' +
+            '💡 Выполни /analyze для полного анализа портфеля.' :
+            '🤔 *I understand you, but I need more information.*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+            'I can help with:\n' +
+            '📊 Portfolio analysis — ask "what is my portfolio?"\n' +
+            '📈 Risks — ask "what is the risk?"\n' +
+            '📰 News — ask "what\'s new?"\n' +
+            '🪙 Specific coins — ask "what about BTC?"\n\n' +
+            '⚠️ I don\'t give "buy/sell" advice. I protect you from risks.\n\n' +
+            '💡 Run /analyze for full portfolio analysis.';
+        
+        return response;
+    }
+
+    async getResponse(chatId, question, lang) {
+        await this.refreshData(chatId, lang);
+        
+        var context = this.getContext(chatId);
+        this.addMessage(chatId, 'user', question);
+        
+        var limitCheck = await checkLimit(chatId, 'ai');
+        if (!limitCheck.allowed) {
+            return { 
+                error: limitCheck.reason + '\n\n' + (lang === 'ru' ? 
+                    '💡 Попробуй спросить что-то о портфеле или выполни /analyze' : 
+                    '💡 Try asking about your portfolio or run /analyze')
+            };
+        }
+        
+        var answer = this.generateResponse(chatId, question, lang);
+        this.addMessage(chatId, 'assistant', answer);
+        
+        return { success: true, answer: answer };
+    }
+}
+
+var aiContext = new AIContext();
+
+// ============================================================
+// 30.2. OPENROUTER ИНТЕГРАЦИЯ
+// ============================================================
+
+function getNextFreeModel() {
+    var currentIndex = FREE_MODELS.indexOf(CURRENT_AI_MODEL);
+    var nextIndex = (currentIndex + 1) % FREE_MODELS.length;
+    return FREE_MODELS[nextIndex];
+}
+
+async function getAIResponseWithOpenRouter(chatId, question, lang) {
+    if (!HAS_OPENROUTER) {
+        console.log('⚠️ No OpenRouter key, using deterministic AI');
+        return await aiContext.getResponse(chatId, question, lang);
+    }
+    
+    await aiContext.refreshData(chatId, lang);
+    var context = aiContext.getContext(chatId);
+    
+    var limitCheck = await checkLimit(chatId, 'ai');
+    if (!limitCheck.allowed) {
+        return { error: limitCheck.reason };
+    }
+    
+    var prompt = aiContext.buildPrompt(chatId, question, lang);
+    
+    try {
+        var response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
+                'HTTP-Referer': 'https://t.me/' + BOT_USERNAME,
+                'X-Title': 'Void Node Bot'
+            },
+            body: JSON.stringify({
+                model: CURRENT_AI_MODEL,
+                messages: [
+                    { role: 'system', content: aiContext.getSystemPrompt(lang) },
+                    { role: 'user', content: prompt }
+                ],
+                max_tokens: 600,
+                temperature: 0.7
+            })
+        });
+        
+        var data = await response.json();
+        
+        if (data.error) {
+            console.error('OpenRouter error:', data.error);
+            if (data.error.code === 402 || data.error.message.includes('insufficient')) {
+                CURRENT_AI_MODEL = getNextFreeModel();
+                console.log('🔄 Switching to model:', CURRENT_AI_MODEL);
+                return await getAIResponseWithOpenRouter(chatId, question, lang);
+            }
+            return await aiContext.getResponse(chatId, question, lang);
+        }
+        
+        var answer = data.choices[0].message.content;
+        aiContext.addMessage(chatId, 'assistant', answer);
+        
+        return { success: true, answer: answer };
+        
+    } catch (error) {
+        console.error('OpenRouter fetch error:', error);
+        return await aiContext.getResponse(chatId, question, lang);
+    }
+}
+
+// ============================================================
+// 30.3. ОБРАБОТЧИК КОМАНДЫ /ai
+// ============================================================
+async function handleAICommand(chatId, question, lang, messageId) {
+    await sendTyping(chatId);
+    
+    if (!question || question.trim().length === 0) {
+        var helpText = lang === 'ru' ?
+            '🤖 *AI СОВЕТНИК*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+            'Задай мне вопрос о портфеле.\n\n' +
+            '📌 *Примеры вопросов:*\n' +
+            '• "Какой мой портфель?"\n' +
+            '• "Какой риск?"\n' +
+            '• "Что с BTC?"\n' +
+            '• "Покажи новости"\n' +
+            '• "Стоит ли покупать?" (я скажу "нет" 😅)\n\n' +
+            '🛡️ Я защищаю тебя от рисков и не даю советов "купить/продать".\n\n' +
+            (HAS_OPENROUTER ? '🧠 Модель: `' + CURRENT_AI_MODEL + '`\n' : '') +
+            '📊 Перед первым вопросом выполни /analyze — я буду использовать эти данные.' :
+            '🤖 *AI ADVISOR*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+            'Ask me a question about your portfolio.\n\n' +
+            '📌 *Example questions:*\n' +
+            '• "What is my portfolio?"\n' +
+            '• "What is the risk?"\n' +
+            '• "What about BTC?"\n' +
+            '• "Show news"\n' +
+            '• "Should I buy?" (I will say "no" 😅)\n\n' +
+            '🛡️ I protect you from risks and don\'t give "buy/sell" advice.\n\n' +
+            (HAS_OPENROUTER ? '🧠 Model: `' + CURRENT_AI_MODEL + '`\n' : '') +
+            '📊 Run /analyze first — I will use this data.';
+        
+        await sendUpdatedMessage(chatId, helpText, getBackKeyboard(lang), 'Markdown', messageId);
+        return;
+    }
+    
+    var result;
+    if (HAS_OPENROUTER) {
+        result = await getAIResponseWithOpenRouter(chatId, question, lang);
+    } else {
+        result = await aiContext.getResponse(chatId, question, lang);
+    }
+    
+    if (result.error) {
+        var errorKeyboard = {
+            inline_keyboard: [
+                [{ text: '📊 ' + (lang === 'ru' ? 'Анализ портфеля' : 'Analyze portfolio'), callback_data: 'action_analyze' }],
+                [{ text: '🔙 ' + (lang === 'ru' ? 'Назад' : 'Back'), callback_data: 'back_to_functions' }]
+            ]
+        };
+        await sendUpdatedMessage(chatId, result.error, errorKeyboard, 'Markdown', messageId);
+        return;
+    }
+    
+    var keyboard = {
+        inline_keyboard: [
+            [{ text: '🔄 ' + (lang === 'ru' ? 'Обновить данные' : 'Refresh data'), callback_data: 'menu_ai' }],
+            [{ text: '🔙 ' + (lang === 'ru' ? 'Назад к функциям' : 'Back to functions'), callback_data: 'back_to_functions' }]
+        ]
+    };
+    
+    await sendUpdatedMessage(chatId, result.answer, keyboard, 'Markdown', messageId);
+}
+
+console.log('🤖 AI Advisor initialized with OpenRouter support');
+console.log('📡 OpenRouter key: ' + (HAS_OPENROUTER ? '✅ Found' : '❌ Not found (using deterministic mode)'));
+console.log('🧠 Current model: ' + CURRENT_AI_MODEL);
+
+// ============================================================
+// 31. EXPRESS SERVER
 // ============================================================
 var app = express();
 app.use(express.json());
