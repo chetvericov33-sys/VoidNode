@@ -4343,7 +4343,7 @@ runTaskWithRecovery(runAutotrade, 'runAutotrade', CONFIG.AUTOTRADE_CHECK_INTERVA
 runTaskWithRecovery(checkPanic, 'checkPanic', CONFIG.PANIC_CHECK_INTERVAL);
 
 // ============================================================
-// 30. AI СОВЕТНИК — ПОЛНАЯ РЕАЛИЗАЦИЯ
+// 30. AI СОВЕТНИК — ИСПРАВЛЕННАЯ ВЕРСИЯ
 // ============================================================
 
 // Проверяем наличие ключа OpenRouter
@@ -4391,20 +4391,17 @@ class AIContext {
     async refreshData(chatId, lang) {
         var context = this.getContext(chatId);
         
-        // 1. Анализ портфеля
         var analysisData = await getData('analysis_' + chatId);
         if (analysisData) {
             context.lastAnalysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
             context.lastAnalysis.timestamp = Date.now();
         }
         
-        // 2. Новости (NewsManager)
         var newsResult = await newsManager.getPersonalizedNews(chatId, lang);
         if (newsResult && !newsResult.error) {
             context.lastNews = newsResult;
         }
         
-        // 3. Динамика токенов (SnowballTracker)
         var keysUser = await loadUserKeys(chatId);
         if (keysUser) {
             try {
@@ -4538,16 +4535,11 @@ class AIContext {
         return prompt;
     }
 
-    generateResponse(chatId, question, lang) {
+    // ===== ЭТА ФУНКЦИЯ СТАЛА ASYNC (ИСПРАВЛЕНО) =====
+    async generateResponse(chatId, question, lang) {
         var context = this.getContext(chatId);
         var lowerQ = question.toLowerCase();
         var isRu = lang === 'ru';
-        
-        // Проверка лимитов AI
-        var limitCheck = null;
-        try {
-            // В синхронной функции не можем использовать await, проверка будет в handleAICommand
-        } catch (e) {}
         
         // --- 1. Вопрос о портфеле ---
         if (lowerQ.includes('портфель') || lowerQ.includes('portfolio') || 
@@ -4727,7 +4719,7 @@ class AIContext {
             return response;
         }
         
-        // --- 6. Приветствие ---
+        // --- 6. Приветствие (ТУТ БЫЛ AWAIT, ТЕПЕРЬ ВСЕ РАБОТАЕТ) ---
         if (lowerQ.includes('привет') || lowerQ.includes('hello') || lowerQ.includes('hi') || lowerQ.includes('здравствуй')) {
             var name = 'друг';
             try {
@@ -4797,7 +4789,7 @@ class AIContext {
             };
         }
         
-        var answer = this.generateResponse(chatId, question, lang);
+        var answer = await this.generateResponse(chatId, question, lang);
         this.addMessage(chatId, 'assistant', answer);
         
         return { success: true, answer: answer };
