@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 0.1 (С AI СОВЕТНИКОМ)
+// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 0.2
 // ============================================================
 
 require('dotenv').config();
@@ -701,7 +701,7 @@ async function checkLimit(chatId, feature) {
 }
 
 // ============================================================
-// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH)
+// 6. FULL LOCALIZATION (RUSSIAN + ENGLISH) — ОБНОВЛЕННАЯ
 // ============================================================
 
 var LANGUAGES = {
@@ -924,7 +924,7 @@ var LANGUAGES = {
         panic_converted: '✅ Конвертация выполнена. Портфель в безопасности.',
         
         about_title: 'ℹ️ *О БОТЕ*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Версия:* 0.1',
+        about_version: '📌 *Версия:* 0.2',
         about_created: '📅 *Создан:* 01.09.2026',
         about_dev: '👨‍💻 *Разработчик:* @clofeLEAN',
         about_instruction: '📖 *ИНСТРУКЦИЯ:*\n\n1️⃣ **Подключи биржу** — /connect\n2️⃣ **Анализируй портфель** — /analyze\n3️⃣ **Проверяй безопасность** — отправь ссылку или контракт\n4️⃣ **Следи за рынком** — /news\n5️⃣ **Получи помощь** — /help',
@@ -1174,7 +1174,7 @@ var LANGUAGES = {
         panic_converted: '✅ Conversion completed. Portfolio is safe.',
         
         about_title: 'ℹ️ *ABOUT BOT*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Version:* 0.1',
+        about_version: '📌 *Version:* 0.2',
         about_created: '📅 *Created:* 01.09.2026',
         about_dev: '👨‍💻 *Developer:* @clofeLEAN',
         about_instruction: '📖 *INSTRUCTION:*\n\n1️⃣ **Connect exchange** — /connect\n2️⃣ **Analyze portfolio** — /analyze\n3️⃣ **Check security** — send link or contract\n4️⃣ **Follow market** — /news\n5️⃣ **Get help** — /help',
@@ -1505,15 +1505,15 @@ function checkImpersonation(username) {
 }
 
 // ============================================================
-// 13. ALL KEYBOARDS
+// 13. ALL KEYBOARDS — ОБНОВЛЕННЫЕ С ЦВЕТОВЫМИ ЭМОДЗИ
 // ============================================================
 
 function getMainMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'main_functions'), callback_data: 'menu_functions' }, { text: getText(lang, 'main_settings'), callback_data: 'menu_settings_new' }],
-            [{ text: getText(lang, 'main_plans'), callback_data: 'menu_plans' }, { text: getText(lang, 'main_help'), callback_data: 'menu_help' }],
-            [{ text: getText(lang, 'main_about'), callback_data: 'menu_about' }]
+            [{ text: '📊 ' + getText(lang, 'main_functions'), callback_data: 'menu_functions' }, { text: '⚙️ ' + getText(lang, 'main_settings'), callback_data: 'menu_settings_new' }],
+            [{ text: '💳 ' + getText(lang, 'main_plans'), callback_data: 'menu_plans' }, { text: '❓ ' + getText(lang, 'main_help'), callback_data: 'menu_help' }],
+            [{ text: 'ℹ️ ' + getText(lang, 'main_about'), callback_data: 'menu_about' }]
         ]
     };
 }
@@ -1521,12 +1521,12 @@ function getMainMenuKeyboard(lang) {
 function getFunctionsMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'functions_analyze'), callback_data: 'menu_analyze' }],
-            [{ text: getText(lang, 'functions_security'), callback_data: 'menu_security' }],
+            [{ text: '📊 ' + getText(lang, 'functions_analyze'), callback_data: 'menu_analyze' }],
+            [{ text: '🛡️ ' + getText(lang, 'functions_security'), callback_data: 'menu_security' }],
             [{ text: '🤖 ' + (lang === 'ru' ? 'AI Советник' : 'AI Advisor'), callback_data: 'menu_ai' }],
-            [{ text: getText(lang, 'market_menu'), callback_data: 'menu_market' }],
-            [{ text: getText(lang, 'functions_history'), callback_data: 'menu_history' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '📈 ' + getText(lang, 'market_menu'), callback_data: 'menu_market' }],
+            [{ text: '📋 ' + getText(lang, 'functions_history'), callback_data: 'menu_history' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
 }
@@ -1534,10 +1534,10 @@ function getFunctionsMenuKeyboard(lang) {
 function getSecurityMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'security_link'), callback_data: 'antiscam_url' }, { text: getText(lang, 'security_contract'), callback_data: 'antiscam_contract' }],
-            [{ text: getText(lang, 'security_file'), callback_data: 'antiscam_file' }, { text: getText(lang, 'security_dex'), callback_data: 'antiscam_dex' }],
-            [{ text: getText(lang, 'security_impersonation'), callback_data: 'antiscam_impersonation' }, { text: getText(lang, 'security_wallet'), callback_data: 'antiscam_wallet' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+            [{ text: '🔗 ' + getText(lang, 'security_link'), callback_data: 'antiscam_url' }, { text: '📄 ' + getText(lang, 'security_contract'), callback_data: 'antiscam_contract' }],
+            [{ text: '📁 ' + getText(lang, 'security_file'), callback_data: 'antiscam_file' }, { text: '🔍 ' + getText(lang, 'security_dex'), callback_data: 'antiscam_dex' }],
+            [{ text: '🔄 ' + getText(lang, 'security_impersonation'), callback_data: 'antiscam_impersonation' }, { text: '👛 ' + getText(lang, 'security_wallet'), callback_data: 'antiscam_wallet' }],
+            [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
 }
@@ -1545,10 +1545,10 @@ function getSecurityMenuKeyboard(lang) {
 function getMarketMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'market_social'), callback_data: 'menu_social' }],
-            [{ text: getText(lang, 'market_news'), callback_data: 'menu_news' }],
-            [{ text: getText(lang, 'market_calendar'), callback_data: 'menu_calendar' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '📊 ' + getText(lang, 'market_social'), callback_data: 'menu_social' }],
+            [{ text: '📰 ' + getText(lang, 'market_news'), callback_data: 'menu_news' }],
+            [{ text: '📅 ' + getText(lang, 'market_calendar'), callback_data: 'menu_calendar' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
 }
@@ -1559,8 +1559,8 @@ function getSocialTrendsKeyboard(lang) {
             [{ text: '₿ BTC', callback_data: 'trend_BTC' }, { text: '⟠ ETH', callback_data: 'trend_ETH' }],
             [{ text: '🔷 SOL', callback_data: 'trend_SOL' }, { text: '🔶 ADA', callback_data: 'trend_ADA' }],
             [{ text: '🔹 XRP', callback_data: 'trend_XRP' }, { text: '💠 DOT', callback_data: 'trend_DOT' }],
-            [{ text: getText(lang, 'social_search'), callback_data: 'trend_search_menu' }],
-            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }]
+            [{ text: '🔎 ' + getText(lang, 'social_search'), callback_data: 'trend_search_menu' }],
+            [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_market' }]
         ]
     };
 }
@@ -1570,7 +1570,7 @@ function getTrendSearchMenuKeyboard(lang) {
         inline_keyboard: [
             [{ text: '🔎 By token name', callback_data: 'trend_search_name' }],
             [{ text: '📄 By contract address', callback_data: 'trend_search_contract' }],
-            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_social' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_social' }]
         ]
     };
 }
@@ -1578,10 +1578,10 @@ function getTrendSearchMenuKeyboard(lang) {
 function getSettingsMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'settings_change_lang'), callback_data: 'settings_change_lang' }],
-            [{ text: getText(lang, 'settings_change_mode'), callback_data: 'settings_change_mode' }],
+            [{ text: '🌍 ' + getText(lang, 'settings_change_lang'), callback_data: 'settings_change_lang' }],
+            [{ text: '🧠 ' + getText(lang, 'settings_change_mode'), callback_data: 'settings_change_mode' }],
             [{ text: '🔌 ' + (lang === 'ru' ? 'Отключить биржу' : 'Disconnect exchange'), callback_data: 'action_disconnect' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
 }
@@ -1591,7 +1591,7 @@ function getLanguageSelectKeyboard(lang) {
         inline_keyboard: [
             [{ text: '🇷🇺 Русский', callback_data: 'lang_ru' }],
             [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
-            [{ text: getText(lang, 'back_to_settings'), callback_data: 'back_to_settings' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_settings'), callback_data: 'back_to_settings' }]
         ]
     };
 }
@@ -1599,9 +1599,9 @@ function getLanguageSelectKeyboard(lang) {
 function getModeSelectKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'mode_beginner_btn'), callback_data: 'mode_beginner' }],
-            [{ text: getText(lang, 'mode_pro_btn'), callback_data: 'mode_pro' }],
-            [{ text: getText(lang, 'back_to_settings'), callback_data: 'back_to_settings' }]
+            [{ text: '🔰 ' + getText(lang, 'mode_beginner_btn'), callback_data: 'mode_beginner' }],
+            [{ text: '🚀 ' + getText(lang, 'mode_pro_btn'), callback_data: 'mode_pro' }],
+            [{ text: '🔙 ' + getText(lang, 'back_to_settings'), callback_data: 'back_to_settings' }]
         ]
     };
 }
@@ -1609,11 +1609,11 @@ function getModeSelectKeyboard(lang) {
 function getPlansMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'plan_trial_name'), callback_data: 'plan_TRIAL' }],
-            [{ text: getText(lang, 'plan_start_name'), callback_data: 'plan_START' }],
-            [{ text: getText(lang, 'plan_pro_name'), callback_data: 'plan_PRO' }],
-            [{ text: getText(lang, 'plan_vip_name'), callback_data: 'plan_VIP' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔰 ' + getText(lang, 'plan_trial_name'), callback_data: 'plan_TRIAL' }],
+            [{ text: '⭐ ' + getText(lang, 'plan_start_name'), callback_data: 'plan_START' }],
+            [{ text: '🚀 ' + getText(lang, 'plan_pro_name'), callback_data: 'plan_PRO' }],
+            [{ text: '👑 ' + getText(lang, 'plan_vip_name'), callback_data: 'plan_VIP' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
 }
@@ -1621,17 +1621,17 @@ function getPlansMenuKeyboard(lang) {
 function getHelpMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'help_q1'), callback_data: 'help_q1' }],
-            [{ text: getText(lang, 'help_q2'), callback_data: 'help_q2' }],
-            [{ text: getText(lang, 'help_q3'), callback_data: 'help_q3' }],
-            [{ text: getText(lang, 'help_q4'), callback_data: 'help_q4' }],
-            [{ text: getText(lang, 'help_q5'), callback_data: 'help_q5' }],
-            [{ text: getText(lang, 'help_q6'), callback_data: 'help_q6' }],
-            [{ text: getText(lang, 'help_q7'), callback_data: 'help_q7' }],
-            [{ text: getText(lang, 'help_q8'), callback_data: 'help_q8' }],
-            [{ text: getText(lang, 'help_q9'), callback_data: 'help_q9' }],
-            [{ text: getText(lang, 'help_contact_moderator'), callback_data: 'help_contact_moderator' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔐 ' + getText(lang, 'help_q1'), callback_data: 'help_q1' }],
+            [{ text: '📊 ' + getText(lang, 'help_q2'), callback_data: 'help_q2' }],
+            [{ text: '🔐 ' + getText(lang, 'help_q3'), callback_data: 'help_q3' }],
+            [{ text: '🛡️ ' + getText(lang, 'help_q4'), callback_data: 'help_q4' }],
+            [{ text: '🔔 ' + getText(lang, 'help_q5'), callback_data: 'help_q5' }],
+            [{ text: '🚀 ' + getText(lang, 'help_q6'), callback_data: 'help_q6' }],
+            [{ text: '❄️ ' + getText(lang, 'help_q7'), callback_data: 'help_q7' }],
+            [{ text: '📝 ' + getText(lang, 'help_q8'), callback_data: 'help_q8' }],
+            [{ text: '🔌 ' + getText(lang, 'help_q9'), callback_data: 'help_q9' }],
+            [{ text: '👤 ' + getText(lang, 'help_contact_moderator'), callback_data: 'help_contact_moderator' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
 }
@@ -1643,7 +1643,7 @@ function getAnalyzeMenuKeyboard(lang) {
             [{ text: '📥 ' + (lang === 'ru' ? 'CSV отчет' : 'CSV report'), callback_data: 'action_export_csv' }],
             [{ text: '🔄 ' + (lang === 'ru' ? 'Ребаланс портфеля' : 'Rebalance portfolio'), callback_data: 'action_rebalance' }],
             [{ text: '🚀 ' + (lang === 'ru' ? 'Автоторговля' : 'Autotrading'), callback_data: 'autotrade_menu' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
 }
@@ -1651,12 +1651,12 @@ function getAnalyzeMenuKeyboard(lang) {
 function getAutotradeMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'autotrade_level1'), callback_data: 'autotrade_level1' }],
-            [{ text: getText(lang, 'autotrade_level2'), callback_data: 'autotrade_level2' }],
-            [{ text: getText(lang, 'autotrade_level3'), callback_data: 'autotrade_level3' }],
-            [{ text: getText(lang, 'autotrade_level4'), callback_data: 'autotrade_level4' }],
+            [{ text: '🛡️ ' + getText(lang, 'autotrade_level1'), callback_data: 'autotrade_level1' }],
+            [{ text: '🔄 ' + getText(lang, 'autotrade_level2'), callback_data: 'autotrade_level2' }],
+            [{ text: '🧠 ' + getText(lang, 'autotrade_level3'), callback_data: 'autotrade_level3' }],
+            [{ text: '❄️ ' + getText(lang, 'autotrade_level4'), callback_data: 'autotrade_level4' }],
             [{ text: '⏹️ ' + (lang === 'ru' ? 'Остановить' : 'Stop'), callback_data: 'autotrade_stop' }],
-            [{ text: getText(lang, 'back_to_analyze'), callback_data: 'back_to_analyze' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_analyze'), callback_data: 'back_to_analyze' }]
         ]
     };
 }
@@ -1664,13 +1664,13 @@ function getAutotradeMenuKeyboard(lang) {
 function getAlertMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'alert_price'), callback_data: 'alert_price' }],
-            [{ text: getText(lang, 'alert_change'), callback_data: 'alert_change' }],
-            [{ text: getText(lang, 'alert_volume'), callback_data: 'alert_volume' }],
-            [{ text: getText(lang, 'alert_news'), callback_data: 'alert_news' }],
-            [{ text: getText(lang, 'alert_calendar'), callback_data: 'alert_calendar' }],
+            [{ text: '📊 ' + getText(lang, 'alert_price'), callback_data: 'alert_price' }],
+            [{ text: '📈 ' + getText(lang, 'alert_change'), callback_data: 'alert_change' }],
+            [{ text: '📊 ' + getText(lang, 'alert_volume'), callback_data: 'alert_volume' }],
+            [{ text: '📰 ' + getText(lang, 'alert_news'), callback_data: 'alert_news' }],
+            [{ text: '📅 ' + getText(lang, 'alert_calendar'), callback_data: 'alert_calendar' }],
             [{ text: '📋 ' + (lang === 'ru' ? 'Список оповещений' : 'List alerts'), callback_data: 'alert_list' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
 }
@@ -1678,10 +1678,10 @@ function getAlertMenuKeyboard(lang) {
 function getDiaryMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'mood_calm'), callback_data: 'diary_mood_calm' }, { text: getText(lang, 'mood_thoughtful'), callback_data: 'diary_mood_thoughtful' }],
-            [{ text: getText(lang, 'mood_anxious'), callback_data: 'diary_mood_anxious' }, { text: getText(lang, 'mood_panic'), callback_data: 'diary_mood_panic' }],
-            [{ text: getText(lang, 'mood_angry'), callback_data: 'diary_mood_angry' }, { text: getText(lang, 'mood_euphoric'), callback_data: 'diary_mood_euphoric' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '😌 ' + getText(lang, 'mood_calm'), callback_data: 'diary_mood_calm' }, { text: '🤔 ' + getText(lang, 'mood_thoughtful'), callback_data: 'diary_mood_thoughtful' }],
+            [{ text: '😰 ' + getText(lang, 'mood_anxious'), callback_data: 'diary_mood_anxious' }, { text: '😱 ' + getText(lang, 'mood_panic'), callback_data: 'diary_mood_panic' }],
+            [{ text: '😤 ' + getText(lang, 'mood_angry'), callback_data: 'diary_mood_angry' }, { text: '😊 ' + getText(lang, 'mood_euphoric'), callback_data: 'diary_mood_euphoric' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
 }
@@ -1698,8 +1698,8 @@ function getOnboardLanguageKeyboard() {
 function getOnboardModeKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'mode_beginner_btn'), callback_data: 'onboard_mode_beginner' }],
-            [{ text: getText(lang, 'mode_pro_btn'), callback_data: 'onboard_mode_pro' }]
+            [{ text: '🔰 ' + getText(lang, 'mode_beginner_btn'), callback_data: 'onboard_mode_beginner' }],
+            [{ text: '🚀 ' + getText(lang, 'mode_pro_btn'), callback_data: 'onboard_mode_pro' }]
         ]
     };
 }
@@ -1716,7 +1716,7 @@ function getVipBonusKeyboard(lang) {
 function getBackKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
 }
@@ -1856,7 +1856,7 @@ async function showAnalyzeMenu(chatId) {
         var keyboard = {
             inline_keyboard: [
                 [{ text: '🔐 ' + (lang === 'ru' ? 'Подключить биржу' : 'Connect exchange'), callback_data: 'menu_connect' }],
-                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+                [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, getText(lang, 'analyzing_no_keys'), keyboard);
@@ -1901,7 +1901,7 @@ async function showHistoryMenu(chatId) {
     var keyboard = {
         inline_keyboard: [
             [{ text: '🔄 ' + (lang === 'ru' ? 'Обновить' : 'Refresh'), callback_data: 'action_history_refresh' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
     await sendUpdatedMessage(chatId, text, keyboard);
@@ -1969,7 +1969,7 @@ async function showVipActivated(chatId) {
 }
 
 // ============================================================
-// 16. TRENDS (NO TWITTER/REDDIT)
+// 16. TRENDS — УЛУЧШЕННАЯ ВЕРСИЯ
 // ============================================================
 var TICKER_TO_COINGECKO = {
     BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', ADA: 'cardano', XRP: 'ripple',
@@ -2040,34 +2040,119 @@ async function handleTrendClick(chatId, data, lang, messageId) {
         var marketCap = dataObj.market_data?.market_cap?.usd || 0;
         var volume24h = dataObj.market_data?.total_volume?.usd || 0;
         var rank = dataObj.market_cap_rank || 'N/A';
+        var high24h = dataObj.market_data?.high_24h?.usd || 0;
+        var low24h = dataObj.market_data?.low_24h?.usd || 0;
+        var ath = dataObj.market_data?.ath?.usd || 0;
+        var atl = dataObj.market_data?.atl?.usd || 0;
+        
+        // Получаем портфель пользователя для сравнения
+        var analysisData = await getData('analysis_' + chatId);
+        var portfolioCoin = null;
+        if (analysisData) {
+            try {
+                var analysis = typeof analysisData === 'string' ? JSON.parse(analysisData) : analysisData;
+                if (analysis.assets) {
+                    for (var i = 0; i < analysis.assets.length; i++) {
+                        if (analysis.assets[i].symbol === coin) {
+                            portfolioCoin = analysis.assets[i];
+                            break;
+                        }
+                    }
+                }
+            } catch (e) {}
+        }
         
         var trend = 'Neutral';
         var rec = '';
-        if (change24h > 5) {
-            trend = 'BULLISH';
-            rec = '📈 ' + coin + ' is up ' + change24h.toFixed(2) + '% in 24h. Volume: $' + (volume24h / 1e6).toFixed(1) + 'M';
+        var statusEmoji = '➡️';
+        var signal = '⚪ Нейтральный';
+        var signalEmoji = '⚪';
+        
+        if (change24h > 10) {
+            trend = '🚀 STRONG BULLISH';
+            signal = '🟢 Сильный рост';
+            signalEmoji = '🟢';
+            rec = '📈 ' + coin + ' вырос на ' + change24h.toFixed(2) + '% за 24ч. Объем: $' + (volume24h / 1e6).toFixed(1) + 'M';
+            statusEmoji = '🚀';
+        } else if (change24h > 5) {
+            trend = '📈 BULLISH';
+            signal = '🟡 Рост';
+            signalEmoji = '🟡';
+            rec = '📈 ' + coin + ' вырос на ' + change24h.toFixed(2) + '% за 24ч. Объем: $' + (volume24h / 1e6).toFixed(1) + 'M';
+            statusEmoji = '📈';
+        } else if (change24h > 0) {
+            trend = '📈 SLIGHTLY BULLISH';
+            signal = '🟡 Слабый рост';
+            signalEmoji = '🟡';
+            rec = '📈 ' + coin + ' вырос на ' + change24h.toFixed(2) + '% за 24ч. Объем: $' + (volume24h / 1e6).toFixed(1) + 'M';
+            statusEmoji = '↗️';
+        } else if (change24h < -10) {
+            trend = '📉 STRONG BEARISH';
+            signal = '🔴 Сильное падение';
+            signalEmoji = '🔴';
+            rec = '📉 ' + coin + ' упал на ' + Math.abs(change24h).toFixed(2) + '% за 24ч.';
+            statusEmoji = '📉';
         } else if (change24h < -5) {
-            trend = 'BEARISH';
-            rec = '📉 ' + coin + ' is down ' + Math.abs(change24h).toFixed(2) + '% in 24h.';
+            trend = '📉 BEARISH';
+            signal = '🔴 Падение';
+            signalEmoji = '🔴';
+            rec = '📉 ' + coin + ' упал на ' + Math.abs(change24h).toFixed(2) + '% за 24ч.';
+            statusEmoji = '📉';
+        } else if (change24h < 0) {
+            trend = '📉 SLIGHTLY BEARISH';
+            signal = '🔴 Слабое падение';
+            signalEmoji = '🔴';
+            rec = '📉 ' + coin + ' упал на ' + Math.abs(change24h).toFixed(2) + '% за 24ч.';
+            statusEmoji = '↘️';
         } else if (rank && rank < 50) {
-            trend = 'TOP COIN';
-            rec = '💎 ' + coin + ' is in top-50 cryptocurrencies.';
+            trend = '💎 TOP COIN';
+            signal = '💎 Топ-монета';
+            signalEmoji = '💎';
+            rec = '💎 ' + coin + ' входит в топ-50 криптовалют.';
+            statusEmoji = '💎';
         } else {
-            rec = '⚪ ' + coin + ' is calm. Change: ' + (change24h > 0 ? '+' : '') + change24h.toFixed(2) + '%';
+            rec = '⚪ ' + coin + ' стабилен. Изменение: ' + (change24h > 0 ? '+' : '') + change24h.toFixed(2) + '%';
+            statusEmoji = '➡️';
         }
-        var message = '📊 SOCIAL TREND: ' + coin + '\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-            '💵 Price: $' + price.toFixed(2) + '\n' +
-            '📈 24h change: ' + (change24h > 0 ? '+' : '') + change24h.toFixed(2) + '%\n' +
-            '📊 24h volume: $' + (volume24h / 1e6).toFixed(1) + 'M\n' +
-            '💰 Market cap: $' + (marketCap / 1e9).toFixed(2) + 'B\n' +
-            '🏆 Rank: #' + rank + '\n' +
-            '📌 Trend: ' + trend + '\n\n' +
-            '💡 ' + rec + '\n\n' +
-            '🕐 Updated: just now\n📡 Source: CoinGecko';
+        
+        var message = '📊 *SOCIAL TREND: ' + coin + '*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+        message += '💵 *Цена:* $' + price.toFixed(2) + '\n';
+        message += '📊 *24h:* ' + (change24h > 0 ? '+' : '') + change24h.toFixed(2) + '% ' + statusEmoji + '\n';
+        message += '📊 *Объем:* $' + (volume24h / 1e6).toFixed(1) + 'M\n';
+        message += '💰 *Капитализация:* $' + (marketCap / 1e9).toFixed(2) + 'B\n';
+        message += '🏆 *Ранг:* #' + rank + '\n';
+        message += '📈 *24h High:* $' + high24h.toFixed(2) + '\n';
+        message += '📉 *24h Low:* $' + low24h.toFixed(2) + '\n';
+        if (ath > 0) message += '🏔️ *ATH:* $' + ath.toFixed(2) + '\n';
+        if (atl > 0) message += '🗻 *ATL:* $' + atl.toFixed(2) + '\n';
+        message += '\n📌 *Тренд:* ' + trend + '\n';
+        message += signalEmoji + ' *Сигнал:* ' + signal + '\n\n';
+        
+        // Информация о портфеле
+        if (portfolioCoin) {
+            var portfolioWeight = ((portfolioCoin.value / analysisData.totalUSDT) * 100).toFixed(1);
+            message += '📊 *В твоем портфеле:*\n';
+            message += '• ' + coin + ': $' + portfolioCoin.value.toFixed(2) + ' (' + portfolioWeight + '%)\n';
+            message += '• 24h влияние на портфель: ' + ((portfolioCoin.value / analysisData.totalUSDT) * change24h / 100 * 100).toFixed(2) + '%\n\n';
+        }
+        
+        message += '💡 ' + rec + '\n\n';
+        
+        // Дополнительные рекомендации
+        if (change24h > 5) {
+            message += '⚠️ ' + coin + ' сильно растет. Будь осторожен — коррекция может быть резкой.\n';
+        } else if (change24h < -5) {
+            message += '🛡️ ' + coin + ' падает. Если у тебя есть этот актив — проверь стоп-лоссы.\n';
+        } else {
+            message += '✅ ' + coin + ' стабилен. Хорошее время для анализа.\n';
+        }
+        
+        message += '\n🕐 Обновлено: только что\n📡 Источник: CoinGecko';
+        
         var keyboard = {
             inline_keyboard: [
-                [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
-                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+                [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+                [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2127,8 +2212,8 @@ async function handleContractSearch(chatId, address, lang, messageId) {
         var keyboard = {
             inline_keyboard: [
                 [{ text: '🔍 Search another token', callback_data: 'trend_search_menu' }],
-                [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_social' }],
-                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+                [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_social' }],
+                [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2211,8 +2296,8 @@ async function handleUrlCheck(chatId, url, lang, messageId) {
         getText(lang, 'scan_danger') + '\n\n' + getText(lang, 'scan_result_danger', ['Link', result.reason]);
     var keyboard = {
         inline_keyboard: [
-            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2225,8 +2310,8 @@ async function handleContractCheck(chatId, address, lang, messageId) {
     var message = '📄 CONTRACT CHECK\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📌 ' + address + '\n\n' + contractInfo.reason + '\n\n💡 Check manually: https://etherscan.io/address/' + address;
     var keyboard = {
         inline_keyboard: [
-            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2261,8 +2346,8 @@ async function handleDEXCheck(chatId, address, lang, messageId) {
         message += '🔗 [Etherscan](https://etherscan.io/address/' + address + ')';
         var keyboard = {
             inline_keyboard: [
-                [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
-                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+                [{ text: '🔙 ' + getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+                [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2286,8 +2371,8 @@ async function handleFileCheck(chatId, update, lang, messageId) {
     var message = '📁 FILE CHECK\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📌 ' + fileName + '\n📏 ' + (file.file_size / 1024).toFixed(1) + ' KB\n\n' + result;
     var keyboard = {
         inline_keyboard: [
-            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2312,8 +2397,8 @@ async function handleImpersonationCheck(chatId, update, lang, messageId) {
     }
     var keyboard = {
         inline_keyboard: [
-            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2355,9 +2440,9 @@ async function handleWalletCheck(chatId, address, lang, messageId) {
     message += '━━━━━━━━━━━━━━━━━━━━━━━\n🔗 View: https://etherscan.io/address/' + address;
     var keyboard = {
         inline_keyboard: [
-            [{ text: getText(lang, 'wallet_connect'), callback_data: 'menu_connect' }],
-            [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔐 ' + getText(lang, 'wallet_connect'), callback_data: 'menu_connect' }],
+            [{ text: '🔙 ' + getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2382,7 +2467,7 @@ async function autoCheckLinks(chatId, text, lang, messageId) {
                 var keyboard = {
                     inline_keyboard: [
                         [{ text: '🛡️ Check other', callback_data: 'menu_security' }],
-                        [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+                        [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
                     ]
                 };
                 await sendUpdatedMessage(chatId, message, keyboard, 'Markdown', messageId);
@@ -2403,7 +2488,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
     var keyboard = {
         inline_keyboard: [
             [{ text: '🛡️ Check other', callback_data: 'menu_security' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, result, keyboard, 'Markdown', messageId);
@@ -2581,8 +2666,8 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
         var keyboard = {
             inline_keyboard: [
                 [{ text: '🔄 Refresh', callback_data: 'menu_news' }],
-                [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
-                [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+                [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+                [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
             ]
         };
         await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
@@ -2613,8 +2698,8 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
     var keyboard = {
         inline_keyboard: [
             [{ text: '🔄 Refresh', callback_data: 'menu_news' }],
-            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
@@ -2681,8 +2766,8 @@ async function sendNewsReport(chatId, articles, coin, lang, messageId) {
     report += '🔄 /news ' + coin + ' — ' + refreshText;
     var keyboard = {
         inline_keyboard: [
-            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, report, keyboard, 'Markdown', messageId);
@@ -2746,8 +2831,8 @@ async function sendCalendarReport(chatId, events, lang, messageId) {
     var calendar = getText(lang, 'calendar_result', events);
     var keyboard = {
         inline_keyboard: [
-            [{ text: getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+            [{ text: '🔙 ' + getText(lang, 'back_to_market'), callback_data: 'menu_market' }],
+            [{ text: '🏠 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
     await sendUpdatedMessage(chatId, calendar, keyboard, 'Markdown', messageId);
@@ -3129,7 +3214,7 @@ async function checkPanic() {
                 var keyboard = {
                     inline_keyboard: [
                         [{ text: '🔄 Convert all to USDT', callback_data: 'panic_convert_all' }],
-                        [{ text: '🔙 Back to menu', callback_data: 'back_to_menu' }]
+                        [{ text: '🏠 ' + getText('ru', 'back_to_menu'), callback_data: 'back_to_menu' }]
                     ]
                 };
                 await sendMessage(chatId, message, keyboard);
@@ -3263,7 +3348,7 @@ async function executeRecommendation(chatId, recId) {
 }
 
 // ============================================================
-// 26. CALLBACK HANDLER
+// 26. CALLBACK HANDLER — ОБНОВЛЕННЫЙ С AI
 // ============================================================
 async function handleCallback(update) {
     var callback = update.callback_query;
@@ -3310,8 +3395,65 @@ async function handleCallback(update) {
             return;
         }
 
-        // --- AI Советник ---
+        // --- AI Советник (полноценный) ---
         if (data === 'menu_ai') {
+            await handleAICommand(chatId, '', lang, null);
+            return;
+        }
+
+        // AI Chat кнопки
+        if (data === 'ai_chat_start') {
+            await setData('ai_chat_mode_' + chatId, 'true');
+            var msg = lang === 'ru' ?
+                '💬 *Режим диалога с AI активирован!*\n\n' +
+                'Теперь я буду отвечать на все твои сообщения как AI советник.\n\n' +
+                '📌 *Примеры вопросов:*\n' +
+                '• "Какой мой портфель?"\n' +
+                '• "Какой риск?"\n' +
+                '• "Что с BTC?"\n\n' +
+                '⏹️ Нажми кнопку *"Выйти из диалога"*, чтобы вернуться в обычный режим.' :
+                '💬 *AI Chat mode activated!*\n\n' +
+                'Now I will respond to all your messages as AI advisor.\n\n' +
+                '📌 *Example questions:*\n' +
+                '• "What is my portfolio?"\n' +
+                '• "What is the risk?"\n' +
+                '• "What about BTC?"\n\n' +
+                '⏹️ Click *"Exit Chat"* to return to normal mode.';
+            
+            var keyboard = {
+                inline_keyboard: [
+                    [{ text: '⏹️ ' + (lang === 'ru' ? 'Выйти из диалога' : 'Exit Chat'), callback_data: 'ai_chat_stop' }],
+                    [{ text: '🔙 ' + (lang === 'ru' ? 'Назад' : 'Back'), callback_data: 'menu_ai' }]
+                ]
+            };
+            await sendUpdatedMessage(chatId, msg, keyboard, 'Markdown', null);
+            return;
+        }
+
+        if (data === 'ai_chat_stop') {
+            await deleteData('ai_chat_mode_' + chatId);
+            var msg = lang === 'ru' ? '⏹️ Режим диалога с AI отключен.' : '⏹️ AI Chat mode disabled.';
+            await sendUpdatedMessage(chatId, msg, getBackKeyboard(lang), 'Markdown', null);
+            return;
+        }
+
+        // Быстрые вопросы AI (цветные кнопки)
+        if (data === 'ai_portfolio') {
+            await handleAICommand(chatId, lang === 'ru' ? 'какой мой портфель?' : 'what is my portfolio?', lang, null);
+            return;
+        }
+        if (data === 'ai_risk') {
+            await handleAICommand(chatId, lang === 'ru' ? 'какой риск?' : 'what is the risk?', lang, null);
+            return;
+        }
+        if (data === 'ai_news') {
+            await handleAICommand(chatId, lang === 'ru' ? 'покажи новости' : 'show news', lang, null);
+            return;
+        }
+        if (data === 'ai_refresh') {
+            await aiContext.refreshData(chatId, lang);
+            var msg = lang === 'ru' ? '🔄 Данные обновлены! Теперь я знаю твой портфель.' : '🔄 Data refreshed! Now I know your portfolio.';
+            await sendUpdatedMessage(chatId, msg, null, 'Markdown', null);
             await handleAICommand(chatId, '', lang, null);
             return;
         }
@@ -3756,7 +3898,7 @@ async function handleCallback(update) {
                     inline_keyboard: [
                         [{ text: '📥 CSV report', callback_data: 'action_export_csv' }],
                         [{ text: '🔄 Refresh', callback_data: 'action_analyze' }],
-                        [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+                        [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
                     ]
                 };
                 
@@ -3817,7 +3959,7 @@ async function handleCallback(update) {
 }
 
 // ============================================================
-// 27. MESSAGE HANDLER
+// 27. MESSAGE HANDLER — С АВТООПРЕДЕЛЕНИЕМ AI
 // ============================================================
 async function handleMessage(update) {
     var chatId = update.message.chat.id;
@@ -3830,6 +3972,13 @@ async function handleMessage(update) {
 
     try {
         var cleanText = sanitizeInput(text);
+
+        // Проверяем, включен ли режим диалога с AI
+        var aiChatMode = await getData('ai_chat_mode_' + chatId);
+        if (aiChatMode === 'true' && cleanText && cleanText.length > 1 && !cleanText.startsWith('/')) {
+            await handleAICommand(chatId, cleanText, lang, messageId);
+            return;
+        }
 
         if (cleanText && (cleanText.includes('http://') || cleanText.includes('https://'))) {
             await autoCheckLinks(chatId, cleanText, lang, messageId);
@@ -4044,7 +4193,7 @@ async function handleMessage(update) {
             return;
         }
 
-        // --- AI Советник ---
+        // --- AI Советник (через команду /ai) ---
         if (cleanText === '/ai' || cleanText.startsWith('/ai ')) {
             var question = cleanText === '/ai' ? '' : cleanText.replace('/ai ', '');
             await handleAICommand(chatId, question, lang, messageId);
@@ -4223,7 +4372,7 @@ async function handleMessage(update) {
                     inline_keyboard: [
                         [{ text: '📥 CSV report', callback_data: 'action_export_csv' }],
                         [{ text: '🔄 Refresh', callback_data: 'action_analyze' }],
-                        [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+                        [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
                     ]
                 };
                 
@@ -4282,7 +4431,23 @@ async function handleMessage(update) {
             return;
         }
 
-        await sendMessage(chatId, getText(lang, 'default_response', cleanText));
+        // Автоопределение AI вопросов для обычных сообщений
+        var aiKeywords = ['стоит', 'купить', 'продать', 'портфель', 'риск', 'новости', 'btc', 'eth', 'sol', 'какой', 'что', 'почему', 'как', 'should', 'buy', 'sell', 'portfolio', 'risk', 'news', 'инвестировать', 'вкладывать', 'цена', 'price', 'trend', 'тренд', 'падает', 'растет', 'коррекция', 'обвал', 'рост', 'прибыль'];
+        var isAIQuestion = false;
+        var lowerClean = cleanText.toLowerCase();
+
+        for (var i = 0; i < aiKeywords.length; i++) {
+            if (lowerClean.includes(aiKeywords[i])) {
+                isAIQuestion = true;
+                break;
+            }
+        }
+
+        if (isAIQuestion && cleanText.length > 3) {
+            await handleAICommand(chatId, cleanText, lang, messageId);
+        } else {
+            await sendMessage(chatId, getText(lang, 'default_response', cleanText));
+        }
 
     } catch (error) {
         console.error('Message error:', error);
@@ -4343,7 +4508,7 @@ runTaskWithRecovery(runAutotrade, 'runAutotrade', CONFIG.AUTOTRADE_CHECK_INTERVA
 runTaskWithRecovery(checkPanic, 'checkPanic', CONFIG.PANIC_CHECK_INTERVAL);
 
 // ============================================================
-// 30. AI СОВЕТНИК — ИСПРАВЛЕННАЯ ВЕРСИЯ
+// 30. AI СОВЕТНИК — ПОЛНОЦЕННАЯ ВЕРСИЯ
 // ============================================================
 
 // Проверяем наличие ключа OpenRouter
@@ -4360,12 +4525,12 @@ var FREE_MODELS = [
 var CURRENT_AI_MODEL = FREE_MODELS[0];
 
 // ============================================================
-// 30.1. AI КОНТЕКСТ
+// 30.1. AI КОНТЕКСТ (увеличенная история)
 // ============================================================
 class AIContext {
     constructor() {
         this.contexts = new Map();
-        this.maxHistory = 20;
+        this.maxHistory = 50; // Увеличено с 20 до 50
     }
 
     getContext(chatId) {
@@ -4519,9 +4684,10 @@ class AIContext {
             prompt += '\n';
         }
 
+        // Добавляем историю диалога (увеличена до 10 сообщений)
         if (context.history.length > 0) {
-            prompt += (lang === 'ru' ? '💬 ИСТОРИЯ ДИАЛОГА:\n' : '💬 CONVERSATION HISTORY:\n');
-            var lastMessages = context.history.slice(-5);
+            prompt += (lang === 'ru' ? '💬 ИСТОРИЯ ДИАЛОГА (последние 10 сообщений):\n' : '💬 CONVERSATION HISTORY (last 10 messages):\n');
+            var lastMessages = context.history.slice(-10);
             for (var i = 0; i < lastMessages.length; i++) {
                 var msg = lastMessages[i];
                 prompt += (msg.role === 'user' ? '👤 ' : '🤖 ') + msg.content + '\n';
@@ -4535,7 +4701,6 @@ class AIContext {
         return prompt;
     }
 
-    // ===== ЭТА ФУНКЦИЯ СТАЛА ASYNC (ИСПРАВЛЕНО) =====
     async generateResponse(chatId, question, lang) {
         var context = this.getContext(chatId);
         var lowerQ = question.toLowerCase();
@@ -4719,7 +4884,7 @@ class AIContext {
             return response;
         }
         
-        // --- 6. Приветствие (ТУТ БЫЛ AWAIT, ТЕПЕРЬ ВСЕ РАБОТАЕТ) ---
+        // --- 6. Приветствие ---
         if (lowerQ.includes('привет') || lowerQ.includes('hello') || lowerQ.includes('hi') || lowerQ.includes('здравствуй')) {
             var name = 'друг';
             try {
@@ -4868,7 +5033,7 @@ async function getAIResponseWithOpenRouter(chatId, question, lang) {
 }
 
 // ============================================================
-// 30.3. ОБРАБОТЧИК КОМАНДЫ /ai
+// 30.3. ОБРАБОТЧИК КОМАНДЫ /ai (ПОЛНОЦЕННЫЙ)
 // ============================================================
 async function handleAICommand(chatId, question, lang, messageId) {
     await sendTyping(chatId);
@@ -4876,29 +5041,32 @@ async function handleAICommand(chatId, question, lang, messageId) {
     if (!question || question.trim().length === 0) {
         var helpText = lang === 'ru' ?
             '🤖 *AI СОВЕТНИК*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-            'Задай мне вопрос о портфеле.\n\n' +
-            '📌 *Примеры вопросов:*\n' +
-            '• "Какой мой портфель?"\n' +
-            '• "Какой риск?"\n' +
-            '• "Что с BTC?"\n' +
-            '• "Покажи новости"\n' +
-            '• "Стоит ли покупать?" (я скажу "нет" 😅)\n\n' +
-            '🛡️ Я защищаю тебя от рисков и не даю советов "купить/продать".\n\n' +
-            (HAS_OPENROUTER ? '🧠 Модель: `' + CURRENT_AI_MODEL + '`\n' : '') +
-            '📊 Перед первым вопросом выполни /analyze — я буду использовать эти данные.' :
+            '📌 *Что я могу сделать:*\n' +
+            '• 📊 Анализировать твой портфель\n' +
+            '• 📈 Оценивать риски\n' +
+            '• 📰 Показывать новости по активам\n' +
+            '• 🛡️ Защищать от глупых решений\n\n' +
+            '👇 *Выбери действие:*' :
             '🤖 *AI ADVISOR*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-            'Ask me a question about your portfolio.\n\n' +
-            '📌 *Example questions:*\n' +
-            '• "What is my portfolio?"\n' +
-            '• "What is the risk?"\n' +
-            '• "What about BTC?"\n' +
-            '• "Show news"\n' +
-            '• "Should I buy?" (I will say "no" 😅)\n\n' +
-            '🛡️ I protect you from risks and don\'t give "buy/sell" advice.\n\n' +
-            (HAS_OPENROUTER ? '🧠 Model: `' + CURRENT_AI_MODEL + '`\n' : '') +
-            '📊 Run /analyze first — I will use this data.';
+            '📌 *What I can do:*\n' +
+            '• 📊 Analyze your portfolio\n' +
+            '• 📈 Assess risks\n' +
+            '• 📰 Show news for your assets\n' +
+            '• 🛡️ Protect from stupid decisions\n\n' +
+            '👇 *Choose action:*';
         
-        await sendUpdatedMessage(chatId, helpText, getBackKeyboard(lang), 'Markdown', messageId);
+        var keyboard = {
+            inline_keyboard: [
+                [{ text: '💬 ' + (lang === 'ru' ? 'Начать диалог с AI' : 'Start AI Chat'), callback_data: 'ai_chat_start' }],
+                [{ text: '📊 ' + (lang === 'ru' ? 'Показать портфель' : 'Show Portfolio'), callback_data: 'ai_portfolio' }],
+                [{ text: '📈 ' + (lang === 'ru' ? 'Оценить риск' : 'Assess Risk'), callback_data: 'ai_risk' }],
+                [{ text: '📰 ' + (lang === 'ru' ? 'Свежие новости' : 'Latest News'), callback_data: 'ai_news' }],
+                [{ text: '🔄 ' + (lang === 'ru' ? 'Обновить данные' : 'Refresh Data'), callback_data: 'ai_refresh' }],
+                [{ text: '🔙 ' + (lang === 'ru' ? 'Назад к функциям' : 'Back to Functions'), callback_data: 'back_to_functions' }]
+            ]
+        };
+        
+        await sendUpdatedMessage(chatId, helpText, keyboard, 'Markdown', messageId);
         return;
     }
     
