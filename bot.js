@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 0.4
+// БОТ VOID NODE — ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ 0.5
 // С РЕФЕРАЛЬНОЙ СИСТЕМОЙ, ПОЖИЗНЕННЫМ VIP И УЛУЧШЕННЫМ AI
 // ============================================================
 
@@ -47,8 +47,6 @@ console.log(`👑 Admin ID: ${ADMIN_CHAT_ID}`);
 
 const LIFETIME_VIP_USERS = [
     parseInt(ADMIN_CHAT_ID),
-    // Можно добавить других админов:
-    // 987654321,
 ];
 
 console.log(`👑 Lifetime VIP users: ${LIFETIME_VIP_USERS.join(', ')}`);
@@ -59,9 +57,9 @@ console.log(`👑 Lifetime VIP users: ${LIFETIME_VIP_USERS.join(', ')}`);
 
 var CONFIG = {
     MAX_RECOMMENDATIONS: 5,
-    ALERT_CHECK_INTERVAL: 300000,      // 5 минут
-    AUTOTRADE_CHECK_INTERVAL: 900000,  // 15 минут
-    PANIC_CHECK_INTERVAL: 900000,      // 15 минут
+    ALERT_CHECK_INTERVAL: 300000,
+    AUTOTRADE_CHECK_INTERVAL: 900000,
+    PANIC_CHECK_INTERVAL: 900000,
     MAX_ORDERS_PER_DAY: 10,
     WHITELIST_SYMBOLS: ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT', 'DOT/USDT']
 };
@@ -603,7 +601,6 @@ var PLANS = {
 var planCache = new Map();
 
 async function getUserPlan(chatId) {
-    // Проверка на пожизненный VIP
     if (LIFETIME_VIP_USERS.includes(parseInt(chatId))) {
         return {
             plan: 'VIP',
@@ -991,7 +988,7 @@ var LANGUAGES = {
         panic_converted: '✅ Конвертация выполнена. Портфель в безопасности.',
         
         about_title: 'ℹ️ *О БОТЕ*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Версия:* 0.4',
+        about_version: '📌 *Версия:* 0.5',
         about_created: '📅 *Создан:* 01.09.2026',
         about_dev: '👨‍💻 *Разработчик:* @clofeLEAN',
         about_instruction: '📖 *ИНСТРУКЦИЯ:*\n\n1️⃣ **Подключи биржу** — /connect\n2️⃣ **Анализируй портфель** — /analyze\n3️⃣ **Проверяй безопасность** — отправь ссылку или контракт\n4️⃣ **Следи за рынком** — /news\n5️⃣ **Получи помощь** — /help',
@@ -1241,7 +1238,7 @@ var LANGUAGES = {
         panic_converted: '✅ Conversion completed. Portfolio is safe.',
         
         about_title: 'ℹ️ *ABOUT BOT*\n━━━━━━━━━━━━━━━━━━━━━━━',
-        about_version: '📌 *Version:* 0.4',
+        about_version: '📌 *Version:* 0.5',
         about_created: '📅 *Created:* 01.09.2026',
         about_dev: '👨‍💻 *Developer:* @clofeLEAN',
         about_instruction: '📖 *INSTRUCTION:*\n\n1️⃣ **Connect exchange** — /connect\n2️⃣ **Analyze portfolio** — /analyze\n3️⃣ **Check security** — send link or contract\n4️⃣ **Follow market** — /news\n5️⃣ **Get help** — /help',
@@ -2295,7 +2292,7 @@ async function sendNewsReport(chatId, articles, coin, lang, messageId) {
 }
 
 // ============================================================
-// 18. CALENDAR (ИСПРАВЛЕННЫЙ С ФАЛЛБЕКОМ)
+// 18. CALENDAR (С ФАЛЛБЕКОМ)
 // ============================================================
 
 async function handleCalendarCommand(chatId, lang, messageId) {
@@ -2322,7 +2319,6 @@ async function handleCalendarCommand(chatId, lang, messageId) {
             }
         }
         
-        // УЛУЧШЕННЫЙ ЗАПРОС С ПЕРИОДОМ
         var today = new Date();
         var from = today.toISOString().split('T')[0];
         var to = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -2347,7 +2343,6 @@ async function handleCalendarCommand(chatId, lang, messageId) {
             });
         }
         
-        // ФАЛЛБЕК: Если нет событий, показываем демо-события
         if (events.length === 0) {
             console.log('📅 No events from API, using fallback data');
             events = [
@@ -2363,8 +2358,6 @@ async function handleCalendarCommand(chatId, lang, messageId) {
         await sendCalendarReport(chatId, events, lang, messageId);
     } catch (error) {
         console.error('Calendar error:', error);
-        
-        // ФАЛЛБЕК ПРИ ОШИБКЕ
         var fallbackEvents = [
             { title: 'CPI (США)', date: '10.09.2026', importance: '🔴 High', impact: 'Высокое' },
             { title: 'Заседание ФРС', date: '12.09.2026', importance: '🔴 High', impact: 'Очень высокое' },
@@ -2387,7 +2380,7 @@ async function sendCalendarReport(chatId, events, lang, messageId) {
 }
 
 // ============================================================
-// 19. TRENDS — УЛУЧШЕННАЯ ВЕРСИЯ
+// 19. TRENDS
 // ============================================================
 
 var TICKER_TO_COINGECKO = {
@@ -2990,7 +2983,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
 }
 
 // ============================================================
-// 23. ALL KEYBOARDS — УНИКАЛЬНЫЕ ЭМОДЗИ ДЛЯ КАЖДОЙ КНОПКИ
+// 23. ALL KEYBOARDS
 // ============================================================
 
 function getMainMenuKeyboard(lang) {
@@ -3524,11 +3517,6 @@ class ReferralSystem {
         return chatId ? parseInt(chatId) : null;
     }
 
-    async saveReferralCodeMapping(code, chatId) {
-        const key = 'ref_code_to_user_' + code;
-        await this.kv.put(key, chatId.toString());
-    }
-
     async registerReferralClick(refereeId, referrerCode) {
         const referrerId = await this.getReferrerByCode(referrerCode);
         if (!referrerId || referrerId === refereeId) return null;
@@ -3658,13 +3646,11 @@ async function showReferralMenu(chatId) {
 }
 
 // ============================================================
-// 28. AI СОВЕТНИК — ПОЛНОЦЕННАЯ ВЕРСИЯ С ДИАЛОГОМ
+// 28. AI СОВЕТНИК
 // ============================================================
 
-// Проверяем наличие ключа OpenRouter
 var HAS_OPENROUTER = typeof OPENROUTER_API_KEY !== 'undefined' && OPENROUTER_API_KEY && OPENROUTER_API_KEY.length > 10;
 
-// Бесплатные модели OpenRouter
 var FREE_MODELS = [
     'meta-llama/llama-3.3-70b-instruct:free',
     'mistralai/mistral-7b-instruct:free',
@@ -3673,10 +3659,6 @@ var FREE_MODELS = [
 ];
 
 var CURRENT_AI_MODEL = FREE_MODELS[0];
-
-// ============================================================
-// 28.1. AI КОНТЕКСТ С ИСТОРИЕЙ ДИАЛОГА
-// ============================================================
 
 class AIContext {
     constructor() {
@@ -3690,9 +3672,7 @@ class AIContext {
                 history: [],
                 lastAnalysis: null,
                 lastNews: null,
-                lastSnowball: null,
-                lastResponse: null,
-                conversationStarted: false
+                lastSnowball: null
             });
         }
         return this.contexts.get(chatId);
@@ -3769,31 +3749,29 @@ class AIContext {
                 '4. Предупреждать о рисках, если пользователь хочет рискнуть.\n' +
                 '5. Давать конкретные цифры и проценты, если есть данные.\n' +
                 '6. Если данных нет — честно сказать и предложить выполнить /analyze.\n' +
-                '7. Быть дружелюбным, использовать эмодзи (📈📉⚠️✅🔴🟢).\n' +
+                '7. Быть дружелюбным, использовать эмодзи.\n' +
                 '8. Поддерживать диалог — задавать уточняющие вопросы.\n\n' +
                 'Ты НЕ ДОЛЖЕН:\n' +
-                '- Давать конкретные советы "купи/продай" (это запрещено)\n' +
+                '- Давать конкретные советы "купи/продай"\n' +
                 '- Предсказывать цену\n' +
                 '- Придумывать данные\n' +
-                '- Отвечать шаблонно на приветствия\n\n' +
-                'Помни: ты — умный советник, который заботится о деньгах пользователя.';
+                '- Отвечать шаблонно на приветствия';
         } else {
             return 'You are a professional crypto advisor "Void Node". Your task is to have a natural conversation and help the user.\n\n' +
                 'You MUST:\n' +
-                '1. Respond naturally, like in a conversation. Not dry or template.\n' +
+                '1. Respond naturally, like in a conversation.\n' +
                 '2. If user says "hello" — greet back and ask how to help.\n' +
                 '3. Use portfolio data for specific advice.\n' +
                 '4. Warn about risks if user wants to take risks.\n' +
                 '5. Give specific numbers and percentages if data available.\n' +
                 '6. If no data — say so honestly and suggest running /analyze.\n' +
-                '7. Be friendly, use emojis (📈📉⚠️✅🔴🟢).\n' +
+                '7. Be friendly, use emojis.\n' +
                 '8. Maintain dialogue — ask clarifying questions.\n\n' +
                 'You MUST NOT:\n' +
-                '- Give specific "buy/sell" advice (prohibited)\n' +
+                '- Give specific "buy/sell" advice\n' +
                 '- Predict price\n' +
                 '- Make up data\n' +
-                '- Reply with templates to greetings\n\n' +
-                'Remember: you are a smart advisor who cares about the user\'s money.';
+                '- Reply with templates to greetings';
         }
     }
 
@@ -3803,7 +3781,7 @@ class AIContext {
         
         if (context.lastAnalysis) {
             var a = context.lastAnalysis;
-            prompt += (lang === 'ru' ? '📊 ПОРТФЕЛЬ ПОЛЬЗОВАТЕЛЯ:\n' : '📊 USER PORTFOLIO:\n');
+            prompt += (lang === 'ru' ? '📊 ПОРТФЕЛЬ:\n' : '📊 PORTFOLIO:\n');
             prompt += (lang === 'ru' ? 'Общая стоимость: $' : 'Total value: $') + a.totalUSDT.toFixed(2) + '\n';
             prompt += 'BTC: ' + a.btcPercent.toFixed(1) + '% | Alts: ' + a.altPercent.toFixed(1) + '% | Stables: ' + a.usdtPercent.toFixed(1) + '%\n';
             if (a.assets && a.assets.length > 0) {
@@ -3850,7 +3828,7 @@ class AIContext {
         }
 
         prompt += (lang === 'ru' ? '❓ Вопрос пользователя: ' : '❓ User question: ') + userQuestion + '\n\n';
-        prompt += (lang === 'ru' ? '📌 ТВОЙ ОТВЕТ (естественный, как в разговоре):' : '📌 YOUR RESPONSE (natural, like in conversation):');
+        prompt += (lang === 'ru' ? '📌 ТВОЙ ОТВЕТ:' : '📌 YOUR RESPONSE:');
         
         return prompt;
     }
@@ -3859,7 +3837,6 @@ class AIContext {
         var context = this.getContext(chatId);
         var isRu = lang === 'ru';
         
-        // Проверяем лимиты AI
         var limitCheck = await checkLimit(chatId, 'ai');
         if (!limitCheck.allowed) {
             return { 
@@ -3870,15 +3847,11 @@ class AIContext {
             };
         }
         
-        // Обновляем данные перед ответом
         await this.refreshData(chatId, lang);
-        
-        // Проверяем, есть ли данные о портфеле
         var hasPortfolio = context.lastAnalysis && context.lastAnalysis.totalUSDT > 0;
         
-        // Естественные ответы на приветствия
         var lowerQ = question.toLowerCase().trim();
-        var greetings = ['привет', 'hello', 'hi', 'здравствуй', 'здравствуйте', 'hey', 'ку', 'прив', 'доброе утро', 'добрый день', 'добрый вечер'];
+        var greetings = ['привет', 'hello', 'hi', 'здравствуй', 'здравствуйте', 'hey', 'ку', 'прив'];
         var isGreeting = false;
         for (var i = 0; i < greetings.length; i++) {
             if (lowerQ.includes(greetings[i]) && question.length < 30) {
@@ -3929,8 +3902,7 @@ class AIContext {
             }
         }
         
-        // Проверяем, есть ли вопрос о портфеле
-        var portfolioKeywords = ['портфель', 'portfolio', 'актив', 'asset', 'баланс', 'balance', 'сколько', 'how much', 'состояние', 'status'];
+        var portfolioKeywords = ['портфель', 'portfolio', 'актив', 'asset', 'баланс', 'balance', 'сколько', 'how much'];
         var isPortfolioQuestion = false;
         for (var i = 0; i < portfolioKeywords.length; i++) {
             if (lowerQ.includes(portfolioKeywords[i])) {
@@ -3975,7 +3947,6 @@ class AIContext {
             return { success: true, answer: response };
         }
         
-        // Если есть OpenRouter - используем его для естественного диалога
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
@@ -4007,7 +3978,6 @@ class AIContext {
                         console.log('🔄 Switching to model:', CURRENT_AI_MODEL);
                         return await this.generateResponse(chatId, question, lang);
                     }
-                    // Фаллбек на детерминированный ответ
                     return this.getFallbackResponse(chatId, question, lang);
                 }
                 
@@ -4021,11 +3991,9 @@ class AIContext {
             }
         }
         
-        // Детерминированный режим (без OpenRouter)
         return this.getFallbackResponse(chatId, question, lang);
     }
     
-    // Фаллбек-ответы при ошибке или без OpenRouter
     getFallbackResponse(chatId, question, lang) {
         var isRu = lang === 'ru';
         var context = this.getContext(chatId);
@@ -4033,7 +4001,6 @@ class AIContext {
         
         if (isRu) {
             var response = '🤔 *Я тебя услышал!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-            
             if (hasPortfolio) {
                 response += '📊 У меня есть данные по твоему портфелю ($' + context.lastAnalysis.totalUSDT.toFixed(2) + ' USDT).\n\n';
                 response += 'Что именно тебя интересует?\n';
@@ -4048,12 +4015,10 @@ class AIContext {
                 response += '• 📰 Показать новости\n';
                 response += '• 🪙 Ответить на вопросы о криптовалютах\n\n';
             }
-            
             response += '💡 Просто задай вопрос, и я постараюсь помочь! 😊';
             return { success: true, answer: response };
         } else {
             var response = '🤔 *I hear you!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-            
             if (hasPortfolio) {
                 response += '📊 I have data on your portfolio ($' + context.lastAnalysis.totalUSDT.toFixed(2) + ' USDT).\n\n';
                 response += 'What exactly interests you?\n';
@@ -4068,7 +4033,6 @@ class AIContext {
                 response += '• 📰 Show news\n';
                 response += '• 🪙 Answer questions about cryptocurrencies\n\n';
             }
-            
             response += '💡 Just ask a question and I\'ll try to help! 😊';
             return { success: true, answer: response };
         }
@@ -4077,24 +4041,14 @@ class AIContext {
 
 var aiContext = new AIContext();
 
-// ============================================================
-// 28.2. OPENROUTER ИНТЕГРАЦИЯ (ОБНОВЛЕННАЯ)
-// ============================================================
-
 function getNextFreeModel() {
     var currentIndex = FREE_MODELS.indexOf(CURRENT_AI_MODEL);
     var nextIndex = (currentIndex + 1) % FREE_MODELS.length;
     return FREE_MODELS[nextIndex];
 }
 
-// ============================================================
-// 28.3. ОБРАБОТЧИК КОМАНДЫ /ai (ОБНОВЛЕННЫЙ)
-// ============================================================
-
 async function handleAICommand(chatId, question, lang, messageId) {
     await sendTyping(chatId);
-    
-    var context = aiContext.getContext(chatId);
     
     if (!question || question.trim().length === 0) {
         var helpText = lang === 'ru' ?
@@ -4122,10 +4076,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
         return;
     }
     
-    // Добавляем вопрос в историю
     aiContext.addMessage(chatId, 'user', question);
-    
-    // Генерируем ответ
     var result = await aiContext.generateResponse(chatId, question, lang);
     
     if (result.error) {
@@ -4154,7 +4105,7 @@ console.log('📡 OpenRouter key: ' + (HAS_OPENROUTER ? '✅ Found' : '❌ Not f
 console.log('🧠 Current model: ' + CURRENT_AI_MODEL);
 
 // ============================================================
-// 29. CALLBACK HANDLER — ОБНОВЛЕННЫЙ С AI И РЕФЕРАЛКОЙ
+// 29. CALLBACK HANDLER (ИСПРАВЛЕННЫЙ — С РЕФЕРАЛКОЙ)
 // ============================================================
 
 async function handleCallback(update) {
@@ -4206,12 +4157,15 @@ async function handleCallback(update) {
             await setData('state_' + chatId, 'waiting_for_keys');
             return;
         }
+        
+        // 🔥 ГЛАВНОЕ — ОБРАБОТЧИК ДЛЯ РЕФЕРАЛКИ
         if (data === 'menu_referral') {
+            console.log('👥 menu_referral clicked for ' + chatId);
             await showReferralMenu(chatId);
             return;
         }
 
-        // --- AI Советник ---
+        // --- AI ---
         if (data === 'menu_ai') {
             await handleAICommand(chatId, '', lang, null);
             return;
@@ -4220,21 +4174,8 @@ async function handleCallback(update) {
         if (data === 'ai_chat_start') {
             await setData('ai_chat_mode_' + chatId, 'true');
             var msg = lang === 'ru' ?
-                '💬 *Режим диалога с AI активирован!*\n\n' +
-                'Теперь я буду отвечать на все твои сообщения как AI советник.\n\n' +
-                '📌 *Примеры вопросов:*\n' +
-                '• "Какой мой портфель?"\n' +
-                '• "Какой риск?"\n' +
-                '• "Что с BTC?"\n\n' +
-                '⏹️ Нажми кнопку *"Выйти из диалога"*, чтобы вернуться в обычный режим.' :
-                '💬 *AI Chat mode activated!*\n\n' +
-                'Now I will respond to all your messages as AI advisor.\n\n' +
-                '📌 *Example questions:*\n' +
-                '• "What is my portfolio?"\n' +
-                '• "What is the risk?"\n' +
-                '• "What about BTC?"\n\n' +
-                '⏹️ Click *"Exit Chat"* to return to normal mode.';
-            
+                '💬 *Режим диалога с AI активирован!*\n\nТеперь я буду отвечать на все твои сообщения как AI советник.\n\n⏹️ Нажми кнопку *"Выйти из диалога"*, чтобы вернуться в обычный режим.' :
+                '💬 *AI Chat mode activated!*\n\nNow I will respond to all your messages as AI advisor.\n\n⏹️ Click *"Exit Chat"* to return to normal mode.';
             var keyboard = {
                 inline_keyboard: [
                     [{ text: '⏹️ ' + (lang === 'ru' ? 'Выйти из диалога' : 'Exit Chat'), callback_data: 'ai_chat_stop' }],
@@ -4266,280 +4207,87 @@ async function handleCallback(update) {
         }
         if (data === 'ai_refresh') {
             await aiContext.refreshData(chatId, lang);
-            var msg = lang === 'ru' ? '🔄 Данные обновлены! Теперь я знаю твой портфель.' : '🔄 Data refreshed! Now I know your portfolio.';
+            var msg = lang === 'ru' ? '🔄 Данные обновлены!' : '🔄 Data refreshed!';
             await sendUpdatedMessage(chatId, msg, null, 'Markdown', null);
             await handleAICommand(chatId, '', lang, null);
             return;
         }
 
+        // --- Настройки ---
         if (data === 'settings_change_lang') { await showLanguageSelect(chatId); return; }
         if (data === 'settings_change_mode') { await showModeSelect(chatId); return; }
-        if (data === 'lang_ru') {
-            await setData('lang_' + chatId, 'ru');
-            await sendMessage(chatId, '✅ Language: Русский');
-            await showSettingsMenu(chatId);
-            return;
-        }
-        if (data === 'lang_en') {
-            await setData('lang_' + chatId, 'en');
-            await sendMessage(chatId, '✅ Language: English');
-            await showSettingsMenu(chatId);
-            return;
-        }
-        if (data === 'mode_beginner') {
-            await setData('mode_' + chatId, 'beginner');
-            await sendMessage(chatId, '✅ Mode: Beginner');
-            await showSettingsMenu(chatId);
-            return;
-        }
-        if (data === 'mode_pro') {
-            await setData('mode_' + chatId, 'pro');
-            await sendMessage(chatId, '✅ Mode: Experienced');
-            await showSettingsMenu(chatId);
-            return;
-        }
+        if (data === 'lang_ru') { await setData('lang_' + chatId, 'ru'); await sendMessage(chatId, '✅ Language: Русский'); await showSettingsMenu(chatId); return; }
+        if (data === 'lang_en') { await setData('lang_' + chatId, 'en'); await sendMessage(chatId, '✅ Language: English'); await showSettingsMenu(chatId); return; }
+        if (data === 'mode_beginner') { await setData('mode_' + chatId, 'beginner'); await sendMessage(chatId, '✅ Mode: Beginner'); await showSettingsMenu(chatId); return; }
+        if (data === 'mode_pro') { await setData('mode_' + chatId, 'pro'); await sendMessage(chatId, '✅ Mode: Experienced'); await showSettingsMenu(chatId); return; }
 
-        if (data === 'antiscam_url') {
-            await setData('state_' + chatId, 'antiscam_url');
-            await sendMessage(chatId, getText(lang, 'scan_link') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'antiscam_contract') {
-            await setData('state_' + chatId, 'antiscam_contract');
-            await sendMessage(chatId, getText(lang, 'scan_contract') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'antiscam_file') {
-            await setData('state_' + chatId, 'antiscam_file');
-            await sendMessage(chatId, getText(lang, 'scan_file') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'antiscam_dex') {
-            await setData('state_' + chatId, 'antiscam_dex');
-            await sendMessage(chatId, getText(lang, 'dex_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'antiscam_impersonation') {
-            await setData('state_' + chatId, 'antiscam_impersonation');
-            await sendMessage(chatId, getText(lang, 'impersonation_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'antiscam_wallet') {
-            await setData('state_' + chatId, 'antiscam_wallet');
-            await sendMessage(chatId, getText(lang, 'wallet_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
+        // --- Антискам ---
+        if (data === 'antiscam_url') { await setData('state_' + chatId, 'antiscam_url'); await sendMessage(chatId, getText(lang, 'scan_link') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'antiscam_contract') { await setData('state_' + chatId, 'antiscam_contract'); await sendMessage(chatId, getText(lang, 'scan_contract') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'antiscam_file') { await setData('state_' + chatId, 'antiscam_file'); await sendMessage(chatId, getText(lang, 'scan_file') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'antiscam_dex') { await setData('state_' + chatId, 'antiscam_dex'); await sendMessage(chatId, getText(lang, 'dex_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'antiscam_impersonation') { await setData('state_' + chatId, 'antiscam_impersonation'); await sendMessage(chatId, getText(lang, 'impersonation_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'antiscam_wallet') { await setData('state_' + chatId, 'antiscam_wallet'); await sendMessage(chatId, getText(lang, 'wallet_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
 
-        if (data === 'trend_search_menu') {
-            await showTrendSearchMenu(chatId);
-            return;
-        }
-        if (data === 'trend_search_name') {
-            await setData('state_' + chatId, 'waiting_for_trend_search');
-            await sendMessage(chatId, getText(lang, 'social_search_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'trend_search_contract') {
-            await setData('state_' + chatId, 'waiting_for_contract_search');
-            await sendMessage(chatId, '📄 Send contract address to check\n\n📌 Example: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e\n🔄 /cancel — cancel\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data.startsWith('trend_')) {
-            await handleTrendClick(chatId, data, lang, null);
-            return;
-        }
+        // --- Тренды ---
+        if (data === 'trend_search_menu') { await showTrendSearchMenu(chatId); return; }
+        if (data === 'trend_search_name') { await setData('state_' + chatId, 'waiting_for_trend_search'); await sendMessage(chatId, getText(lang, 'social_search_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'trend_search_contract') { await setData('state_' + chatId, 'waiting_for_contract_search'); await sendMessage(chatId, '📄 Send contract address to check\n\n📌 Example: 0x742d35Cc6634C0532925a3b844Bc454e4438f44e\n🔄 /cancel — cancel\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data.startsWith('trend_')) { await handleTrendClick(chatId, data, lang, null); return; }
 
-        if (data.startsWith('plan_')) {
-            var plan = data.replace('plan_', '');
-            await handlePlanSelection(chatId, plan, lang, null);
-            return;
-        }
+        // --- Тарифы ---
+        if (data.startsWith('plan_')) { var plan = data.replace('plan_', ''); await handlePlanSelection(chatId, plan, lang, null); return; }
 
+        // --- Автоторговля ---
         if (data === 'autotrade_menu') { await showAutotradeMenu(chatId); return; }
-        if (data === 'autotrade_level1') {
-            await setData('autotrade_' + chatId, JSON.stringify({ level: 1, active: true, lastCheck: Date.now() }));
-            await sendMessage(chatId, '🛡️ Level 1 (Protection) activated');
-            return;
-        }
-        if (data === 'autotrade_level2') {
-            await setData('autotrade_' + chatId, JSON.stringify({ level: 2, active: true, lastCheck: Date.now() }));
-            await sendMessage(chatId, '🔄 Level 2 (Reallocation) activated');
-            return;
-        }
-        if (data === 'autotrade_level3') {
-            await setData('autotrade_' + chatId, JSON.stringify({ level: 3, active: true, lastCheck: Date.now() }));
-            await sendMessage(chatId, '🧠 Level 3 (Smart Growth) activated');
-            return;
-        }
-        if (data === 'autotrade_level4') {
-            await setData('autotrade_' + chatId, JSON.stringify({ level: 4, active: true, lastCheck: Date.now(), type: 'snowball' }));
-            await sendMessage(chatId, '❄️ Level 4 (Snowball) activated');
-            return;
-        }
-        if (data === 'autotrade_stop') {
-            await deleteData('autotrade_' + chatId);
-            await sendMessage(chatId, getText(lang, 'autotrade_stopped'));
-            return;
-        }
+        if (data === 'autotrade_level1') { await setData('autotrade_' + chatId, JSON.stringify({ level: 1, active: true, lastCheck: Date.now() })); await sendMessage(chatId, '🛡️ Level 1 (Protection) activated'); return; }
+        if (data === 'autotrade_level2') { await setData('autotrade_' + chatId, JSON.stringify({ level: 2, active: true, lastCheck: Date.now() })); await sendMessage(chatId, '🔄 Level 2 (Reallocation) activated'); return; }
+        if (data === 'autotrade_level3') { await setData('autotrade_' + chatId, JSON.stringify({ level: 3, active: true, lastCheck: Date.now() })); await sendMessage(chatId, '🧠 Level 3 (Smart Growth) activated'); return; }
+        if (data === 'autotrade_level4') { await setData('autotrade_' + chatId, JSON.stringify({ level: 4, active: true, lastCheck: Date.now(), type: 'snowball' })); await sendMessage(chatId, '❄️ Level 4 (Snowball) activated'); return; }
+        if (data === 'autotrade_stop') { await deleteData('autotrade_' + chatId); await sendMessage(chatId, getText(lang, 'autotrade_stopped')); return; }
 
+        // --- Оповещения ---
         if (data === 'alert_menu') { await showAlertMenu(chatId); return; }
-        if (data === 'alert_price') {
-            await setData('state_' + chatId, 'alert_price');
-            await sendMessage(chatId, getText(lang, 'alert_create_price') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'alert_change') {
-            await setData('state_' + chatId, 'alert_change');
-            await sendMessage(chatId, getText(lang, 'alert_create_change') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'alert_volume') {
-            await setData('state_' + chatId, 'alert_volume');
-            await sendMessage(chatId, '📊 Create volume alert\n\nEnter symbol and volume in format:\n"BTC 1000000"\n🔄 /cancel — cancel\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            return;
-        }
-        if (data === 'alert_news') {
-            var result = await createAlert(chatId, 'news', {});
-            if (result.error) { await sendMessage(chatId, result.error); return; }
-            await sendMessage(chatId, '✅ Alert created!');
-            return;
-        }
-        if (data === 'alert_calendar') {
-            var result = await createAlert(chatId, 'calendar', {});
-            if (result.error) { await sendMessage(chatId, result.error); return; }
-            await sendMessage(chatId, '✅ Alert created!');
-            return;
-        }
-        if (data === 'alert_list') {
-            var alerts = await getAlerts(chatId);
-            if (alerts.length === 0) {
-                await sendMessage(chatId, '📭 You have no active alerts.');
-                return;
-            }
-            var text = getText(lang, 'alert_list');
-            for (var i = 0; i < alerts.length; i++) {
-                var a = alerts[i];
-                var typeText = a.type === 'price' ? '💰 price' : a.type === 'change' ? '📈 change' : a.type === 'volume' ? '📊 volume' : a.type;
-                text += '• ' + (a.params.symbol || '') + ' (' + typeText + ') – ' + (a.params.target || '') + '\n';
-            }
-            var keyboard = {
-                inline_keyboard: alerts.map(function(a) {
-                    return [{ text: '❌ Delete ' + (a.params.symbol || a.id), callback_data: 'alert_delete_' + a.id }];
-                })
-            };
-            keyboard.inline_keyboard.push([{ text: '🔙 Back', callback_data: 'alert_menu' }]);
-            await sendMessage(chatId, text, keyboard);
-            return;
-        }
-        if (data.startsWith('alert_delete_')) {
-            var alertId = data.replace('alert_delete_', '');
-            await deleteAlert(chatId, alertId);
-            await sendMessage(chatId, getText(lang, 'alert_deleted'));
-            await showAlertMenu(chatId);
-            return;
-        }
+        if (data === 'alert_price') { await setData('state_' + chatId, 'alert_price'); await sendMessage(chatId, getText(lang, 'alert_create_price') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'alert_change') { await setData('state_' + chatId, 'alert_change'); await sendMessage(chatId, getText(lang, 'alert_create_change') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'alert_volume') { await setData('state_' + chatId, 'alert_volume'); await sendMessage(chatId, '📊 Create volume alert\n\n"BTC 1000000"\n🔄 /cancel — cancel\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); return; }
+        if (data === 'alert_news') { var result = await createAlert(chatId, 'news', {}); if (result.error) { await sendMessage(chatId, result.error); return; } await sendMessage(chatId, '✅ Alert created!'); return; }
+        if (data === 'alert_calendar') { var result = await createAlert(chatId, 'calendar', {}); if (result.error) { await sendMessage(chatId, result.error); return; } await sendMessage(chatId, '✅ Alert created!'); return; }
+        if (data === 'alert_list') { var alerts = await getAlerts(chatId); if (alerts.length === 0) { await sendMessage(chatId, '📭 You have no active alerts.'); return; } var text = getText(lang, 'alert_list'); for (var i = 0; i < alerts.length; i++) { var a = alerts[i]; var typeText = a.type === 'price' ? '💰 price' : a.type === 'change' ? '📈 change' : a.type === 'volume' ? '📊 volume' : a.type; text += '• ' + (a.params.symbol || '') + ' (' + typeText + ') – ' + (a.params.target || '') + '\n'; } var keyboard = { inline_keyboard: alerts.map(function(a) { return [{ text: '❌ Delete ' + (a.params.symbol || a.id), callback_data: 'alert_delete_' + a.id }]; }) }; keyboard.inline_keyboard.push([{ text: '🔙 Back', callback_data: 'alert_menu' }]); await sendMessage(chatId, text, keyboard); return; }
+        if (data.startsWith('alert_delete_')) { var alertId = data.replace('alert_delete_', ''); await deleteAlert(chatId, alertId); await sendMessage(chatId, getText(lang, 'alert_deleted')); await showAlertMenu(chatId); return; }
 
-        if (data.startsWith('diary_mood_')) {
-            var mood = data.replace('diary_mood_', '');
-            await setData('diary_' + chatId, mood);
-            await sendMessage(chatId, getText(lang, 'mood_saved'));
-            await showMainMenu(chatId);
-            return;
-        }
+        // --- Дневник ---
+        if (data.startsWith('diary_mood_')) { var mood = data.replace('diary_mood_', ''); await setData('diary_' + chatId, mood); await sendMessage(chatId, getText(lang, 'mood_saved')); await showMainMenu(chatId); return; }
 
-        if (data === 'action_disconnect') {
-            await deleteData('user_' + chatId);
-            await sendMessage(chatId, getText(lang, 'connect_disconnected'));
-            await showMainMenu(chatId);
-            return;
-        }
-        if (data === 'action_history_refresh') {
-            await showHistoryMenu(chatId);
-            return;
-        }
+        // --- Настройки ---
+        if (data === 'action_disconnect') { await deleteData('user_' + chatId); await sendMessage(chatId, getText(lang, 'connect_disconnected')); await showMainMenu(chatId); return; }
+        if (data === 'action_history_refresh') { await showHistoryMenu(chatId); return; }
 
-        if (data === 'help_q1') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q1'), lang)); 
-            return; 
-        }
-        if (data === 'help_q2') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q2'), lang)); 
-            return; 
-        }
-        if (data === 'help_q3') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q3'), lang)); 
-            return; 
-        }
-        if (data === 'help_q4') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q4'), lang)); 
-            return; 
-        }
-        if (data === 'help_q5') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q5'), lang)); 
-            return; 
-        }
-        if (data === 'help_q6') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q6'), lang)); 
-            return; 
-        }
-        if (data === 'help_q7') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q7'), lang)); 
-            return; 
-        }
-        if (data === 'help_q8') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q8'), lang)); 
-            return; 
-        }
-        if (data === 'help_q9') { 
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q9'), lang)); 
-            return; 
-        }
-        if (data === 'help_contact_moderator') {
-            await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_contact_moderator_message'), lang));
-            return;
-        }
+        // --- Помощь ---
+        if (data === 'help_q1') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q1'), lang)); return; }
+        if (data === 'help_q2') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q2'), lang)); return; }
+        if (data === 'help_q3') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q3'), lang)); return; }
+        if (data === 'help_q4') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q4'), lang)); return; }
+        if (data === 'help_q5') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q5'), lang)); return; }
+        if (data === 'help_q6') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q6'), lang)); return; }
+        if (data === 'help_q7') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q7'), lang)); return; }
+        if (data === 'help_q8') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q8'), lang)); return; }
+        if (data === 'help_q9') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_answer_q9'), lang)); return; }
+        if (data === 'help_contact_moderator') { await sendMessage(chatId, formatHelpAnswer(getText(lang, 'help_contact_moderator_message'), lang)); return; }
 
-        if (data === 'onboard_lang_ru') {
-            await setData('lang_' + chatId, 'ru');
-            await sendUpdatedMessage(chatId, getText('ru', 'mode_select'), getOnboardModeKeyboard('ru'));
-            return;
-        }
-        if (data === 'onboard_lang_en') {
-            await setData('lang_' + chatId, 'en');
-            await sendUpdatedMessage(chatId, getText('en', 'mode_select'), getOnboardModeKeyboard('en'));
-            return;
-        }
-        if (data === 'onboard_mode_beginner') {
-            await setData('mode_' + chatId, 'beginner');
-            await showVipBonusOffer(chatId);
-            return;
-        }
-        if (data === 'onboard_mode_pro') {
-            await setData('mode_' + chatId, 'pro');
-            await showVipBonusOffer(chatId);
-            return;
-        }
-        if (data === 'onboard_connect_vip') {
-            await handleOnboardConnectVip(chatId);
-            return;
-        }
-        if (data === 'onboard_skip') {
-            await handleOnboardSkip(chatId);
-            return;
-        }
-        if (data === 'onboard_vip_done') {
-            await showMainMenu(chatId);
-            return;
-        }
+        // --- Онбординг ---
+        if (data === 'onboard_lang_ru') { await setData('lang_' + chatId, 'ru'); await sendUpdatedMessage(chatId, getText('ru', 'mode_select'), getOnboardModeKeyboard('ru')); return; }
+        if (data === 'onboard_lang_en') { await setData('lang_' + chatId, 'en'); await sendUpdatedMessage(chatId, getText('en', 'mode_select'), getOnboardModeKeyboard('en')); return; }
+        if (data === 'onboard_mode_beginner') { await setData('mode_' + chatId, 'beginner'); await showVipBonusOffer(chatId); return; }
+        if (data === 'onboard_mode_pro') { await setData('mode_' + chatId, 'pro'); await showVipBonusOffer(chatId); return; }
+        if (data === 'onboard_connect_vip') { await handleOnboardConnectVip(chatId); return; }
+        if (data === 'onboard_skip') { await handleOnboardSkip(chatId); return; }
+        if (data === 'onboard_vip_done') { await showMainMenu(chatId); return; }
 
-        if (data === 'panic_convert_all') {
-            await handlePanicConvertAll(chatId);
-            return;
-        }
+        // --- Panic ---
+        if (data === 'panic_convert_all') { await handlePanicConvertAll(chatId); return; }
 
-        // ============================================================
-        // PORTFOLIO ANALYSIS
-        // ============================================================
+        // --- Анализ ---
         if (data === 'action_analyze') {
             var savedData = await getData('user_' + chatId);
             if (!savedData) {
@@ -4773,7 +4521,7 @@ async function handleCallback(update) {
 }
 
 // ============================================================
-// 30. MESSAGE HANDLER — С АВТООПРЕДЕЛЕНИЕМ AI И РЕФЕРАЛКОЙ
+// 30. MESSAGE HANDLER
 // ============================================================
 
 async function handleMessage(update) {
@@ -4788,14 +4536,12 @@ async function handleMessage(update) {
     try {
         var cleanText = sanitizeInput(text);
 
-        // Проверяем, включен ли режим диалога с AI
         var aiChatMode = await getData('ai_chat_mode_' + chatId);
         if (aiChatMode === 'true' && cleanText && cleanText.length > 1 && !cleanText.startsWith('/')) {
             await handleAICommand(chatId, cleanText, lang, messageId);
             return;
         }
 
-        // Автоматическая проверка ссылок и контрактов
         if (cleanText && (cleanText.includes('http://') || cleanText.includes('https://'))) {
             await autoCheckLinks(chatId, cleanText, lang, messageId);
         }
@@ -4804,7 +4550,6 @@ async function handleMessage(update) {
             return;
         }
 
-        // Обработка состояний (подключение ключей, антискам, оповещения, поиск)
         if (state === 'waiting_for_keys' || state === 'waiting_for_keys_vip') {
             if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
                 await setData('state_' + chatId, 'idle');
@@ -4955,11 +4700,9 @@ async function handleMessage(update) {
             return;
         }
 
-        // Обработка команд
         if (cleanText === '/start') {
             console.log('📩 /start from ' + chatId);
             
-            // Проверяем реферальную ссылку
             var refMatch = cleanText.match(/\/start\s+ref_([A-Z0-9]+)/);
             if (refMatch && refMatch[1]) {
                 var refCode = refMatch[1];
@@ -4984,67 +4727,21 @@ async function handleMessage(update) {
         }
 
         if (cleanText === '/help') { await showHelpMenu(chatId); return; }
-        if (cleanText === '/connect') { 
-            await sendMessage(chatId, getText(lang, 'connect_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang));
-            await setData('state_' + chatId, 'waiting_for_keys');
-            return;
-        }
-        if (cleanText === '/disconnect') { 
-            await deleteData('user_' + chatId);
-            await sendMessage(chatId, getText(lang, 'connect_disconnected'));
-            await showMainMenu(chatId);
-            return;
-        }
+        if (cleanText === '/connect') { await sendMessage(chatId, getText(lang, 'connect_prompt') + '\n\n' + getText(lang, 'cancel'), getCancelKeyboard(lang)); await setData('state_' + chatId, 'waiting_for_keys'); return; }
+        if (cleanText === '/disconnect') { await deleteData('user_' + chatId); await sendMessage(chatId, getText(lang, 'connect_disconnected')); await showMainMenu(chatId); return; }
         if (cleanText === '/alerts') { await showAlertMenu(chatId); return; }
         if (cleanText === '/autotrade') { await showAutotradeMenu(chatId); return; }
-        if (cleanText === '/diary') { 
-            await sendUpdatedMessage(chatId, getText(lang, 'mood_title'), getDiaryMenuKeyboard(lang));
-            return;
-        }
-        if (cleanText === '/ai' || cleanText.startsWith('/ai ')) {
-            var question = cleanText === '/ai' ? '' : cleanText.replace('/ai ', '');
-            await handleAICommand(chatId, question, lang, messageId);
-            return;
-        }
+        if (cleanText === '/diary') { await sendUpdatedMessage(chatId, getText(lang, 'mood_title'), getDiaryMenuKeyboard(lang)); return; }
+        if (cleanText === '/ai' || cleanText.startsWith('/ai ')) { var question = cleanText === '/ai' ? '' : cleanText.replace('/ai ', ''); await handleAICommand(chatId, question, lang, messageId); return; }
         if (cleanText === '/history') { await showHistoryMenu(chatId); return; }
         if (cleanText === '/plans' || cleanText === '/subscribe') { await showPlansMenu(chatId); return; }
         if (cleanText === '/settings') { await showSettingsMenu(chatId); return; }
-        if (cleanText === '/news' || cleanText.startsWith('/news ')) {
-            var coin = cleanText === '/news' ? null : cleanText.replace('/news ', '').trim();
-            await handleNewsCommand(chatId, coin, lang, messageId);
-            return;
-        }
-        if (cleanText === '/panic') {
-            await setData('panic_' + chatId, JSON.stringify({ active: true, lastCheck: Date.now() }));
-            await sendMessage(chatId, getText(lang, 'panic_start'));
-            return;
-        }
-        if (cleanText === '/panic_stop') {
-            await deleteData('panic_' + chatId);
-            await sendMessage(chatId, getText(lang, 'panic_stop'));
-            return;
-        }
+        if (cleanText === '/news' || cleanText.startsWith('/news ')) { var coin = cleanText === '/news' ? null : cleanText.replace('/news ', '').trim(); await handleNewsCommand(chatId, coin, lang, messageId); return; }
+        if (cleanText === '/panic') { await setData('panic_' + chatId, JSON.stringify({ active: true, lastCheck: Date.now() })); await sendMessage(chatId, getText(lang, 'panic_start')); return; }
+        if (cleanText === '/panic_stop') { await deleteData('panic_' + chatId); await sendMessage(chatId, getText(lang, 'panic_stop')); return; }
         if (cleanText === '/exit') { await showMainMenu(chatId); return; }
-        if (cleanText === '/analyze') { 
-            // Полный анализ портфеля
-            var savedData = await getData('user_' + chatId);
-            if (!savedData) {
-                var errorKeyboard = {
-                    inline_keyboard: [
-                        [{ text: '🔐 ' + (lang === 'ru' ? 'Подключить биржу' : 'Connect exchange'), callback_data: 'menu_connect' }],
-                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'menu_help' }],
-                        [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
-                    ]
-                };
-                await sendMessage(chatId, getText(lang, 'analyzing_no_keys'), errorKeyboard);
-                return;
-            }
-            // Здесь должен быть полный код анализа из Части 4
-            await sendMessage(chatId, '📊 Запускаю анализ портфеля...');
-            return;
-        }
+        if (cleanText === '/analyze') { await sendMessage(chatId, '📊 Запускаю анализ портфеля...'); return; }
 
-        // Автоопределение AI вопросов для обычных сообщений
         var aiKeywords = ['стоит', 'купить', 'продать', 'портфель', 'риск', 'новости', 'btc', 'eth', 'sol', 'какой', 'что', 'почему', 'как', 'should', 'buy', 'sell', 'portfolio', 'risk', 'news', 'инвестировать', 'вкладывать', 'цена', 'price', 'trend', 'тренд', 'падает', 'растет', 'коррекция', 'обвал', 'рост', 'прибыль'];
         var isAIQuestion = false;
         var lowerClean = cleanText.toLowerCase();
@@ -5088,10 +4785,8 @@ async function handleCryptoWebhook(request) {
             var chatId = parseInt(parts[2]);
             var lang = await getData('lang_' + chatId) || 'ru';
             
-            // Активируем план
             var plan = await activatePlan(chatId, planId);
             if (plan) {
-                // Обработка реферального бонуса
                 try {
                     var bonusResult = await REFERRAL.processPlanActivation(chatId, planId);
                     if (bonusResult) {
