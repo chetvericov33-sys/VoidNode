@@ -711,8 +711,8 @@ var LANGUAGES = {
         mode_beginner_desc: '🔰 *Новичок*\n• Целевые веса: BTC 50%, Альты 30%, Стейблы 20%\n• Простые рекомендации по портфелю\n• Базовые метрики (риск, распределение)',
         mode_pro_desc: '🚀 *Опытный*\n• Целевые веса: BTC 40%, Альты 40%, Стейблы 20%\n• Расширенные рекомендации\n• Полные метрики (Шарп, RSI, MA20, просадка)',
         mode_select_prompt: '👇 *Выбери режим:*',
-        mode_beginner_btn: '🔰 Новичок',
-        mode_pro_btn: '🚀 Опытный',
+        mode_beginner_btn: 'Новичок',
+        mode_pro_btn: 'Опытный',
         
         menu_title: '🔮 *Void Node — твой крипто-телохранитель*\n\n🏠 *Главное меню:*\n\n💡 Используйте кнопки ниже или быстрые команды:\n/analyze, /news, /help',
         main_functions: 'Функции',
@@ -734,16 +734,16 @@ var LANGUAGES = {
         settings_change_mode: 'Сменить режим',
         
         help_menu_title: '❓ *Помощь по боту*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nВыберите вопрос:',
-        help_q1: '🔐 Как подключить биржу?',
-        help_q2: '📊 Как работает анализ портфеля?',
-        help_q3: '🔐 Зачем подключать биржу?',
-        help_q4: '🛡️ Как проверить контракт?',
-        help_q5: '🔔 Как создать оповещение?',
-        help_q6: '🚀 Как включить автоторговлю?',
-        help_q7: '❄️ Что такое холодный душ?',
-        help_q8: '📝 Как работает дневник настроения?',
-        help_q9: '🔌 Как отключить биржу?',
-        help_contact_moderator: '👤 Написать модератору',
+        help_q1: 'Как подключить биржу?',
+        help_q2: 'Как работает анализ портфеля?',
+        help_q3: 'Зачем подключать биржу?',
+        help_q4: 'Как проверить контракт?',
+        help_q5: 'Как создать оповещение?',
+        help_q6: 'Как включить автоторговлю?',
+        help_q7: 'Что такое холодный душ?',
+        help_q8: 'Как работает дневник настроения?',
+        help_q9: 'Как отключить биржу?',
+        help_contact_moderator: 'Написать модератору',
         
         help_answer_q1: '🔐 *Как подключить биржу?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Зайдите на биржу (Binance, Bybit, OKX и др.)\n2️⃣ Перейдите в раздел управления API\n3️⃣ Создайте ключ с правами *только на чтение*\n4️⃣ Скопируйте API-ключ и Secret-ключ\n5️⃣ Отправьте их в бот командой /connect в формате:\n"API_KEY:SECRET_KEY"\n\n🔒 *Ключи шифруются и не имеют права на вывод средств.*',
         help_answer_q2: '📊 *Как работает анализ портфеля?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nКоманда /analyze запускает полный анализ:\n\n✅ Показывает распределение активов (BTC, альты, стейблы)\n✅ Рассчитывает RSI, скользящие средние (MA20, MA200)\n✅ Оценивает риск (низкий/средний/высокий)\n✅ Считает коэффициент Шарпа и VaR\n✅ Даёт конкретные рекомендации по ребалансировке\n\n📌 После анализа вы можете исполнить рекомендации одним нажатием кнопки.',
@@ -961,8 +961,8 @@ var LANGUAGES = {
         mode_beginner_desc: '🔰 *Beginner*\n• Target weights: BTC 50%, Alts 30%, Stable 20%\n• Simple portfolio recommendations\n• Basic metrics (risk, allocation)',
         mode_pro_desc: '🚀 *Experienced*\n• Target weights: BTC 40%, Alts 40%, Stable 20%\n• Advanced recommendations\n• Full metrics (Sharpe, RSI, MA20, drawdown)',
         mode_select_prompt: '👇 *Select mode:*',
-        mode_beginner_btn: '🔰 Beginner',
-        mode_pro_btn: '🚀 Experienced',
+        mode_beginner_btn: 'Beginner',
+        mode_pro_btn: 'Experienced',
         
         menu_title: '🔮 *Void Node — your crypto guardian*\n\n🏠 *Main menu:*\n\n💡 Use buttons below or quick commands:\n/analyze, /news, /help',
         main_functions: 'Functions',
@@ -984,16 +984,16 @@ var LANGUAGES = {
         settings_change_mode: 'Change mode',
         
         help_menu_title: '❓ *Help*\n━━━━━━━━━━━━━━━━━━━━━━━\n\nSelect a question:',
-        help_q1: '🔐 How to connect exchange?',
-        help_q2: '📊 How does portfolio analysis work?',
-        help_q3: '🔐 Why connect exchange?',
-        help_q4: '🛡️ How to check a contract?',
-        help_q5: '🔔 How to create an alert?',
-        help_q6: '🚀 How to enable autotrading?',
-        help_q7: '❄️ What is Panic mode?',
-        help_q8: '📝 How does mood diary work?',
-        help_q9: '🔌 How to disconnect exchange?',
-        help_contact_moderator: '👤 Contact moderator',
+        help_q1: 'How to connect exchange?',
+        help_q2: 'How does portfolio analysis work?',
+        help_q3: 'Why connect exchange?',
+        help_q4: 'How to check a contract?',
+        help_q5: 'How to create an alert?',
+        help_q6: 'How to enable autotrading?',
+        help_q7: 'What is Panic mode?',
+        help_q8: 'How does mood diary work?',
+        help_q9: 'How to disconnect exchange?',
+        help_contact_moderator: 'Contact moderator',
         
         help_answer_q1: '🔐 *How to connect exchange?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Go to your exchange (Binance, Bybit, OKX, etc.)\n2️⃣ Go to API management section\n3️⃣ Create a key with *read-only* permissions\n4️⃣ Copy API key and Secret key\n5️⃣ Send them to bot with /connect in format:\n"API_KEY:SECRET_KEY"\n\n🔒 *Keys are encrypted and have no withdrawal rights.*',
         help_answer_q2: '📊 *How does portfolio analysis work?*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n/analyze runs a full portfolio analysis:\n\n✅ Shows asset allocation (BTC, alts, stablecoins)\n✅ Calculates RSI, moving averages (MA20, MA200)\n✅ Evaluates risk (low/medium/high)\n✅ Calculates Sharpe ratio and VaR\n✅ Gives specific rebalancing recommendations\n\n📌 After analysis you can execute recommendations with one click.',
@@ -1505,7 +1505,7 @@ function checkImpersonation(username) {
 }
 
 // ============================================================
-// 13. ALL KEYBOARDS — БЕЗ ДУБЛИРУЮЩИХСЯ ЭМОДЗИ
+// 13. ALL KEYBOARDS — УНИКАЛЬНЫЕ ЭМОДЗИ ДЛЯ КАЖДОЙ КНОПКИ
 // ============================================================
 
 function getMainMenuKeyboard(lang) {
@@ -1627,12 +1627,12 @@ function getPlansMenuKeyboard(lang) {
 function getHelpMenuKeyboard(lang) {
     return {
         inline_keyboard: [
-            [{ text: '🔐 ' + getText(lang, 'help_q1'), callback_data: 'help_q1' }],
+            [{ text: '🔑 ' + getText(lang, 'help_q1'), callback_data: 'help_q1' }],
             [{ text: '📊 ' + getText(lang, 'help_q2'), callback_data: 'help_q2' }],
             [{ text: '🔐 ' + getText(lang, 'help_q3'), callback_data: 'help_q3' }],
             [{ text: '🛡️ ' + getText(lang, 'help_q4'), callback_data: 'help_q4' }],
             [{ text: '🔔 ' + getText(lang, 'help_q5'), callback_data: 'help_q5' }],
-            [{ text: '🚀 ' + getText(lang, 'help_q6'), callback_data: 'help_q6' }],
+            [{ text: '⚡ ' + getText(lang, 'help_q6'), callback_data: 'help_q6' }],
             [{ text: '❄️ ' + getText(lang, 'help_q7'), callback_data: 'help_q7' }],
             [{ text: '📝 ' + getText(lang, 'help_q8'), callback_data: 'help_q8' }],
             [{ text: '🔌 ' + getText(lang, 'help_q9'), callback_data: 'help_q9' }],
@@ -1647,7 +1647,7 @@ function getAnalyzeMenuKeyboard(lang) {
         inline_keyboard: [
             [{ text: '📊 ' + (lang === 'ru' ? 'Полный анализ' : 'Full analysis'), callback_data: 'action_analyze' }],
             [{ text: '📥 ' + (lang === 'ru' ? 'CSV отчет' : 'CSV report'), callback_data: 'action_export_csv' }],
-            [{ text: '🔄 ' + (lang === 'ru' ? 'Ребаланс портфеля' : 'Rebalance portfolio'), callback_data: 'action_rebalance' }],
+            [{ text: '🔄 ' + (lang === 'ru' ? 'Ребаланс' : 'Rebalance'), callback_data: 'action_rebalance' }],
             [{ text: '🚀 ' + (lang === 'ru' ? 'Автоторговля' : 'Autotrading'), callback_data: 'autotrade_menu' }],
             [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
@@ -1675,7 +1675,7 @@ function getAlertMenuKeyboard(lang) {
             [{ text: '📊 ' + getText(lang, 'alert_volume'), callback_data: 'alert_volume' }],
             [{ text: '📰 ' + getText(lang, 'alert_news'), callback_data: 'alert_news' }],
             [{ text: '📅 ' + getText(lang, 'alert_calendar'), callback_data: 'alert_calendar' }],
-            [{ text: '📋 ' + (lang === 'ru' ? 'Список оповещений' : 'List alerts'), callback_data: 'alert_list' }],
+            [{ text: '📋 ' + (lang === 'ru' ? 'Список' : 'List'), callback_data: 'alert_list' }],
             [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
@@ -1726,6 +1726,19 @@ function getBackKeyboard(lang) {
     return {
         inline_keyboard: [
             [{ text: '🔙 ' + getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        ]
+    };
+}
+
+function getAIMenuKeyboard(lang) {
+    return {
+        inline_keyboard: [
+            [{ text: '💬 ' + (lang === 'ru' ? 'Начать диалог' : 'Start Chat'), callback_data: 'ai_chat_start' }],
+            [{ text: '📊 ' + (lang === 'ru' ? 'Показать портфель' : 'Show Portfolio'), callback_data: 'ai_portfolio' }],
+            [{ text: '📈 ' + (lang === 'ru' ? 'Оценить риск' : 'Assess Risk'), callback_data: 'ai_risk' }],
+            [{ text: '📰 ' + (lang === 'ru' ? 'Свежие новости' : 'Latest News'), callback_data: 'ai_news' }],
+            [{ text: '🔄 ' + (lang === 'ru' ? 'Обновить данные' : 'Refresh Data'), callback_data: 'ai_refresh' }],
+            [{ text: '🔙 ' + getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
         ]
     };
 }
@@ -5061,16 +5074,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
             '• 🛡️ Protect from stupid decisions\n\n' +
             '👇 *Choose action:*';
         
-        var keyboard = {
-            inline_keyboard: [
-                [{ text: '💬 ' + (lang === 'ru' ? 'Начать диалог' : 'Start Chat'), callback_data: 'ai_chat_start' }],
-                [{ text: '📊 ' + (lang === 'ru' ? 'Показать портфель' : 'Show Portfolio'), callback_data: 'ai_portfolio' }],
-                [{ text: '📈 ' + (lang === 'ru' ? 'Оценить риск' : 'Assess Risk'), callback_data: 'ai_risk' }],
-                [{ text: '📰 ' + (lang === 'ru' ? 'Свежие новости' : 'Latest News'), callback_data: 'ai_news' }],
-                [{ text: '🔄 ' + (lang === 'ru' ? 'Обновить данные' : 'Refresh Data'), callback_data: 'ai_refresh' }],
-                [{ text: '🔙 ' + (lang === 'ru' ? 'Назад к функциям' : 'Back to Functions'), callback_data: 'back_to_functions' }]
-            ]
-        };
+        var keyboard = getAIMenuKeyboard(lang);
         
         await sendUpdatedMessage(chatId, helpText, keyboard, 'Markdown', messageId);
         return;
