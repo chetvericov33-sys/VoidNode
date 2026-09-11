@@ -1,10 +1,14 @@
 {
   "name": "void-node",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Void Node — AI Crypto Risk Assistant for Telegram",
   "main": "bot.js",
-  "scripts": {"start": "node bot.js"},
-  "engines": {"node": ">=20"},
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@upstash/redis": "latest",
     "ccxt": "latest",
