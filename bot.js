@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — RELEASE 1.4.0 DAILY UX
+// БОТ VOID NODE — RELEASE 1.4.2 DAILY UX
 // ЕДИНЫЙ MONOLITH: UX + ANALYTICS + SECURITY + PAPER/REAL TRADING
 // С ИСПРАВЛЕННЫМ ОНБОРДИНГОМ, AI И АНТИСКАМОМ
 // ============================================================
@@ -9,6 +9,16 @@ const express = require('express');
 const ccxt = require('ccxt');
 const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
+
+
+// Input sanitization: remove control characters and cap user text size.
+function sanitizeInput(input) {
+    if (typeof input !== 'string') return '';
+    return input
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+        .trim()
+        .slice(0, 4000);
+}
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
