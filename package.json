@@ -1,6 +1,6 @@
 {
   "name": "void-node",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Void Node crypto risk assistant",
   "main": "bot.js",
   "scripts": {
