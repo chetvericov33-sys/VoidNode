@@ -1,5 +1,5 @@
 // ============================================================
-// БОТ VOID NODE — RELEASE 1.4.0 DAILY UX
+// БОТ VOID NODE — RELEASE 1.7.0 PROFESSIONAL RISK + VERIFIED NARRATIVE
 // ЕДИНЫЙ MONOLITH: UX + ANALYTICS + SECURITY + PAPER/REAL TRADING
 // С ИСПРАВЛЕННЫМ ОНБОРДИНГОМ, AI И АНТИСКАМОМ
 // ============================================================
@@ -9,6 +9,7 @@ const express = require('express');
 const ccxt = require('ccxt');
 const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
+const { calculateRiskBreakdown } = require('./risk_engine');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -137,6 +138,16 @@ var CONFIG = {
 // 1. REDIS STORAGE
 // ============================================================
 
+function withTimeout(promise, ms, label) {
+    var timeoutMs = Number(ms || 8000);
+    return Promise.race([
+        promise,
+        new Promise(function(_, reject) {
+            setTimeout(function() { reject(new Error((label || 'Operation') + ' timeout after ' + timeoutMs + 'ms')); }, timeoutMs);
+        })
+    ]);
+}
+
 class RedisStorage {
     constructor() {
         this.redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
@@ -163,7 +174,7 @@ class RedisStorage {
                 if (this.isCritical(key)) throw new Error('Critical Redis storage unavailable');
                 return this.localCache.get(key) || null;
             }
-            var data = await this.redis.get(key);
+            var data = await withTimeout(this.redis.get(key), 8000, 'Redis GET');
             if (data !== null && data !== undefined) return data;
             return this.isCritical(key) ? null : (this.localCache.get(key) || null);
         } catch (error) {
@@ -180,8 +191,8 @@ class RedisStorage {
                 if (this.isCritical(key)) throw new Error('Critical Redis storage unavailable');
                 this.localCache.set(key, value); return;
             }
-            await this.redis.set(key, value);
-            if (ttl) await this.redis.expire(key, ttl);
+            await withTimeout(this.redis.set(key, value), 8000, 'Redis SET');
+            if (ttl) await withTimeout(this.redis.expire(key, ttl), 8000, 'Redis EXPIRE');
             if (!this.isCritical(key)) this.localCache.set(key, value);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
@@ -196,7 +207,7 @@ class RedisStorage {
                 if (this.isCritical(key)) throw new Error('Critical Redis storage unavailable');
                 this.localCache.delete(key); return;
             }
-            await this.redis.del(key);
+            await withTimeout(this.redis.del(key), 8000, 'Redis DEL');
             this.localCache.delete(key);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
@@ -209,7 +220,7 @@ class RedisStorage {
         if (prefix === undefined) prefix = '';
         try {
             if (!this.isRedisAvailable) throw new Error('Redis unavailable');
-            var keys = await this.redis.keys(prefix + '*');
+            var keys = await withTimeout(this.redis.keys(prefix + '*'), 8000, 'Redis KEYS');
             return keys.map(function(k) { return { name: k }; });
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
@@ -220,10 +231,10 @@ class RedisStorage {
     async atomicIncrementWithLimit(key, limit, ttlSeconds) {
         if (limit === Infinity) return { allowed: true, count: 0 };
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
-        var count = await this.redis.incr(key);
-        if (count === 1 && ttlSeconds) await this.redis.expire(key, ttlSeconds);
+        var count = await withTimeout(this.redis.incr(key), 8000, 'Redis INCR');
+        if (count === 1 && ttlSeconds) await withTimeout(this.redis.expire(key, ttlSeconds), 8000, 'Redis EXPIRE');
         if (count > limit) {
-            await this.redis.decr(key);
+            await withTimeout(this.redis.decr(key), 8000, 'Redis DECR');
             return { allowed: false, count: count - 1 };
         }
         return { allowed: true, count: count };
@@ -443,7 +454,7 @@ async function getUserLastMessageId(chatId) {
 
 async function setUserLastMessageId(chatId, messageId) {
     var key = 'last_msg_' + chatId;
-    await setData(key, messageId.toString());
+    try { await setData(key, messageId.toString()); } catch (e) { console.error('Last message id persistence failed:', e.message); }
 }
 
 async function deleteUserLastMessage(chatId) {
@@ -482,10 +493,13 @@ async function editBotMessage(chatId, messageId, text, keyboard, parseMode) {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/editMessageText';
         var body = { chat_id: chatId, message_id: messageId, text: text, parse_mode: parseMode, disable_web_page_preview: true };
         if (keyboard) body.reply_markup = keyboard;
-        var response = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-        var data = await response.json();
+        var response = await withTimeout(fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }), 10000, 'Telegram editMessageText');
+        var raw = await withTimeout(response.text(), 5000, 'Telegram edit response');
+        var data = {};
+        try { data = JSON.parse(raw); } catch (e) {}
         if (data.ok) return true;
         if (data.description && data.description.indexOf('message is not modified') !== -1) return true;
+        console.error('Telegram editMessageText rejected:', response.status, raw);
         return false;
     } catch (e) {
         console.error('editBotMessage error:', e.message);
@@ -498,13 +512,13 @@ async function deleteUserMessage(chatId, messageId) {
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
         var body = { chat_id: chatId, message_id: messageId };
-        await fetch(url, {
+        await withTimeout(fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        });
+        }), 10000, 'Telegram deleteMessage');
     } catch (error) {
-        console.error('Failed to delete user message:', error);
+        console.error('Failed to delete user message:', error.message);
     }
 }
 
@@ -526,27 +540,48 @@ async function sendMessage(chatId, text, keyboard, parseMode) {
     if (keyboard === undefined) keyboard = null;
     if (parseMode === undefined) parseMode = 'Markdown';
     try {
-        var lastId = await getUserLastMessageId(chatId);
+        // One-message UX: edit the previous bot message when possible.
+        var lastId = null;
+        try { lastId = await getUserLastMessageId(chatId); } catch (e) { console.error('Last message lookup failed:', e.message); }
+
         if (lastId) {
             var edited = await editBotMessage(chatId, lastId, text, keyboard, parseMode);
-            if (edited) return { ok:true, result:{ message_id:lastId, edited:true } };
-            await deleteUserMessage(chatId, lastId);
-            await deleteData('last_msg_' + chatId);
+            if (edited) {
+                await setUserLastMessageId(chatId, lastId);
+                return { ok:true, result:{ message_id:lastId, edited:true } };
+            }
+            try { await deleteUserMessage(chatId, lastId); } catch (e) {}
+            try { await deleteData('last_msg_' + chatId); } catch (e) {}
         }
+
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
         var body = { chat_id: chatId, text: text, parse_mode: parseMode, disable_web_page_preview: true };
         if (keyboard) body.reply_markup = keyboard;
-        var response = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-        if (response && response.ok) {
-            var data = await response.json();
-            if (data.ok && data.result && data.result.message_id) await setUserLastMessageId(chatId, data.result.message_id);
-            return { ok:!!data.ok, result:data.result };
+        var response = await withTimeout(fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }), 10000, 'Telegram sendMessage');
+        var raw = '';
+        try { raw = await withTimeout(response.text(), 5000, 'Telegram response'); } catch (e) { raw = ''; }
+        var data = null;
+        try { data = raw ? JSON.parse(raw) : null; } catch (e) {}
+
+        if (!response.ok || !data || !data.ok) {
+            console.error('Telegram sendMessage rejected:', response.status, raw);
+            return { ok:false, result:data && data.result, description:data && data.description };
         }
-        return response;
+
+        if (data.result && data.result.message_id) await setUserLastMessageId(chatId, data.result.message_id);
+        return { ok:true, result:data.result };
     } catch (error) {
         console.error('Send message error:', error);
         return null;
     }
+}
+
+async function replaceCurrentMessage(chatId, text, keyboard, parseMode) {
+    var oldId=null;
+    try { oldId=await getUserLastMessageId(chatId); } catch(e) {}
+    if(oldId) { try { await botDeleteMessage(chatId, oldId); } catch(e) {} }
+    var sent=await sendMessage(chatId,text,keyboard,parseMode);
+    return sent;
 }
 
 async function sendUpdatedMessage(chatId, text, keyboard, parseMode, userMessageId, skipBackButton) {
@@ -573,7 +608,7 @@ async function sendUpdatedMessage(chatId, text, keyboard, parseMode, userMessage
         await setUserLastMessageId(chatId,currentId);
         return {ok:true,result:{message_id:currentId,edited:true}};
     }
-    if (currentId) { await deleteUserMessage(chatId,currentId); await deleteData('last_msg_' + chatId); }
+    if (currentId) { try { await deleteUserMessage(chatId,currentId); } catch (e) {} try { await deleteData('last_msg_' + chatId); } catch (e) {} }
     return await sendMessage(chatId,text,keyboard,parseMode);
 }
 
@@ -1391,7 +1426,7 @@ async function getPortfolioSnapshots(chatId) {
 async function savePortfolioSnapshot(chatId, analysis) {
     if(!analysis) return null;
     var arr=await getPortfolioSnapshots(chatId);
-    var snap={timestamp:Number(analysis.timestamp||Date.now()),totalUSDT:Number(analysis.totalUSDT||0),riskScore:Number(analysis.riskScore||0),btcPercent:Number(analysis.btcPercent||0),altPercent:Number(analysis.altPercent||0),usdtPercent:Number(analysis.usdtPercent||0),topPosition:analysis.topPosition||null,coverageComplete:!!analysis.coverageComplete,confidence:analysis.confidence||'unknown'};
+    var snap={timestamp:Number(analysis.timestamp||Date.now()),totalUSDT:Number(analysis.totalUSDT||0),riskScore:Number(analysis.riskScore||0),btcPercent:Number(analysis.btcPercent||0),altPercent:Number(analysis.altPercent||0),usdtPercent:Number(analysis.usdtPercent||0),topPosition:analysis.topPosition||null,coverageComplete:!!analysis.coverageComplete,coveragePct:Number(analysis.coveragePct||0),confidencePct:Number(analysis.confidencePct||0),dataStatus:analysis.dataStatus||'UNKNOWN',riskBreakdown:analysis.riskBreakdown||[],confidence:analysis.confidence||'unknown'};
     var prev=arr.length?arr[arr.length-1]:null;
     if(prev && Math.abs(Number(prev.timestamp)-snap.timestamp)<60000) arr[arr.length-1]=snap; else arr.push(snap);
     if(arr.length>90) arr=arr.slice(-90);
@@ -1402,16 +1437,19 @@ function comparePortfolioSnapshots(prev,current,lang){
     if(!prev||!current)return null;
     var ru=lang==='ru', deltaRisk=current.riskScore-prev.riskScore, deltaValue=prev.totalUSDT?((current.totalUSDT-prev.totalUSDT)/prev.totalUSDT*100):0;
     var changes=[];
-    if(Math.abs(deltaRisk)>=3) changes.push((ru?'Risk Score: ':'Risk Score: ')+prev.riskScore+' → '+current.riskScore+' '+(deltaRisk>0?'↗ +':'↘ ')+Math.abs(deltaRisk));
+    if(Math.abs(deltaRisk)>=3) changes.push('Risk Score: '+prev.riskScore+' → '+current.riskScore+' '+(deltaRisk>0?'↗ +':'↘ ')+Math.abs(deltaRisk));
     if(Math.abs(deltaValue)>=1) changes.push((ru?'Стоимость: ':'Value: ')+'$'+prev.totalUSDT.toFixed(2)+' → $'+current.totalUSDT.toFixed(2)+' ('+(deltaValue>=0?'+':'')+deltaValue.toFixed(1)+'%)');
-    [['btcPercent',ru?'BTC':'BTC'],['altPercent',ru?'Альткоины':'Alts'],['usdtPercent',ru?'Стейблкоины':'Stable']].forEach(function(x){var d=current[x[0]]-prev[x[0]];if(Math.abs(d)>=2)changes.push(x[1]+': '+prev[x[0]].toFixed(1)+'% → '+current[x[0]].toFixed(1)+'% ('+(d>=0?'+':'')+d.toFixed(1)+' pp)');});
+    [['btcPercent','BTC'],['altPercent',ru?'Альткоины':'Alts'],['usdtPercent',ru?'Стейблкоины':'Stable']].forEach(function(x){var d=current[x[0]]-prev[x[0]];if(Math.abs(d)>=2)changes.push(x[1]+': '+prev[x[0]].toFixed(1)+'% → '+current[x[0]].toFixed(1)+'% ('+(d>=0?'+':'')+d.toFixed(1)+' pp)');});
+    if(prev.topPosition&&current.topPosition&&prev.topPosition.symbol===current.topPosition.symbol){var dc=current.topPosition.weight-prev.topPosition.weight;if(Math.abs(dc)>=2)changes.push((ru?'Концентрация ':'Concentration ')+current.topPosition.symbol+': '+prev.topPosition.weight.toFixed(1)+'% → '+current.topPosition.weight.toFixed(1)+'%');}
+    if(Number(prev.coveragePct||100)!==Number(current.coveragePct||100))changes.push((ru?'Полнота данных: ':'Data completeness: ')+Number(prev.coveragePct||0)+'% → '+Number(current.coveragePct||0)+'%');
     return {deltaRisk:deltaRisk,deltaValue:deltaValue,changes:changes};
 }
+
 async function showPortfolioChanges(chatId) {
     var lang=await getData('lang_'+chatId)||'ru', snaps=await getPortfolioSnapshots(chatId);
     var text=lang==='ru'?'📈 *ЧТО ИЗМЕНИЛОСЬ*\n──────\n\n':'📈 *WHAT CHANGED*\n──────\n\n';
     if(snaps.length<2){text+=(lang==='ru'?'Недостаточно двух снимков. Обнови анализ сейчас и позже — тогда появится реальная динамика.':'Two snapshots are needed. Run analysis now and later to build real deltas.');}
-    else {var c=comparePortfolioSnapshots(snaps[snaps.length-2],snaps[snaps.length-1],lang);if(!c.changes.length)text+=(lang==='ru'?'Сегодня существенных изменений не обнаружено. Всё спокойно.':'No material changes detected. Everything is calm.');else {c.changes.forEach(function(x){text+='• '+x+'\n';});text+='\n'+(c.deltaRisk>5?(lang==='ru'?'⚠️ Риск заметно вырос.':'⚠️ Risk increased materially.'):(c.deltaRisk<-5?(lang==='ru'?'🟢 Риск снизился.':'🟢 Risk decreased.'): (lang==='ru'?'🟡 Изменения умеренные.':'🟡 Changes are moderate.')));}}
+    else {var c=comparePortfolioSnapshots(snaps[snaps.length-2],snaps[snaps.length-1],lang);if(!c.changes.length)text+=(lang==='ru'?'Сегодня существенных изменений не обнаружено. Всё спокойно.\n\n🧭 *Вывод:* структура портфеля существенно не изменилась — срочных действий по динамике не видно.':'No material changes detected. Everything is calm.\n\n🧭 *Takeaway:* the portfolio structure has not materially changed, so there is no urgent action indicated by the latest delta.');else {c.changes.forEach(function(x){text+='• '+x+'\n';});text+='\n'+(c.deltaRisk>5?(lang==='ru'?'⚠️ *Вывод:* риск заметно вырос — сначала проверь фактор, который дал основной прирост.':'⚠️ *Takeaway:* risk increased materially — first check the factor driving the increase.'):(c.deltaRisk<-5?(lang==='ru'?'🟢 *Вывод:* риск снизился — теперь важно проверить, какое изменение это дало.':'🟢 *Takeaway:* risk decreased — now verify which change produced the improvement.'):(lang==='ru'?'🟡 *Вывод:* изменения умеренные, без явного сигнала к срочному действию.':'🟡 *Takeaway:* changes are moderate, with no clear signal for urgent action.')));}}
     await sendUpdatedMessage(chatId,text,{inline_keyboard:[[{text:'🤖 '+(lang==='ru'?'Спросить AI':'Ask AI'),callback_data:'ai_changes'}],[{text:'🛠️ '+(lang==='ru'?'План исправления':'Fix plan'),callback_data:'action_rebalance'}],[{text:'← '+(lang==='ru'?'Портфель':'Portfolio'),callback_data:'menu_analyze'}]]},'Markdown');
 }
 
@@ -1536,6 +1574,18 @@ async function loadActiveWallet(chatId) {
     if(active==='demo'){var d=await loadDemoWallet(chatId); return d||await createDemoWallet(chatId);}
     var r=await loadUserKeys(chatId); return r?Object.assign({type:'real'},r):null;
 }
+function riskFactorDetail(f, analysis, lang) {
+    var ru=lang==='ru', a=analysis||{};
+    if(f.key==='concentration') return ru
+        ? ((a.topPosition&&a.topPosition.symbol)||'Один актив')+' занимает '+Number(a.topPosition&&a.topPosition.weight||0).toFixed(1)+'% портфеля.'
+        : ((a.topPosition&&a.topPosition.symbol)||'One asset')+' represents '+Number(a.topPosition&&a.topPosition.weight||0).toFixed(1)+'% of the portfolio.';
+    if(f.key==='reserve') return ru?'Стейблкоины: '+Number(a.usdtPercent||0).toFixed(1)+'% при цели '+Number(a.targetAllocation&&a.targetAllocation.USDT||20)+'%.':'Stablecoins: '+Number(a.usdtPercent||0).toFixed(1)+'% vs '+Number(a.targetAllocation&&a.targetAllocation.USDT||20)+'% target.';
+    if(f.key==='alt_exposure') return ru?'Альткоины: '+Number(a.altPercent||0).toFixed(1)+'% при цели '+Number(a.targetAllocation&&a.targetAllocation.ALTS||30)+'%.':'Altcoins: '+Number(a.altPercent||0).toFixed(1)+'% vs '+Number(a.targetAllocation&&a.targetAllocation.ALTS||30)+'% target.';
+    if(f.key==='diversification') return ru?'Значимых позиций (≥5%): '+((a.assets||[]).filter(function(x){return Number(x.weight)>=5;}).length)+'.':'Meaningful positions (≥5%): '+((a.assets||[]).filter(function(x){return Number(x.weight)>=5;}).length)+'.';
+    if(f.key==='data_quality') return ru?'Оценено '+Number(a.coveragePct||0)+'% активов; часть стоимости неизвестна.':'Only '+Number(a.coveragePct||0)+'% of assets are valued; part of portfolio value is unknown.';
+    return ru?'Высокая одновременная доля альткоинов и низкий ликвидный резерв.':'High alt exposure combined with a low liquid reserve.';
+}
+
 async function analyzePortfolio(chatId,lang) {
     var limit=await checkLimit(chatId,'analyze'); if(!limit.allowed)return {error:limit.reason};
     var wallet=await loadActiveWallet(chatId); if(!wallet)return {error:getText(lang,'analyzing_no_keys')};
@@ -1556,12 +1606,10 @@ async function analyzePortfolio(chatId,lang) {
     var btc=0,stable=0,alts=0; rows.forEach(function(r){if(r.symbol==='USDT')stable+=r.weight;else if(r.symbol==='BTC')btc+=r.weight;else alts+=r.weight;});
     var meaningful=rows.filter(function(r){return r.weight>=5;}),top=rows[0]?rows[0].weight:0,mode=await getData('mode_'+chatId)||'beginner';
     var targets=mode==='pro'?{BTC:40,USDT:20,ALTS:40}:{BTC:50,USDT:20,ALTS:30};
-    var score=0,drivers=[];
-    if(top>70){score+=40;drivers.push('extreme_concentration');}else if(top>60){score+=30;drivers.push('high_concentration');}else if(top>50){score+=20;drivers.push('concentration');}
-    if(stable<5){score+=30;drivers.push('very_low_reserve');}else if(stable<10){score+=20;drivers.push('low_reserve');}else if(stable<15){score+=10;drivers.push('below_target_reserve');}
-    if(alts>70){score+=25;drivers.push('very_high_alts');}else if(alts>60){score+=20;drivers.push('high_alts');}else if(alts>targets.ALTS){score+=10;drivers.push('alts_above_profile');}
-    if(meaningful.length<2){score+=20;drivers.push('single_asset_dependence');}else if(meaningful.length<CONFIG.RISK.MIN_MEANINGFUL_POSITIONS){score+=10;drivers.push('low_diversification');}
-    if(!coverageComplete){score+=15;drivers.push('incomplete_coverage');} score=Math.min(100,Math.round(score));
+    // Deterministic, auditable Risk Score. Every point shown to the user comes from a named factor.
+    var riskModel=calculateRiskBreakdown({top:top,weights:rows.map(function(x){return x.weight;}),stable:stable,alts:alts,meaningful:meaningful.length,coverageComplete:coverageComplete,targets:targets});
+    var score=riskModel.score,drivers=riskModel.drivers;
+    var riskBreakdown=riskModel.breakdown;
     var rec=[];
     if(!coverageComplete)rec.push(lang==='ru'?'Есть активы без подтверждённой цены: риск и стоимость могут быть занижены.':'Some assets have no confirmed price: value and risk may be understated.');
     if(stable<targets.USDT)rec.push(lang==='ru'?'Резерв ликвидности ниже целевых '+targets.USDT+'%.':'Liquidity reserve is below the '+targets.USDT+'% target.');
@@ -1569,7 +1617,12 @@ async function analyzePortfolio(chatId,lang) {
     if(alts>targets.ALTS)rec.push(lang==='ru'?'Доля альткоинов выше профиля '+targets.ALTS+'%.':'Altcoin exposure is above your '+targets.ALTS+'% profile target.');
     if(meaningful.length<CONFIG.RISK.MIN_MEANINGFUL_POSITIONS)rec.push(lang==='ru'?'Проверь, оправдана ли текущая концентрация твоей целью и горизонтом.':'Check whether current concentration fits your goal and horizon.');
     if(!rec.length)rec.push(lang==='ru'?'Критичных перекосов по текущим проверенным данным не найдено.':'No critical imbalance was found in the currently verified data.');
-    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':'medium',btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
+    var pricedAssets=rows.length, allPositiveAssets=pricedAssets+unknownAssets.length;
+    var coveragePct=allPositiveAssets?Math.round((pricedAssets/allPositiveAssets)*100):0;
+    var confidencePct=coveragePct;
+    var dataStatus=coveragePct===100?'FRESH':(coveragePct>0?'PARTIAL':'UNKNOWN');
+    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':'medium',btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
+    a.insight=await generateVerifiedInsight(a,lang);
     var previousSnapshot=await savePortfolioSnapshot(chatId,a); await setData('analysis_'+chatId,JSON.stringify(a),24*60*60); await addHistory(chatId,getText(lang,'history_analyze'),'Risk '+score+'/100; value ≈ $'+total.toFixed(2));
     return {success:true,analysis:a,remaining:limit.remaining};
 }
@@ -1624,6 +1677,10 @@ function formatOrdersAnalysis(result,lang){
     t+=(lang==='ru'?'Stop Loss: ':'Stop Loss: ')+(a.stopCoverage==='detected'?'🟢 '+a.stopCount:(a.stopCoverage==='not_detected'?'🔴 '+(lang==='ru'?'не найден':'not detected'):'⚪ Не определено'))+'\n\n';
     a.orders.slice(0,10).forEach(function(o){t+='• '+o.symbol+' — '+o.side+' '+o.type+' — '+o.status;if(o.price)t+=' @ '+o.price;if(o.stopPrice)t+=' | SL '+o.stopPrice;t+='\n';});
     if(a.issues.length){t+='\n⚠️ *'+(lang==='ru'?'Проблемы':'Issues')+'*\n';a.issues.forEach(function(x){t+='• '+x.text+'\n';});}
+    t+='\n🧭 *'+(lang==='ru'?'Вывод':'Takeaway')+'*\n';
+    if(a.stopCoverage==='detected') t+=(lang==='ru'?'Stop Loss обнаружен среди доступных данных. Проверь, что уровни соответствуют твоему риску и размеру позиции.':'Stop Loss was detected in the available data. Verify that the levels match your risk and position size.')+'\n';
+    else if(a.stopCoverage==='not_detected') t+=(lang==='ru'?'В доступных открытых ордерах Stop Loss не обнаружен. Это повод проверить защиту вручную, но не доказательство её отсутствия.':'No Stop Loss was detected in the available open orders. This is a reason to verify protection manually, not proof that none exists.')+'\n';
+    else t+=(lang==='ru'?'Статус защиты сейчас неизвестен — данных биржи недостаточно для уверенного вывода.':'Protection status is currently unknown because the exchange data is insufficient for a confident conclusion.')+'\n';
     t+='\n⚪ '+(lang==='ru'?'Если биржа не раскрывает trigger-поля, статус Stop Loss не удалось определить.':'If the exchange does not expose trigger fields, Stop Loss status remains UNKNOWN.');
     return t;
 }
@@ -1652,7 +1709,16 @@ function formatPortfolioAnalysis(r,lang){
         t+='• '+(ru?'Качество данных':'Data quality')+': '+(a.coverageComplete?(ru?'полное':'complete'):(ru?'частичное':'partial'))+'\n';
         t+='\n📌 '+(ru?'Важно: RSI/MA20/Sharpe не рассчитываются без истории цен достаточной длины — я не буду выдумывать эти метрики.':'Important: RSI/MA20/Sharpe are not calculated without a sufficiently long price history — I will not invent them.')+'\n';
     }
-    t+='\n🔎 *'+(ru?'Крупнейшие позиции':'Largest positions')+'*\n';
+        t+=formatInsightBlock(a.insight,lang);
+    var topFactor=(a.riskBreakdown||[]).slice().sort(function(x,y){return Number(y.points)-Number(x.points);})[0];
+    t+='\n🧾 *'+(ru?'ПОЧЕМУ ЭТОТ БАЛЛ':'WHY THIS SCORE')+'*\n';
+    (a.riskBreakdown||[]).forEach(function(f){if(Number(f.points)>0){t+='• '+(ru?f.labelRu:f.labelEn)+': +'+f.points+' — '+riskFactorDetail(f,a,lang)+'\n';if(f.key==='concentration'&&Array.isArray(f.subFactors)){f.subFactors.forEach(function(sf,i){if(Number(sf.points)>0&&a.assets&&a.assets[i])t+='  ↳ '+a.assets[i].symbol+': '+Number(sf.weight).toFixed(1)+'% → +'+sf.points+'\n';});}}});
+    t+='• '+(ru?'Итого':'Total')+': *'+a.riskScore+'/100*\n';
+    if(topFactor&&topFactor.points>0)t+='🎯 '+(ru?'Главная причина: ':'Main reason: ')+(ru?topFactor.labelRu:topFactor.labelEn)+'.\n';
+    if(a.topPosition&&a.topPosition.weight>0){var impact=(a.topPosition.weight*0.30);t+='📉 '+(ru?'При падении крупнейшей позиции на 30% вклад в снижение портфеля был бы около ':'A 30% drop in the largest position would reduce the portfolio by about ')+impact.toFixed(1)+'%.\n';}
+    t+='📡 '+(ru?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(ru?'полноты':'complete')+', '+Number(a.confidencePct||0)+'% '+(ru?'надёжности':'confidence')+', '+String(a.dataStatus||'UNKNOWN')+'\n';
+
+t+='\n🔎 *'+(ru?'Крупнейшие позиции':'Largest positions')+'*\n';
     a.assets.slice(0,5).forEach(function(x){t+='• '+x.symbol+': '+x.weight.toFixed(1)+'% ($'+x.value.toFixed(2)+')\n';});
     if(a.unknownAssets&&a.unknownAssets.length)t+='• ❓ '+(ru?'Без оценки':'Unpriced')+': '+a.unknownAssets.slice(0,5).map(function(x){return x.symbol;}).join(', ')+'\n';
     t+='\n⚠️ '+(ru?'Void Node снижает информационные и операционные риски, но не гарантирует отсутствие рыночных убытков.':'Void Node reduces information and operational risk; it cannot guarantee against market losses.')+'\n';
@@ -2040,72 +2106,74 @@ async function showWalletMenu(chatId) {
 }
 
 function getMainMenuKeyboard(lang) {
-    return {
-        inline_keyboard: [
-            [{ text: '📊 ' + getText(lang, 'main_functions'), callback_data: 'menu_functions' }, 
-             { text: '⚙️ ' + getText(lang, 'main_settings'), callback_data: 'menu_settings_new' }],
-            [{ text: '💳 ' + getText(lang, 'main_plans'), callback_data: 'menu_plans' }, 
-             { text: '👥 ' + (lang === 'ru' ? 'Приведи друга' : 'Invite friend'), callback_data: 'menu_referral' }],
-            [{ text: '❓ ' + getText(lang, 'main_help'), callback_data: 'menu_help' }, 
-             { text: 'ℹ️ ' + getText(lang, 'main_about'), callback_data: 'menu_about' }]
-        ]
-    };
+    var ru = lang === 'ru';
+    return { inline_keyboard: [
+        [{ text: '📊 ' + (ru ? 'Мой портфель' : 'My Portfolio'), callback_data: 'menu_analyze' },
+         { text: '❤️ ' + (ru ? 'Пульс рынка' : 'Market Pulse'), callback_data: 'menu_pulse' }],
+        [{ text: '🛡️ ' + (ru ? 'Защита' : 'Protection'), callback_data: 'menu_protection' },
+         { text: '🤖 ' + (ru ? 'AI Советник' : 'AI Advisor'), callback_data: 'menu_ai' }],
+        [{ text: '🧰 ' + (ru ? 'Инструменты' : 'Tools'), callback_data: 'menu_tools' }],
+        [{ text: '💳 ' + (ru ? 'Тариф' : 'Plan'), callback_data: 'menu_plans' },
+         { text: '⚙️ ' + (ru ? 'Настройки' : 'Settings'), callback_data: 'menu_settings_new' }],
+        [{ text: '❓ ' + (ru ? 'Помощь' : 'Help'), callback_data: 'menu_help' },
+         { text: 'ℹ️ ' + (ru ? 'О Void Node' : 'About Void Node'), callback_data: 'menu_about' }]
+    ] };
 }
 
 function getFunctionsMenuKeyboard(lang) {
+    var ru = lang === 'ru';
     return { inline_keyboard: [
-        [{ text: '📊 ' + (lang === 'ru' ? 'Портфель и риск' : 'Portfolio & Risk'), callback_data: 'menu_analyze' }],
-        [{ text: '🛡️ ' + (lang === 'ru' ? 'Центр защиты' : 'Protection Center'), callback_data: 'menu_protection' }],
-        [{ text: '📈 ' + getText(lang, 'market_menu'), callback_data: 'menu_market' }],
-        [{ text: '🤖 ' + (lang === 'ru' ? 'AI Советник' : 'AI Advisor'), callback_data: 'menu_ai' }],
-        [{ text: '🧰 ' + getText(lang, 'functions_tools'), callback_data: 'menu_tools' }],
-        [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+        [{ text: '📊 ' + (ru ? 'Мой портфель' : 'My Portfolio'), callback_data: 'menu_analyze' }],
+        [{ text: '🛡️ ' + (ru ? 'Защита и риски' : 'Protection & Risk'), callback_data: 'menu_protection' }],
+        [{ text: '📈 ' + (ru ? 'Рынок' : 'Market'), callback_data: 'menu_market' }],
+        [{ text: '🤖 ' + (ru ? 'AI Советник' : 'AI Advisor'), callback_data: 'menu_ai' }],
+        [{ text: '🧰 ' + (ru ? 'Инструменты' : 'Tools'), callback_data: 'menu_tools' }],
+        [{ text: '← ' + (ru ? 'Главное меню' : 'Main menu'), callback_data: 'back_to_menu' }]
     ] };
 }
 
 function getToolsMenuKeyboard(lang) {
+    var ru = lang === 'ru';
     return { inline_keyboard: [
-        [{ text: '🛡️ ' + (lang === 'ru' ? 'Антискам' : 'Anti-scam'), callback_data: 'menu_security' }],
-        [{ text: '🔔 ' + (lang === 'ru' ? 'Оповещения' : 'Alerts'), callback_data: 'menu_alerts' }],
-        [{ text: '🧾 ' + (lang === 'ru' ? 'Ордера и Stop Loss' : 'Orders & Stop Loss'), callback_data: 'menu_orders' }],
-        [{ text: '📋 ' + getText(lang, 'functions_history'), callback_data: 'menu_history' }],
-        [{ text: '👛 ' + (lang === 'ru' ? 'Кошелёк' : 'Wallet'), callback_data: 'menu_wallet' }],
-        [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
+        [{ text: '🛡️ ' + (ru ? 'Проверить угрозу' : 'Check a threat'), callback_data: 'menu_security' }],
+        [{ text: '🔔 ' + (ru ? 'Оповещения' : 'Alerts'), callback_data: 'menu_alerts' }],
+        [{ text: '🧾 ' + (ru ? 'Ордера и Stop Loss' : 'Orders & Stop Loss'), callback_data: 'menu_orders' }],
+        [{ text: '📋 ' + (ru ? 'История и отчёты' : 'History & Reports'), callback_data: 'menu_history' }],
+        [{ text: '👛 ' + (ru ? 'Кошелёк' : 'Wallet'), callback_data: 'menu_wallet' }],
+        [{ text: '← ' + (ru ? 'Назад' : 'Back'), callback_data: 'back_to_functions' }]
     ] };
 }
 
 async function showToolsMenu(chatId) {
     var lang = await getData('lang_' + chatId) || 'ru';
     var text = lang === 'ru'
-        ? '🧰 *ИНСТРУМЕНТЫ*\n──────\n\n🛡️ Антискам — проверка внешних угроз.\n🔔 Оповещения — уведомления по заданным условиям.\n🧾 Ордера и Stop Loss — контроль защитных ордеров.\n📋 История — прошлые проверки и действия.\n👛 Кошелёк — Demo / Read-only портфель.'
-        : '🧰 *TOOLS*\n──────\n\n🛡️ Anti-scam — check external threats.\n🔔 Alerts — notifications for your conditions.\n🧾 Orders & Stop Loss — protective order checks.\n📋 History — previous checks and actions.\n👛 Wallet — Demo / Read-only portfolio.';
+        ? '🧰 *ИНСТРУМЕНТЫ*\n──────\n\nВыбери конкретную задачу. Здесь только дополнительные инструменты Void Node.'
+        : '🧰 *TOOLS*\n──────\n\nChoose a specific task. These are the additional Void Node tools.';
     await sendUpdatedMessage(chatId, text, getToolsMenuKeyboard(lang), 'Markdown');
 }
 
 function getSecurityMenuKeyboard(lang) {
-    return {
-        inline_keyboard: [
-            [{ text: '🔗 ' + getText(lang, 'security_link'), callback_data: 'antiscam_url' }, 
-             { text: '📄 ' + getText(lang, 'security_contract'), callback_data: 'antiscam_contract' }],
-            [{ text: '📁 ' + getText(lang, 'security_file'), callback_data: 'antiscam_file' }, 
-             { text: '🔍 ' + getText(lang, 'security_dex'), callback_data: 'antiscam_dex' }],
-            [{ text: '🔄 ' + getText(lang, 'security_impersonation'), callback_data: 'antiscam_impersonation' }, 
-             { text: '👛 ' + getText(lang, 'security_wallet'), callback_data: 'antiscam_wallet' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
-        ]
-    };
+    var ru = lang === 'ru';
+    return { inline_keyboard: [
+        [{ text: '🔗 ' + (ru ? 'Ссылка' : 'Link'), callback_data: 'antiscam_url' },
+         { text: '🧾 ' + (ru ? 'Контракт' : 'Contract'), callback_data: 'antiscam_contract' }],
+        [{ text: '📁 ' + (ru ? 'Файл' : 'File'), callback_data: 'antiscam_file' },
+         { text: '👛 ' + (ru ? 'Адрес кошелька' : 'Wallet address'), callback_data: 'antiscam_wallet' }],
+        [{ text: '🔍 ' + (ru ? 'DEX / адрес' : 'DEX / address'), callback_data: 'antiscam_dex' },
+         { text: '🔄 ' + (ru ? 'Похожий аккаунт' : 'Impersonation'), callback_data: 'antiscam_impersonation' }],
+        [{ text: '← ' + (ru ? 'Назад' : 'Back'), callback_data: 'back_to_tools' }]
+    ] };
 }
 
 function getMarketMenuKeyboard(lang) {
-    return {
-        inline_keyboard: [
-            [{ text: '❤️ ' + (lang === 'ru' ? 'Пульс рынка' : 'Market Pulse'), callback_data: 'menu_pulse' }],
-            [{ text: '📰 ' + getText(lang, 'market_news'), callback_data: 'menu_news' }],
-            [{ text: '📊 ' + getText(lang, 'market_social'), callback_data: 'menu_social' }],
-            [{ text: '📅 ' + getText(lang, 'market_calendar'), callback_data: 'menu_calendar' }],
-            [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
-        ]
-    };
+    var ru = lang === 'ru';
+    return { inline_keyboard: [
+        [{ text: '❤️ ' + (ru ? 'Пульс рынка' : 'Market Pulse') , callback_data: 'menu_pulse' }],
+        [{ text: '📰 ' + (ru ? 'Новости' : 'News'), callback_data: 'menu_news' },
+         { text: '📅 ' + (ru ? 'Календарь' : 'Calendar'), callback_data: 'menu_calendar' }],
+        [{ text: '📊 ' + (ru ? 'Соц.тренды' : 'Social trends'), callback_data: 'menu_social' }],
+        [{ text: '← ' + (ru ? 'Главное меню' : 'Main menu'), callback_data: 'back_to_menu' }]
+    ] };
 }
 
 function getSocialTrendsKeyboard(lang) {
@@ -2193,32 +2261,27 @@ function getHelpMenuKeyboard(lang) {
 }
 
 function getAnalyzeMenuKeyboard(lang) {
-    return {
-        inline_keyboard: [
-            [{ text: '📊 ' + (lang === 'ru' ? 'Полный анализ' : 'Full analysis'), callback_data: 'action_analyze' }],
-            [{ text: '🧾 ' + (lang === 'ru' ? 'Ордера и Stop Loss' : 'Orders & Stop Loss'), callback_data: 'menu_orders' }],
-            [{ text: '📥 ' + (lang === 'ru' ? 'CSV отчет' : 'CSV report'), callback_data: 'action_export_csv' }],
-            [{ text: '🔄 ' + (lang === 'ru' ? 'Ребаланс' : 'Rebalance'), callback_data: 'action_rebalance' }],
-            [{ text: '🤖 ' + (lang === 'ru' ? 'AI Советник' : 'AI Advisor'), callback_data: 'menu_ai' }],
-            [{ text: '📝 ' + (lang === 'ru' ? 'Дневник настроения' : 'Mood Diary'), callback_data: 'menu_diary' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
-        ]
-    };
+    var ru = lang === 'ru';
+    return { inline_keyboard: [
+        [{ text: '🔍 ' + (ru ? 'Запустить анализ' : 'Run analysis'), callback_data: 'action_analyze' }],
+        [{ text: '📈 ' + (ru ? 'Что изменилось?' : 'What changed?'), callback_data: 'portfolio_changes' }],
+        [{ text: '🛡️ ' + (ru ? 'Почему такой риск?' : 'Why this risk?'), callback_data: 'menu_protection' }],
+        [{ text: '🛠️ ' + (ru ? 'План улучшения' : 'Improvement plan'), callback_data: 'action_rebalance' }],
+        [{ text: '🧾 ' + (ru ? 'Ордера и Stop Loss' : 'Orders & Stop Loss'), callback_data: 'menu_orders' }],
+        [{ text: '🤖 ' + (ru ? 'Объяснить с AI' : 'Explain with AI'), callback_data: 'menu_ai' }],
+        [{ text: '← ' + (ru ? 'Назад' : 'Back'), callback_data: 'back_to_functions' }]
+    ] };
 }
 
 
 function getAlertMenuKeyboard(lang) {
-    return {
-        inline_keyboard: [
-            [{ text: '📊 ' + getText(lang, 'alert_price'), callback_data: 'alert_price' }],
-            [{ text: '📈 ' + getText(lang, 'alert_change'), callback_data: 'alert_change' }],
-            [{ text: '📊 ' + getText(lang, 'alert_volume'), callback_data: 'alert_volume' }],
-            [{ text: '📰 ' + getText(lang, 'alert_news'), callback_data: 'alert_news' }],
-            [{ text: '📅 ' + getText(lang, 'alert_calendar'), callback_data: 'alert_calendar' }],
-            [{ text: '📋 ' + (lang === 'ru' ? 'Список' : 'List'), callback_data: 'alert_list' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
-        ]
-    };
+    var ru = lang === 'ru';
+    return { inline_keyboard: [
+        [{ text: '➕ ' + (ru ? 'Создать оповещение' : 'Create alert'), callback_data: 'alert_price' }],
+        [{ text: '📋 ' + (ru ? 'Мои оповещения' : 'My alerts'), callback_data: 'alert_list' }],
+        [{ text: '⚙️ ' + (ru ? 'Настройки уведомлений' : 'Notification settings'), callback_data: 'settings_notifications' }],
+        [{ text: '← ' + (ru ? 'Назад' : 'Back'), callback_data: 'back_to_tools' }]
+    ] };
 }
 
 function getDiaryMenuKeyboard(lang) {
@@ -2271,17 +2334,17 @@ function getBackKeyboard(lang) {
 }
 
 function getAIMenuKeyboard(lang) {
-    return {
-        inline_keyboard: [
-            [{ text: '💬 ' + (lang === 'ru' ? 'Начать диалог' : 'Start Chat'), callback_data: 'ai_chat_start' }],
-            [{ text: '📊 ' + (lang === 'ru' ? 'Показать портфель' : 'Show Portfolio'), callback_data: 'ai_portfolio' }],
-            [{ text: '📈 ' + (lang === 'ru' ? 'Оценить риск' : 'Assess Risk'), callback_data: 'ai_risk' }],
-            [{ text: '📰 ' + (lang === 'ru' ? 'Свежие новости' : 'Latest News'), callback_data: 'ai_news' }],
-            [{ text: '🔄 ' + (lang === 'ru' ? 'Обновить данные' : 'Refresh Data'), callback_data: 'ai_refresh' }],
-            [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
-        ]
-    };
+    var ru = lang === 'ru';
+    return { inline_keyboard: [
+        [{ text: '📊 ' + (ru ? 'Разобрать мой портфель' : 'Analyze my portfolio'), callback_data: 'ai_portfolio' }],
+        [{ text: '🛡️ ' + (ru ? 'Разобрать мой риск' : 'Analyze my risk'), callback_data: 'ai_risk' }],
+        [{ text: '🔄 ' + (ru ? 'Что изменилось?' : 'What changed?'), callback_data: 'ai_changes' }],
+        [{ text: '📰 ' + (ru ? 'Что происходит на рынке?' : 'What is happening in the market?'), callback_data: 'ai_news' }],
+        [{ text: '💬 ' + (ru ? 'Задать вопрос' : 'Ask a question'), callback_data: 'ai_chat_start' }],
+        [{ text: '← ' + (ru ? 'Назад' : 'Back'), callback_data: 'back_to_functions' }]
+    ] };
 }
+
 
 // ============================================================
 // 14. ALL MENUS
@@ -2367,12 +2430,12 @@ async function showOrdersMenu(chatId) {
 
 async function showFunctionsMenu(chatId) {
     var lang = await getData('lang_' + chatId) || 'ru';
-    await sendUpdatedMessage(chatId, getText(lang, 'functions_title') + '\n\n' + getText(lang, 'functions_core_hint'), getFunctionsMenuKeyboard(lang), 'Markdown');
+    await sendUpdatedMessage(chatId, lang === 'ru' ? '📊 *ФУНКЦИИ*\n──────\n\nВыбери, что хочешь сделать сейчас. Каждый раздел работает отдельно.' : '📊 *FUNCTIONS*\n──────\n\nChoose what you want to do now. Each section works independently.', getFunctionsMenuKeyboard(lang), 'Markdown');
 }
 
 async function showSecurityMenu(chatId) {
     var lang = await getData('lang_' + chatId) || 'ru';
-    await sendUpdatedMessage(chatId, getText(lang, 'security_menu'), getSecurityMenuKeyboard(lang));
+    await sendUpdatedMessage(chatId, lang === 'ru' ? '🛡️ *ПРОВЕРКА УГРОЗ*\n──────\n\nВыбери, что хочешь проверить.\n\nЕсли подтверждённых данных недостаточно, результат будет *UNKNOWN*.' : '🛡️ *THREAT CHECK*\n──────\n\nChoose what you want to check.\n\nIf confirmed evidence is insufficient, the result will be *UNKNOWN*.', getSecurityMenuKeyboard(lang), 'Markdown');
 }
 
 async function showMarketPulse(chatId) {
@@ -2388,8 +2451,8 @@ async function showMarketPulse(chatId) {
         text+='Состояние: *'+state+'*\n\n';
         [[btc,'BTC'],[eth,'ETH'],[sol,'SOL']].forEach(function(x){if(x[0].current_price)text+='• '+x[1]+': $'+Number(x[0].current_price).toLocaleString('en-US',{maximumFractionDigits:2})+' · '+(Number(x[0].price_change_percentage_24h)>=0?'+':'')+Number(x[0].price_change_percentage_24h||0).toFixed(1)+'%\n';});
         var aRaw=await getData('analysis_'+chatId);var a=aRaw?(typeof aRaw==='string'?JSON.parse(aRaw):aRaw):null;
-        if(a){var relevant='';if(Number(a.solPercent||0)>10 && sol.price_change_percentage_24h< -3) relevant=lang==='ru'?'\n⚠️ SOL заметно слабее, а его доля в твоём портфеле значимая.':'\n⚠️ SOL is materially weaker while it is a meaningful portfolio position.';if(Number(a.btcPercent||0)>40)relevant+='\n📊 '+(lang==='ru'?'BTC имеет большой вес в твоём портфеле.':'BTC has a large portfolio weight.');if(relevant)text+=relevant+'\n';}
-        text+='\n'+(lang==='ru'?'Главное: это состояние рынка, а не сигнал BUY/SELL.':'Important: this is market state, not a BUY/SELL signal.');
+        if(a){var relevant='';if(Number(a.altPercent||0)>10 && sol.price_change_percentage_24h< -3) relevant=lang==='ru'?'\n⚠️ SOL заметно слабее, а его доля в твоём портфеле значимая.':'\n⚠️ SOL is materially weaker while it is a meaningful portfolio position.';if(Number(a.btcPercent||0)>40)relevant+='\n📊 '+(lang==='ru'?'BTC имеет большой вес в твоём портфеле.':'BTC has a large portfolio weight.');if(relevant)text+=relevant+'\n';}
+        text+='\n🧭 *'+(lang==='ru'?'Вывод':'Takeaway')+'*\n'+(lang==='ru'?(m<=-2?'Рынок сейчас под давлением. Если у тебя высокая доля рисковых активов, важнее контролировать экспозицию, чем пытаться угадать дно.':m>=3?'Рынок показывает сильный импульс. Это не подтверждает продолжение движения, поэтому не стоит принимать решение только из-за роста.':'Рынок без выраженного экстремума. Сейчас полезнее смотреть на изменения твоего портфеля и концентрацию, чем на один показатель 24h.'):(m<=-2?'The market is under pressure. If your portfolio has high risk exposure, controlling exposure matters more than trying to call a bottom.':m>=3?'The market shows strong momentum. That does not confirm continuation, so do not act on the rise alone.':'The market has no strong extreme. It is more useful to watch your portfolio changes and concentration than one 24h metric.'))+'\n\n'+(lang==='ru'?'Это состояние рынка, а не сигнал BUY/SELL.':'This is market state, not a BUY/SELL signal.');
         await sendUpdatedMessage(chatId,text,{inline_keyboard:[[{text:'📰 '+(lang==='ru'?'Новости':'News'),callback_data:'menu_news'},{text:'📊 '+(lang==='ru'?'Портфель':'Portfolio'),callback_data:'menu_analyze'}],[{text:'🤖 AI',callback_data:'menu_ai'},{text:getText(lang,'back_to_market'),callback_data:'menu_market'}]]},'Markdown');
         await addHistory(chatId,lang==='ru'?'❤️ Пульс рынка':'❤️ Market Pulse','BTC/ETH/SOL 24h');
     } catch(e) {
@@ -2399,7 +2462,7 @@ async function showMarketPulse(chatId) {
 
 async function showMarketMenu(chatId) {
     var lang = await getData('lang_' + chatId) || 'ru';
-    await sendUpdatedMessage(chatId, '📈 *' + (lang === 'ru' ? 'РЫНОК' : 'MARKET') + '*\n──────\n\n' + getText(lang, 'market_menu_desc'), getMarketMenuKeyboard(lang), 'Markdown');
+    await sendUpdatedMessage(chatId, lang === 'ru' ? '📈 *РЫНОК*\n──────\n\nЧто хочешь узнать сейчас?' : '📈 *MARKET*\n──────\n\nWhat do you want to know right now?', getMarketMenuKeyboard(lang), 'Markdown');
 }
 
 async function showSocialTrends(chatId) {
@@ -2473,7 +2536,7 @@ async function showTradingDisabled(chatId) { var lang=await getData('lang_'+chat
 
 async function showAlertMenu(chatId) {
     var lang = await getData('lang_' + chatId) || 'ru';
-    await sendUpdatedMessage(chatId, (lang === 'ru' ? '🔔 *ОПОВЕЩЕНИЯ*\n──────\n\nЗадай условие — Void Node пришлёт уведомление.\n\n💰 Цена • 📈 Изменение • 📊 Объём • 📰 Новость • 📅 Календарь\n\nВыбери тип:' : '🔔 *ALERTS*\n──────\n\nSet a condition — Void Node will notify you when it happens.\n\n💰 Price • 📈 Change • 📊 Volume • 📰 News • 📅 Calendar\n\nChoose a type:'), getAlertMenuKeyboard(lang), 'Markdown');
+    await sendUpdatedMessage(chatId, lang === 'ru' ? '🔔 *ОПОВЕЩЕНИЯ*\n──────\n\nСоздай условие или посмотри уже активные оповещения.' : '🔔 *ALERTS*\n──────\n\nCreate a condition or review your active alerts.', getAlertMenuKeyboard(lang), 'Markdown');
 }
 
 async function showRebalancePreview(chatId) {
@@ -2503,7 +2566,7 @@ async function showProtectionDashboard(chatId){
     t+=(wallet?(wallet.type==='demo'?'🧪 Демо-режим':'👁️ Read-only подключён'):'⚪ Кошелёк не подключён')+'\n';
     if(a)t+=em+' Risk Score: *'+a.riskScore+'/100*\n';
     t+=(a?(fresh?'🟢 ':'🟡 ')+(lang==='ru'?'Анализ':'Analysis')+': '+age+' мин. назад':'⚪ '+(lang==='ru'?'Анализ ещё не создан':'No analysis yet'))+'\n';
-    if(a)t+='🔎 '+(lang==='ru'?'Надёжность данных':'Confidence')+': '+(a.confidence==='high'?'High':'Medium')+' | 📡 '+(a.coverageComplete?'Complete':'Partial')+'\n';
+    if(a)t+='🔎 '+(lang==='ru'?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(lang==='ru'?'полноты':'complete')+' | '+Number(a.confidencePct||0)+'% '+(lang==='ru'?'надёжности':'confidence')+' | '+String(a.dataStatus||'UNKNOWN')+'\n';
     t+='🔔 '+(lang==='ru'?'Активных оповещений: ':'Active alerts: ')+alerts.length+'\n\n';
     if(fixes.length){
         t+=(lang==='ru'?'🚨 *ЧТО ТРЕБУЕТ ВНИМАНИЯ*':'🚨 *WHAT NEEDS ATTENTION*')+'\n';
@@ -2528,8 +2591,16 @@ async function showHistoryMenu(chatId) {
         text += '\n';
     }
     if (snapshots.length) {
-        var first=snapshots[0], last=snapshots[snapshots.length-1];
-        text += lang==='ru' ? '📈 *Risk Score за период:* ' + first.riskScore + ' → ' + last.riskScore + '\n' : '📈 *Risk Score over period:* ' + first.riskScore + ' → ' + last.riskScore + '\n';
+        var now=Date.now(), last=snapshots[snapshots.length-1];
+        function snapAgo(days){var cutoff=now-days*86400000, candidate=null;for(var i=snapshots.length-1;i>=0;i--){if(Number(snapshots[i].timestamp||0)<=cutoff){candidate=snapshots[i];break;}}return candidate||snapshots[0];}
+        var s1=snapAgo(1),s7=snapAgo(7),s30=snapAgo(30);
+        function line(label,base){var d=last.riskScore-base.riskScore;return label+' '+base.riskScore+' → '+last.riskScore+' ('+(d>0?'+':'')+d+')\n';}
+        text += '🛡️ *Risk Score*\n';
+        text += line(lang==='ru'?'Сегодня / ~24ч:':'Today / ~24h:',s1);
+        text += line(lang==='ru'?'7 дней:':'7 days:',s7);
+        text += line(lang==='ru'?'30 дней:':'30 days:',s30);
+        var overall=last.riskScore-s7.riskScore;
+        text += lang==='ru' ? ('\n'+(overall<0?'🟢 За 7 дней риск снизился на '+Math.abs(overall)+' пунктов.':overall>0?'🔴 За 7 дней риск вырос на '+overall+' пунктов.':'🟡 За 7 дней заметного изменения риска нет.')+'\n') : ('\n'+(overall<0?'🟢 Risk decreased by '+Math.abs(overall)+' points in 7 days.':overall>0?'🔴 Risk increased by '+overall+' points in 7 days.':'🟡 No material risk change in 7 days.')+'\n');
     }
     var kb={inline_keyboard:[
         [{text:'📅 '+(lang==='ru'?'Недельный отчёт':'Weekly report'),callback_data:'history_weekly'}],
@@ -2538,6 +2609,20 @@ async function showHistoryMenu(chatId) {
         [{text:getText(lang,'back_to_functions'),callback_data:'back_to_functions'}]
     ]};
     await sendUpdatedMessage(chatId,text,kb,'Markdown');
+}
+
+async function showRiskHistory(chatId) {
+    var lang=await getData('lang_'+chatId)||'ru', snaps=await getPortfolioSnapshots(chatId);
+    var text=lang==='ru'?'🛡️ *ИСТОРИЯ RISK SCORE*\n──────\n\n':'🛡️ *RISK SCORE HISTORY*\n──────\n\n';
+    if(snaps.length<2){text+=lang==='ru'?'Нужно минимум два снимка. Запускай анализ после заметных изменений, чтобы Void Node мог проверить результат.':'At least two snapshots are needed. Run analysis after meaningful changes so Void Node can verify the result.';}
+    else {
+        var last=snaps[snaps.length-1], periods=[['24ч',1],['7д',7],['30д',30]];
+        periods.forEach(function(p){var cutoff=Date.now()-p[1]*86400000,base=null;for(var i=snaps.length-1;i>=0;i--){if(Number(snaps[i].timestamp||0)<=cutoff){base=snaps[i];break;}}if(!base)base=snaps[0];var d=last.riskScore-base.riskScore;text+= '• '+p[0]+': '+base.riskScore+' → *'+last.riskScore+'* ('+(d>0?'+':'')+d+')\n';});
+        if(last.topPosition)text+='\n🎯 '+(lang==='ru'?'Крупнейшая позиция':'Largest position')+': '+last.topPosition.symbol+' '+Number(last.topPosition.weight||0).toFixed(1)+'%\n';
+        text+='📡 '+(lang==='ru'?'Последние данные':'Latest data')+': '+Number(last.coveragePct||0)+'% / '+String(last.dataStatus||'UNKNOWN')+'\n';
+        text+='\n'+(lang==='ru'?'Verify работает на сравнении снимков: Void Node показывает не только новый балл, но и изменение структуры риска.':'Verify compares snapshots: Void Node shows not only the new score, but also how the risk structure changed.');
+    }
+    await sendUpdatedMessage(chatId,text,{inline_keyboard:[[{text:'📈 '+(lang==='ru'?'Что изменилось':'What changed'),callback_data:'portfolio_changes'}],[{text:'📊 '+(lang==='ru'?'Обновить анализ':'Refresh analysis'),callback_data:'action_analyze'}],[{text:getText(lang,'back_to_history'),callback_data:'menu_history'}]]},'Markdown');
 }
 
 async function showWeeklyReport(chatId) {
@@ -2550,7 +2635,7 @@ async function showWeeklyReport(chatId) {
         text+='🛡️ Risk Score: *'+first.riskScore+' → '+last.riskScore+'* '+(last.riskScore<first.riskScore?'🟢':'↗️')+'\n';
         text+='💰 '+(lang==='ru'?'Стоимость портфеля':'Portfolio value')+': *$'+Number(first.totalUSDT||0).toFixed(2)+' → $'+Number(last.totalUSDT||0).toFixed(2)+'* ('+(rp>=0?'+':'')+rp.toFixed(1)+'%)\n';
         text+='📐 '+(lang==='ru'?'BTC':'BTC')+': '+Number(last.btcPercent||0).toFixed(1)+'% · '+(lang==='ru'?'Альткоины':'Alts')+': '+Number(last.altPercent||0).toFixed(1)+'% · '+(lang==='ru'?'Стейблкоины':'Stable')+': '+Number(last.usdtPercent||0).toFixed(1)+'%\n\n';
-        text+=(lang==='ru'?'Главный вывод: ':'Main takeaway: ')+(last.riskScore<first.riskScore?(lang==='ru'?'структура риска улучшилась.':'risk structure improved.'):(lang==='ru'?'существенного улучшения риска не зафиксировано.':'no material risk improvement was recorded.'));
+        text+=(lang==='ru'?'🧭 *Главный вывод:* ':'🧭 *Main takeaway:* ')+(last.riskScore<first.riskScore?(lang==='ru'?'структура риска улучшилась. Следующий шаг — проверить, какой фактор дал основное снижение.':'risk structure improved. Next, verify which factor drove the improvement.'):(last.riskScore>first.riskScore?(lang==='ru'?'риск вырос. Следующий шаг — проверить причину роста, а не реагировать только на сам балл.':'risk increased. Next, check the driver rather than reacting to the score alone.'):(lang==='ru'?'существенного изменения риска не зафиксировано.':'no material risk change was recorded.')));
     }
     await sendUpdatedMessage(chatId,text,{inline_keyboard:[[{text:'📈 '+(lang==='ru'?'Что изменилось':'What changed'),callback_data:'portfolio_changes'}],[{text:getText(lang,'back_to_history'),callback_data:'menu_history'}]]},'Markdown');
 }
@@ -3694,6 +3779,75 @@ var FREE_MODELS = [
 
 var CURRENT_AI_MODEL = FREE_MODELS[0];
 
+// ============================================================
+// 24.0. VERIFIED NARRATIVE LAYER
+// Facts come from deterministic engines. AI may only explain them.
+// If AI is unavailable, the deterministic fallback is used.
+// ============================================================
+function riskLevelText(level, lang) {
+    var ru=lang==='ru';
+    return ru ? ({critical:'Критический',high:'Высокий',medium:'Средний',low:'Низкий'}[level]||'Неизвестный') : ({critical:'Critical',high:'High',medium:'Medium',low:'Low'}[level]||'Unknown');
+}
+function buildDeterministicInsight(a, lang) {
+    var ru=lang==='ru', breakdown=(a&&a.riskBreakdown)||[];
+    var top=breakdown.slice().sort(function(x,y){return Number(y.points)-Number(x.points);})[0];
+    var topText=top ? (ru?top.labelRu:top.labelEn) : (ru?'критичный фактор не выделен':'no dominant factor');
+    var conclusion;
+    if(!a) conclusion=ru?'Данных для вывода пока недостаточно.':'There is not enough data for a conclusion yet.';
+    else if(a.dataStatus==='UNKNOWN' || Number(a.coveragePct||0)<50) conclusion=ru?'Главное сейчас — восстановить качество данных. До этого риск нельзя считать надёжным.':'The priority is to restore data quality. Until then, the risk score should not be treated as reliable.';
+    else if(a.riskLevel==='critical' || a.riskLevel==='high') conclusion=ru?'Главный риск — '+topText+'. Сначала стоит убрать именно этот перекос, а затем повторить анализ.':'The main risk is '+topText+'. Address that imbalance first, then verify with a fresh analysis.';
+    else if(a.riskLevel==='medium') conclusion=ru?'Портфель не выглядит критичным, но есть точки для улучшения. Следи прежде всего за '+topText.toLowerCase()+'.':'The portfolio is not critical, but there are areas to improve. Watch '+topText.toLowerCase()+' first.';
+    else conclusion=ru?'По текущим подтверждённым данным критичного перекоса не видно. Сейчас важнее следить за изменениями, чем менять портфель без причины.':'No critical imbalance is visible in the currently verified data. Monitoring changes is more useful than making changes without a reason.';
+    var why=top ? (ru?top.labelRu:top.labelEn) : (ru?'Базовые факторы риска':'Baseline risk factors');
+    var action;
+    if(!a) action=ru?'Обнови анализ, чтобы получить проверяемый вывод.':'Refresh the analysis to get a verifiable conclusion.';
+    else if(a.dataStatus!=='FRESH' || Number(a.coveragePct||0)<100) action=ru?'Сначала обнови данные и проверь активы без оценки.':'Refresh the data and review any unpriced assets first.';
+    else if(top && top.key==='concentration') action=ru?'Сравни долю крупнейшей позиции с целевой и после ручного изменения снова запусти анализ.':'Compare the largest position with its target, then rerun the analysis after any manual change.';
+    else if(top && top.key==='reserve') action=ru?'Проверь, соответствует ли резерв твоей цели и горизонту.':'Check whether the liquid reserve matches your objective and horizon.';
+    else action=ru?'Не действуй только из-за цифры. Посмотри, изменился ли сам фактор риска, и проверь его повторным анализом.':'Do not act on the number alone. Check whether the underlying risk factor changed, then verify with a fresh analysis.';
+    return {conclusion:conclusion,why:why,action:action,source:'deterministic'};
+}
+
+async function generateVerifiedInsight(a, lang) {
+    var fallback=buildDeterministicInsight(a,lang);
+    if(!HAS_OPENROUTER || !a) return fallback;
+    try {
+        var facts={
+            riskScore:Number(a.riskScore||0), riskLevel:String(a.riskLevel||'unknown'), totalUSDT:Number(a.totalUSDT||0),
+            btcPercent:Number(a.btcPercent||0), altPercent:Number(a.altPercent||0), stablePercent:Number(a.usdtPercent||0),
+            coveragePct:Number(a.coveragePct||0), confidencePct:Number(a.confidencePct||0), dataStatus:String(a.dataStatus||'UNKNOWN'),
+            topPosition:a.topPosition?{symbol:String(a.topPosition.symbol||''),weight:Number(a.topPosition.weight||0)}:null,
+            riskBreakdown:(a.riskBreakdown||[]).map(function(f){return {key:f.key,label:lang==='ru'?f.labelRu:f.labelEn,points:Number(f.points||0),detail:riskFactorDetail(f,a,lang)};}).filter(function(f){return f.points>0;}),
+            recommendations:(a.recommendations||[]).slice(0,3)
+        };
+        var system=lang==='ru'
+            ? 'Ты редактор аналитического продукта Void Node. Твоя задача — объяснить УЖЕ ПОСЧИТАННЫЕ факты человеку. Нельзя менять числа, придумывать факты, давать BUY/SELL-команды или добавлять данные вне JSON. Если данных мало, скажи это. Ответ должен быть ясным и коротким.'
+            : 'You are the explanation layer of Void Node. Explain ALREADY COMPUTED facts to a human. Never change numbers, invent facts, give BUY/SELL commands, or add facts outside the JSON. If data is weak, say so. Keep it concise and clear.';
+        var user=lang==='ru'
+            ? 'Верни JSON без markdown строго с тремя строковыми полями: conclusion, why, action. conclusion — 1-2 предложения о сути; why — главная причина с фактом/числом; action — безопасный следующий шаг без исполнения сделок. Факты: '+JSON.stringify(facts)
+            : 'Return strict JSON without markdown with exactly three string fields: conclusion, why, action. conclusion = 1-2 sentences with the main takeaway; why = main reason with facts/numbers; action = safe next step without executing trades. Facts: '+JSON.stringify(facts);
+        var response=await withTimeout(fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+OPENROUTER_API_KEY,'HTTP-Referer':'https://t.me/'+BOT_USERNAME,'X-Title':'Void Node Verified Explanation'},body:JSON.stringify({model:CURRENT_AI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:260,temperature:0.1})}),7000,'AI narrative');
+        if(!response.ok) throw new Error('AI narrative HTTP '+response.status);
+        var data=await response.json(), raw=data&&data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;
+        if(!raw) throw new Error('Empty AI narrative');
+        raw=String(raw).replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim();
+        var parsed=JSON.parse(raw);
+        if(!parsed || typeof parsed.conclusion!=='string'||typeof parsed.why!=='string'||typeof parsed.action!=='string') throw new Error('Invalid AI narrative schema');
+        function clean(v){return String(v).replace(/[*_`#]/g,'').replace(/\s+/g,' ').trim().slice(0,420);}
+        return {conclusion:clean(parsed.conclusion),why:clean(parsed.why),action:clean(parsed.action),source:'ai_verified'};
+    } catch(e) {
+        console.warn('Verified narrative fallback:',e.message);
+        return fallback;
+    }
+}
+function formatInsightBlock(insight, lang) {
+    if(!insight)return '';
+    var ru=lang==='ru';
+    return '\n🧭 *'+(ru?'ВЫВОД':'TAKEAWAY')+'*\n'+insight.conclusion+'\n\n'+
+        '🔎 *'+(ru?'Почему':'Why')+'*\n'+insight.why+'\n\n'+
+        '➡️ *'+(ru?'Что дальше':'Next step')+'*\n'+insight.action+'\n';
+}
+
 class AIContext {
     constructor() {
         this.contexts = new Map();
@@ -4242,6 +4396,7 @@ async function handleCallback(update) {
         if (data === 'back_to_security') { await showSecurityMenu(chatId); return; }
         if (data === 'back_to_plans') { await showPlansMenu(chatId); return; }
         if (data === 'back_to_history') { await showHistoryMenu(chatId); return; }
+        if (data === 'back_to_tools') { await showToolsMenu(chatId); return; }
 
         if (data === 'menu_functions') { await showFunctionsMenu(chatId); return; }
         if (data === 'menu_settings_new') { await showSettingsMenu(chatId); return; }
@@ -4256,7 +4411,7 @@ async function handleCallback(update) {
         if (data === 'menu_pulse') { await showMarketPulse(chatId); return; }
         if (data === 'portfolio_changes') { await showPortfolioChanges(chatId); return; }
         if (data === 'history_weekly') { await showWeeklyReport(chatId); return; }
-        if (data === 'history_risk') { await showPortfolioChanges(chatId); return; }
+        if (data === 'history_risk') { await showRiskHistory(chatId); return; }
         if (data === 'ai_changes') { await handleAICommand(chatId, lang === 'ru' ? 'почему изменился риск портфеля и что изменилось?' : 'why did portfolio risk change and what changed?', lang, null); return; }
         if (data === 'menu_social') { await showSocialTrends(chatId); return; }
         if (data === 'menu_history') { await showHistoryMenu(chatId); return; }
@@ -4475,17 +4630,19 @@ async function handleMessage(update) {
     var chatId = update.message.chat.id;
     var text = update.message.text || '';
     var messageId = update.message.message_id;
-    var lang = await getData('lang_' + chatId) || 'ru';
-    var state = await getData('state_' + chatId) || 'idle';
+    var lang = 'ru';
+    var state = 'idle';
 
     console.log('💬 Message received from ' + chatId + ' (length=' + String(text).length + ')');
-    try { await getUserPrefs(chatId); } catch (e) {}
-
+    try { lang = await getData('lang_' + chatId) || 'ru'; } catch (e) { console.error('Initial lang read failed:', e.message); }
+    try { state = await getData('state_' + chatId) || 'idle'; } catch (e) { console.error('Initial state read failed:', e.message); }
     try {
         var cleanText = sanitizeInput(text);
+        console.log('🧭 Message stage: sanitized text=' + JSON.stringify(cleanText));
         var isForwarded = update.message.forward_from || update.message.forward_from_chat || update.message.forward_date;
 
         var aiChatMode = await getData('ai_chat_mode_' + chatId);
+        console.log('🧭 Message stage: state=' + String(state) + ', aiChatMode=' + String(aiChatMode));
         if (aiChatMode === 'true' && cleanText && cleanText.length > 1 && !cleanText.startsWith('/') && !isForwarded) {
             await handleAICommand(chatId, cleanText, lang, messageId);
             return;
@@ -4686,7 +4843,8 @@ async function handleMessage(update) {
                     }
                 }
             }
-            var onboarded = await getData('onboarded_' + chatId);
+            var onboarded = null;
+            try { onboarded = await getData('onboarded_' + chatId); } catch (e) { console.error('Onboarding state read failed:', e.message); }
             if (!onboarded) {
                 await sendUpdatedMessage(chatId, getText(lang, 'language_select'), getOnboardLanguageKeyboard(), 'Markdown', null, true);
                 return;
@@ -4713,6 +4871,7 @@ async function handleMessage(update) {
         if (cleanText === '/panic') { var pp=await getUserPlan(chatId); if(!pp.limits.panic){await sendMessage(chatId,lang==='ru'?'❌ Холодный душ доступен на PRO и VIP. /subscribe':'❌ Panic warnings are available on PRO and VIP. /subscribe');return;} await setData('panic_' + chatId, JSON.stringify({active:true,lastCheck:Date.now()}),86400); await sendMessage(chatId,lang==='ru'?'❄️ *Холодный душ включён.* Я буду предупреждать о резких движениях. Массовой продажи всего портфеля нет.':'❄️ *Panic warnings enabled.* I will warn about sharp moves. There is no mass sell of the whole portfolio.','Markdown'); return; }
         if (cleanText === '/panic_stop') { await deleteData('panic_' + chatId); await sendMessage(chatId, getText(lang, 'panic_stop')); return; }
         if (cleanText === '/exit') { await showMainMenu(chatId); return; }
+        if (cleanText === '/riskbenchmark') { await showRiskBenchmark(chatId); return; }
         if (cleanText === '/analyze') { await sendTyping(chatId); var ar=await analyzePortfolio(chatId,lang); if(ar.error){await sendMessage(chatId,ar.error,getErrorKeyboard(lang,'action_analyze'));}else{await sendMessage(chatId,formatPortfolioAnalysis(ar,lang),{inline_keyboard:[[{text:'🔄 '+(lang==='ru'?'Обновить':'Refresh'),callback_data:'action_analyze'}],[{text:'🤖 '+(lang==='ru'?'AI разбор':'AI explanation'),callback_data:'menu_ai'}],]},'Markdown');} return; }
         if (cleanText === '/demo') { await createDemoWallet(chatId); await sendMessage(chatId,lang==='ru'?'🧪 Демо-кошелёк создан. /analyze':'🧪 Demo wallet created. /analyze'); return; }
         if (cleanText === '/referral') {
@@ -5187,7 +5346,7 @@ async function buildDailyBriefing(chatId,lang) {
         msg+='🛡️ *Risk Score:* '+analysis.riskScore+'/100';
         if(delta&&delta.deltaRisk)msg+=' '+(delta.deltaRisk>0?'↗ +':'↘ ')+Math.abs(delta.deltaRisk);
         msg+='\n💰 *'+(lang==='ru'?'Портфель':'Portfolio')+'*: $'+Number(analysis.totalUSDT||0).toFixed(2)+'\n';
-        if(delta&&delta.deltaValue)msg+='📉 24h: '+(delta.deltaValue>=0?'+':'')+delta.deltaValue.toFixed(1)+'%\n';
+        if(delta&&delta.deltaValue)msg+='📉 '+(lang==='ru'?'С последнего снимка: ':'Since last snapshot: ')+(delta.deltaValue>=0?'+':'')+delta.deltaValue.toFixed(1)+'%\n';
         msg+='\n';
         msg+=(delta&&delta.changes.length?'⚠️ *'+(lang==='ru'?'ЧТО ИЗМЕНИЛОСЬ':'WHAT CHANGED')+'*\n'+delta.changes.slice(0,3).map(function(x){return '• '+x;}).join('\n')+'\n\n':'🟢 '+(lang==='ru'?'Существенных изменений не обнаружено.':'No material changes detected.')+'\n\n');
     } else msg+=(lang==='ru'?'📊 Подключи биржу и выполни первый анализ.':'📊 Connect an exchange and run the first analysis.')+'\n\n';
@@ -5197,7 +5356,7 @@ async function buildDailyBriefing(chatId,lang) {
     msg+='🤖 *AI*\n'+(analysis?(lang==='ru'?'Главное сегодня — смотреть на изменение риска, а не на отдельную красную свечу.':'Today, focus on the change in portfolio risk rather than a single red candle.'):(lang==='ru'?'AI подключится после первого анализа.':'AI context will improve after the first analysis.'))+'\n\n';
     msg+='❄️ *'+(lang==='ru'?'ДЕНЬ БЕЗ ПАНИКИ':'NO-PANIC DAY')+'*\n'+(analysis&&(!delta||Math.abs(delta.deltaRisk)<10)?(lang==='ru'?'Критического ухудшения не видно. Срочных действий не требуется.':'No critical deterioration is visible. No urgent action is required.'):(lang==='ru'?'Ситуация требует внимания, но решение лучше принимать после проверки причин.':'The situation deserves attention, but review the causes before acting.'));
     var kb={inline_keyboard:[[{text:'📈 '+(lang==='ru'?'Что изменилось':'What changed'),callback_data:'portfolio_changes'}],[{text:'📰 '+(lang==='ru'?'Новости':'News'),callback_data:'menu_news'},{text:'❤️ '+(lang==='ru'?'Пульс':'Pulse'),callback_data:'menu_pulse'}],[{text:'🤖 AI',callback_data:'menu_ai'}]]};
-    await sendUpdatedMessage(chatId,msg,kb,'Markdown');
+    await replaceCurrentMessage(chatId,msg,kb,'Markdown');
     await addHistory(chatId,lang==='ru'?'☀️ Ежедневный дайджест':'☀️ Daily briefing','Risk '+(analysis?analysis.riskScore:'—'));
 }
 
@@ -5213,6 +5372,35 @@ async function checkDailyBriefings() {
     }
 }
 
+
+function runRiskBenchmark() {
+    var scenarios=[
+        {name:'Balanced',rows:[['BTC',35],['ETH',15],['USDT',30],['SOL',10],['ADA',10]],expect:['low','medium']},
+        {name:'High concentration',rows:[['BTC',70],['ETH',10],['USDT',10],['SOL',10]],expect:['high','critical']},
+        {name:'Extreme concentration',rows:[['SOL',85],['USDT',10],['BTC',5]],expect:['high','critical']},
+        {name:'Low reserve',rows:[['BTC',45],['ETH',25],['SOL',20],['USDT',10]],expect:['medium','high']},
+        {name:'High alts',rows:[['BTC',20],['SOL',35],['ADA',20],['ETH',15],['USDT',10]],expect:['medium','high']},
+        {name:'Weak diversification',rows:[['BTC',96],['USDT',4]],expect:['high','critical']},
+        {name:'Partial data',rows:[['BTC',50],['ETH',25],['USDT',25]],coverage:false,expect:['medium','high']},
+        {name:'Single alt',rows:[['SOL',80],['USDT',20]],expect:['high','critical']},
+        {name:'Concentration 42',rows:[['SOL',42],['BTC',25],['ETH',18],['USDT',15]],expect:['medium','high']},
+        {name:'Conservative',rows:[['BTC',35],['ETH',15],['USDT',40],['SOL',10]],expect:['low','medium']}
+    ];
+    var passed=0, details=[];
+    scenarios.forEach(function(sc){var top=Math.max.apply(null,sc.rows.map(function(x){return x[1];})),stable=sc.rows.filter(function(x){return x[0]==='USDT';}).reduce(function(a,x){return a+x[1];},0),alts=100-stable-sc.rows.filter(function(x){return x[0]==='BTC';}).reduce(function(a,x){return a+x[1];},0),meaningful=sc.rows.filter(function(x){return x[1]>=5;}).length;var r=calculateRiskBreakdown({top:top,weights:sc.rows.map(function(x){return x[1];}),stable:stable,alts:alts,meaningful:meaningful,coverageComplete:sc.coverage!==false,targets:{BTC:50,USDT:20,ALTS:30}});var level=r.score>=70?'critical':r.score>=45?'high':r.score>=20?'medium':'low';var ok=sc.expect.indexOf(level)>=0; if(ok)passed++;details.push({name:sc.name,score:r.score,level:level,expected:sc.expect.join('/'),pass:ok,breakdown:r.breakdown});});
+    return {total:scenarios.length,passed:passed,accuracy:Math.round(passed/scenarios.length*100),details:details};
+}
+
+async function showRiskBenchmark(chatId) {
+    if(String(chatId)!==String(ADMIN_CHAT_ID)) return;
+    var lang=await getData('lang_'+chatId)||'ru',b=runRiskBenchmark();
+    var text=lang==='ru'?'🧪 *RISK ENGINE BENCHMARK*\n──────\n\n':'🧪 *RISK ENGINE BENCHMARK*\n──────\n\n';
+    text+=(lang==='ru'?'Синтетические контрольные сценарии: ':'Synthetic control scenarios: ')+b.total+'\n';
+    text+=(lang==='ru'?'Совпали с ожидаемым классом риска: ':'Matched expected risk class: ')+b.passed+'/'+b.total+' ('+b.accuracy+'%)\n\n';
+    b.details.forEach(function(x){text+=(x.pass?'✅ ':'❌ ')+x.name+': '+x.score+'/100 ['+x.level+'] expected '+x.expected+'\n';});
+    text+='\n'+(lang==='ru'?'Важно: это benchmark движка на контролируемых сценариях, а не доказательство будущей доходности или рыночной точности. Для реальной валидации нужен набор исторических портфелей с размеченными исходами.':'Important: this is a controlled engine benchmark, not proof of future returns or market accuracy. Real validation requires historical portfolios with labeled outcomes.');
+    await sendUpdatedMessage(chatId,text,{inline_keyboard:[[{text:getText(lang,'back_to_menu'),callback_data:'back_to_menu'}]]},'Markdown');
+}
 
 function startProtectionSchedulers(){
     runTaskWithRecovery(checkDailyBriefings,'dailyBriefings',CONFIG.DAILY_BRIEF_INTERVAL);
@@ -5345,7 +5533,7 @@ var app = express();
 app.use(express.json({ limit: '256kb', verify: function(req, res, buf) { req.rawBody = Buffer.from(buf); } }));
 
 app.get('/health', function(req, res) {
-    res.status(200).json({ status: 'ok', timestamp: Date.now() });
+    res.status(200).json({ status: 'ok', version: '1.6.0', riskEngine: 'auditable-v1', timestamp: Date.now() });
 });
 
 app.post('/webhook', async function(req, res) {
@@ -5382,14 +5570,31 @@ app.post('/webhook/crypto/' + CRYPTOBOT_WEBHOOK_PATH_SECRET, async function(req,
 });
 
 var PORT = process.env.PORT || 3000;
+async function configureTelegramWebhook() {
+    var baseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://voidnode.onrender.com';
+    var webhookUrl = String(baseUrl).replace(/\/$/, '') + '/webhook';
+    try {
+        var response = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/setWebhook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message', 'callback_query'] })
+        });
+        var data = await response.json();
+        console.log('📡 Telegram webhook configured:', JSON.stringify(data), 'URL=' + webhookUrl);
+    } catch (error) {
+        console.error('❌ Telegram webhook configuration failed:', error.message);
+    }
+}
+
 app.listen(PORT, '0.0.0.0', function() {
     console.log('✅ Bot started on port ' + PORT);
-    console.log('📡 Webhook URL: https://your-domain.onrender.com/webhook');
+    console.log('📡 Webhook URL: /webhook');
+    configureTelegramWebhook();
 });
 
 console.log('🚀 BOT READY!');
 console.log('🛡️ Trading: disabled by product design — Void Node never places orders');
-console.log('📊 Void Node 1.4.2 Daily loaded!');
+console.log('📊 Void Node 1.6.0 Professional Risk loaded!');
 console.log('👑 Admin: ' + ADMIN_CHAT_ID);
 console.log('👥 Referral system active');
 
