@@ -1,10 +1,12 @@
 {
   "name": "void-node",
-  "version": "1.4.2",
-  "description": "Void Node crypto risk assistant",
+  "version": "1.7.0",
+  "description": "Void Node professional crypto risk management assistant with verified narrative explanations",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "test": "node risk_engine.test.js",
+    "benchmark": "node risk_benchmark.js benchmark_portfolios.csv"
   },
   "engines": {
     "node": "24.x"
