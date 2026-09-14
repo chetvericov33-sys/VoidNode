@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+// Evaluate the production Risk Engine against a labeled CSV dataset.
+// CSV columns: id,top,stable,alts,meaningful,coverageComplete,expectedLevel
+const fs=require('fs');
+const {calculateRiskBreakdown}=require('./risk_engine');
+
+function parseCsv(text){
+  const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  if(!lines.length)return [];
+  const headers=lines.shift().split(',').map(x=>x.trim());
+  return lines.map(line=>{const cells=line.split(',');const o={};headers.forEach((h,i)=>o[h]=(cells[i]||'').trim());return o;});
+}
+function level(score){return score>=70?'critical':score>=45?'high':score>=20?'medium':'low';}
+const file=process.argv[2]||'benchmark_portfolios.csv';
+if(!fs.existsSync(file)){console.error('Dataset not found: '+file);process.exit(1);}
+const rows=parseCsv(fs.readFileSync(file,'utf8'));
+let correct=0, confusion={};
+for(const r of rows){
+  const top=Number(r.top)||0, stable=Number(r.stable)||0, alts=Number(r.alts)||0, meaningful=Number(r.meaningful)||0;
+  const weights=(r.weights||String(top)).split('|').map(Number).filter(x=>isFinite(x)&&x>0);
+  const result=calculateRiskBreakdown({top,weights,stable,alts,meaningful,coverageComplete:String(r.coverageComplete).toLowerCase()!=='false',targets:{BTC:50,USDT:20,ALTS:30}});
+  const actual=level(result.score), expected=String(r.expectedLevel||'').toLowerCase();
+  const ok=actual===expected; if(ok)correct++;
+  const key=expected+'→'+actual; confusion[key]=(confusion[key]||0)+1;
+}
+const accuracy=rows.length?correct/rows.length*100:0;
+console.log(JSON.stringify({dataset:file,total:rows.length,correct,incorrect:rows.length-correct,accuracyPct:Number(accuracy.toFixed(2)),confusion},null,2));
