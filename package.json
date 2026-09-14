@@ -1,0 +1,19 @@
+{
+  "name": "void-node",
+  "version": "1.7.1",
+  "private": true,
+  "description": "Void Node professional crypto risk management assistant",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "test": "node risk_engine.test.js",
+    "benchmark": "node risk_benchmark.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@upstash/redis": "^1.35.3",
+    "ccxt": "^4.4.100",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
