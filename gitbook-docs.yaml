@@ -1,31 +1,4 @@
 $schema: https://api.gitbook.com/gitbook-docs.yaml
 site:
   title: VoidNode Docs
-  structure:
-    - type: section
-      key: section-4
-      title: Changelog
-      path: changelog
-      icon: clock-rotate-left
-      default: true
-      children:
-        - type: space
-          key: space-4
-          title: Changelog
-          path: changelog
-          default: true
-          content:
-            directory: ./changelog
-    - type: section
-      key: section-5
-      title: Help Center
-      path: help-center
-      icon: life-ring
-      children:
-        - type: space
-          key: space-5
-          title: Help Center
-          path: help-center
-          default: true
-          content:
-            directory: ./help-center
+  structure: []
