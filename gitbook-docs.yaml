@@ -3,25 +3,11 @@ site:
   title: VoidNode Docs
   structure:
     - type: section
-      key: section-1
-      title: Home
-      path: home
-      icon: house
-      default: true
-      children:
-        - type: space
-          key: space-1
-          title: Home
-          path: home
-          default: true
-          draft: true
-          content:
-            directory: ./home
-    - type: section
       key: section-4
       title: Changelog
       path: changelog
       icon: clock-rotate-left
+      default: true
       children:
         - type: space
           key: space-4
