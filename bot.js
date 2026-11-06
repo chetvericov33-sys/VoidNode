@@ -3809,14 +3809,11 @@ var newsManager = new NewsManager();
 
 var HAS_OPENROUTER = typeof OPENROUTER_API_KEY !== 'undefined' && OPENROUTER_API_KEY && OPENROUTER_API_KEY.length > 10;
 
-var FREE_MODELS = [
-    'meta-llama/llama-3.3-70b-instruct:free',
-    'mistralai/mistral-7b-instruct:free',
-    'google/gemma-2-9b-it:free',
-    'microsoft/phi-3-mini-128k-instruct:free'
-];
-
-var CURRENT_AI_MODEL = FREE_MODELS[0];
+// OpenRouter free router selects an available free model dynamically.
+// OPENROUTER_MODEL may override this with a model slug configured by the owner.
+var CURRENT_AI_MODEL = (typeof process !== 'undefined' && process.env && process.env.OPENROUTER_MODEL)
+    ? process.env.OPENROUTER_MODEL
+    : 'openrouter/free';
 
 // ============================================================
 // 24.0. VERIFIED NARRATIVE LAYER
@@ -4007,7 +4004,7 @@ class AIContext {
 
     buildPrompt(chatId, userQuestion, lang) {
         var context = this.getContext(chatId);
-        var prompt = this.getSystemPrompt(lang) + '\n\n';
+        var prompt = '';
         
         if (context.lastAnalysis) {
             var a = context.lastAnalysis;
@@ -4066,7 +4063,12 @@ class AIContext {
 
         if (context.history.length > 0) {
             prompt += (lang === 'ru' ? '💬 ИСТОРИЯ ДИАЛОГА:\n' : '💬 CONVERSATION HISTORY:\n');
-            var lastMessages = context.history.slice(-10);
+            var promptHistory = context.history.slice();
+            var lastHistoryItem = promptHistory[promptHistory.length - 1];
+            if (lastHistoryItem && lastHistoryItem.role === 'user' && lastHistoryItem.content === userQuestion) {
+                promptHistory.pop();
+            }
+            var lastMessages = promptHistory.slice(-10);
             for (var i = 0; i < lastMessages.length; i++) {
                 var msg = lastMessages[i];
                 prompt += (msg.role === 'user' ? '👤 ' : '🤖 ') + msg.content + '\n';
@@ -4246,7 +4248,11 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function() { controller.abort(); }, 25000);
+                var response;
+                try {
+                    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4262,32 +4268,63 @@ class AIContext {
                         ],
                         max_tokens: 1000,
                         temperature: 0.2
-                    })
-                });
-                
-                var data = await response.json();
-                
-                if (data.error) {
-                    console.error('OpenRouter error:', data.error);
-                    if (data.error.code === 402 || data.error.message.includes('insufficient')) {
-                        CURRENT_AI_MODEL = getNextFreeModel();
-                        console.log('🔄 Switching to model:', CURRENT_AI_MODEL);
-                        return await this.generateResponse(chatId, question, lang);
-                    }
-                    return this.getFallbackResponse(chatId, question, lang);
+                    }),
+                    signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeoutId);
                 }
-                
-                var answer = data.choices[0].message.content;
+
+                var rawBody = await response.text();
+                var data = null;
+                try { data = rawBody ? JSON.parse(rawBody) : null; } catch (parseError) {
+                    console.error('OpenRouter returned non-JSON response:', response.status, rawBody.slice(0, 500));
+                }
+
+                if (!response.ok || !data || data.error) {
+                    var apiError = data && data.error ? data.error : {};
+                    console.error('OpenRouter error:', {
+                        status: response.status,
+                        code: apiError.code || null,
+                        message: apiError.message || response.statusText || 'Invalid API response'
+                    });
+                    return {
+                        error: isRu
+                            ? '⚠️ ИИ-сервис временно недоступен. Попробуй повторить запрос позже. Лимит не будет списан повторно.'
+                            : '⚠️ The AI service is temporarily unavailable. Please try again later. Your request will not be charged twice.'
+                    };
+                }
+
+                var answer = data && data.choices && data.choices[0] &&
+                    data.choices[0].message && data.choices[0].message.content;
+                if (typeof answer !== 'string' || !answer.trim()) {
+                    console.error('OpenRouter returned an empty completion:', response.status, data && data.model);
+                    return {
+                        error: isRu
+                            ? '⚠️ ИИ вернул пустой ответ. Попробуй повторить запрос.'
+                            : '⚠️ The AI returned an empty response. Please try again.'
+                    };
+                }
+
+                console.log('🧠 OpenRouter model used:', data.model || CURRENT_AI_MODEL);
                 this.addMessage(chatId, 'assistant', answer);
-                return { success: true, answer: answer };
-                
+                return { success: true, answer: answer.trim() };
+
             } catch (error) {
-                console.error('OpenRouter fetch error:', error);
-                return this.getFallbackResponse(chatId, question, lang);
+                console.error('OpenRouter fetch error:', error.message || error);
+                return {
+                    error: isRu
+                        ? '⚠️ Не удалось связаться с ИИ-сервисом. Попробуй повторить запрос позже.'
+                        : '⚠️ Could not reach the AI service. Please try again later.'
+                };
             }
         }
-        
-        return this.getFallbackResponse(chatId, question, lang);
+
+        return {
+            error: isRu
+                ? '⚠️ ИИ-советник не настроен: отсутствует OPENROUTER_API_KEY.'
+                : '⚠️ AI advisor is not configured: OPENROUTER_API_KEY is missing.'
+        };
     }
     
     getFallbackResponse(chatId, question, lang) {
@@ -4337,14 +4374,14 @@ class AIContext {
 
 var aiContext = new AIContext();
 
-function getNextFreeModel() {
-    var currentIndex = FREE_MODELS.indexOf(CURRENT_AI_MODEL);
-    var nextIndex = (currentIndex + 1) % FREE_MODELS.length;
-    return FREE_MODELS[nextIndex];
-}
-
 async function handleAICommand(chatId, question, lang, messageId) {
-    var aiLimit=await checkLimit(chatId,'ai'); if(!aiLimit.allowed){await sendUpdatedMessage(chatId,aiLimit.reason,{inline_keyboard:[[{text:'💳 '+(lang==='ru'?'Посмотреть тарифы':'View plans'),callback_data:'menu_plans'}],[{text:getText(lang,'back_to_menu'),callback_data:'back_to_menu'}]]},'Markdown',messageId);return;} await sendTyping(chatId);
+    // Incoming user messages are not editable by the bot. Delete the user's
+    // message and update the bot-owned single-message UI instead.
+    async function renderAIMessage(text, keyboard, parseMode) {
+        if (messageId) await deleteUserMessage(chatId, messageId);
+        return await sendUpdatedMessage(chatId, text, keyboard, parseMode || 'Markdown', null);
+    }
+    await sendTyping(chatId);
     
     if (!question || question.trim().length === 0) {
         var helpText = lang === 'ru' ?
@@ -4368,7 +4405,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
             '👇 *Or choose an action:*';
         
         var keyboard = getAIMenuKeyboard(lang);
-        await sendUpdatedMessage(chatId, helpText, keyboard, 'Markdown', messageId);
+        await renderAIMessage(helpText, keyboard, 'Markdown');
         return;
     }
     
@@ -4383,7 +4420,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
                 [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
             ]
         };
-        await sendUpdatedMessage(chatId, result.error, errorKeyboard, 'Markdown', messageId);
+        await renderAIMessage(result.error, errorKeyboard, 'Markdown');
         return;
     }
     
@@ -4394,7 +4431,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
     aiFixes.slice(0,3).forEach(function(f){keyboardRows.push([{text:'🛠️ '+(lang==='ru'?'Исправить: ':'Fix: ')+f.title,callback_data:'fix_'+f.id}]);});
     keyboardRows.push([{ text:'💬 ' + (lang === 'ru' ? 'Продолжить диалог' : 'Continue dialogue'), callback_data:'ai_chat_start' }]);
     keyboardRows.push([{ text:getText(lang,'back_to_functions'),callback_data:'back_to_functions' }]);
-    await sendUpdatedMessage(chatId, escapeMarkdown(result.answer), {inline_keyboard:keyboardRows}, 'Markdown', messageId);
+    await renderAIMessage(escapeMarkdown(result.answer), {inline_keyboard:keyboardRows}, 'Markdown');
 }
 
 console.log('🤖 AI Advisor initialized with OpenRouter support');
