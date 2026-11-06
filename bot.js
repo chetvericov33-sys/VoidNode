@@ -2458,13 +2458,19 @@ async function showMarketPulse(chatId) {
     try {
         var url='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false';
         if(COINGECKO_API_KEY) url+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
-        var r=await fetch(url); if(!r.ok) throw new Error('market api '+r.status); var data=await r.json();
+        var r=await withTimeout(fetch(url),10000,'CoinGecko market pulse');
+        if(!r.ok) throw new Error('market api '+r.status);
+        var data=await r.json();
+        if(!Array.isArray(data)) throw new Error('market api returned invalid data');
         var btc=data.find(function(x){return x.id==='bitcoin'})||{},eth=data.find(function(x){return x.id==='ethereum'})||{},sol=data.find(function(x){return x.id==='solana'})||{};
-        var avg=[btc.price_change_percentage_24h,eth.price_change_percentage_24h,sol.price_change_percentage_24h].filter(function(x){return typeof x==='number'}); var m=avg.length?avg.reduce(function(a,b){return a+b},0)/avg.length:0;
+        var validAssets=[btc,eth,sol].filter(function(x){return Number.isFinite(Number(x.current_price))&&Number(x.current_price)>0&&Number.isFinite(Number(x.price_change_percentage_24h));});
+        if(!validAssets.length) throw new Error('market api returned no usable prices');
+        var avg=validAssets.map(function(x){return Number(x.price_change_percentage_24h);});
+        var m=avg.reduce(function(a,b){return a+b},0)/avg.length;
         var state=m<=-5?'🔴 Сильное давление':m<=-2?'🟡 Напряжённо':m>=3?'🟢 Сильный импульс':'🟢 Умеренно';
         var text=lang==='ru'?'❤️ *ПУЛЬС РЫНКА*\n──────\n\n':'❤️ *MARKET PULSE*\n──────\n\n';
         text+='Состояние: *'+state+'*\n\n';
-        [[btc,'BTC'],[eth,'ETH'],[sol,'SOL']].forEach(function(x){if(x[0].current_price)text+='• '+x[1]+': $'+Number(x[0].current_price).toLocaleString('en-US',{maximumFractionDigits:2})+' · '+(Number(x[0].price_change_percentage_24h)>=0?'+':'')+Number(x[0].price_change_percentage_24h||0).toFixed(1)+'%\n';});
+        [[btc,'BTC'],[eth,'ETH'],[sol,'SOL']].forEach(function(x){if(Number.isFinite(Number(x[0].current_price))&&Number(x[0].current_price)>0&&Number.isFinite(Number(x[0].price_change_percentage_24h)))text+='• '+x[1]+': $'+Number(x[0].current_price).toLocaleString('en-US',{maximumFractionDigits:2})+' · '+(Number(x[0].price_change_percentage_24h)>=0?'+':'')+Number(x[0].price_change_percentage_24h).toFixed(1)+'%\n';});
         var aRaw=await getData('analysis_'+chatId);var a=aRaw?(typeof aRaw==='string'?JSON.parse(aRaw):aRaw):null;
         if(a){var relevant='';if(Number(a.altPercent||0)>10 && sol.price_change_percentage_24h< -3) relevant=lang==='ru'?'\n⚠️ SOL заметно слабее, а его доля в твоём портфеле значимая.':'\n⚠️ SOL is materially weaker while it is a meaningful portfolio position.';if(Number(a.btcPercent||0)>40)relevant+='\n📊 '+(lang==='ru'?'BTC имеет большой вес в твоём портфеле.':'BTC has a large portfolio weight.');if(relevant)text+=relevant+'\n';}
         text+='\n🧭 *'+(lang==='ru'?'Вывод':'Takeaway')+'*\n'+(lang==='ru'?(m<=-2?'Рынок сейчас под давлением. Если у тебя высокая доля рисковых активов, важнее контролировать экспозицию, чем пытаться угадать дно.':m>=3?'Рынок показывает сильный импульс. Это не подтверждает продолжение движения, поэтому не стоит принимать решение только из-за роста.':'Рынок без выраженного экстремума. Сейчас полезнее смотреть на изменения твоего портфеля и концентрацию, чем на один показатель 24h.'):(m<=-2?'The market is under pressure. If your portfolio has high risk exposure, controlling exposure matters more than trying to call a bottom.':m>=3?'The market shows strong momentum. That does not confirm continuation, so do not act on the rise alone.':'The market has no strong extreme. It is more useful to watch your portfolio changes and concentration than one 24h metric.'))+'\n\n'+(lang==='ru'?'Это состояние рынка, а не сигнал BUY/SELL.':'This is market state, not a BUY/SELL signal.');
@@ -3809,14 +3815,11 @@ var newsManager = new NewsManager();
 
 var HAS_OPENROUTER = typeof OPENROUTER_API_KEY !== 'undefined' && OPENROUTER_API_KEY && OPENROUTER_API_KEY.length > 10;
 
-var FREE_MODELS = [
-    'meta-llama/llama-3.3-70b-instruct:free',
-    'mistralai/mistral-7b-instruct:free',
-    'google/gemma-2-9b-it:free',
-    'microsoft/phi-3-mini-128k-instruct:free'
-];
-
-var CURRENT_AI_MODEL = FREE_MODELS[0];
+// OpenRouter free router selects an available free model dynamically.
+// OPENROUTER_MODEL may override this with a model slug configured by the owner.
+var CURRENT_AI_MODEL = (typeof process !== 'undefined' && process.env && process.env.OPENROUTER_MODEL)
+    ? process.env.OPENROUTER_MODEL
+    : 'openrouter/free';
 
 // ============================================================
 // 24.0. VERIFIED NARRATIVE LAYER
@@ -4007,7 +4010,7 @@ class AIContext {
 
     buildPrompt(chatId, userQuestion, lang) {
         var context = this.getContext(chatId);
-        var prompt = this.getSystemPrompt(lang) + '\n\n';
+        var prompt = '';
         
         if (context.lastAnalysis) {
             var a = context.lastAnalysis;
@@ -4066,7 +4069,12 @@ class AIContext {
 
         if (context.history.length > 0) {
             prompt += (lang === 'ru' ? '💬 ИСТОРИЯ ДИАЛОГА:\n' : '💬 CONVERSATION HISTORY:\n');
-            var lastMessages = context.history.slice(-10);
+            var promptHistory = context.history.slice();
+            var lastHistoryItem = promptHistory[promptHistory.length - 1];
+            if (lastHistoryItem && lastHistoryItem.role === 'user' && lastHistoryItem.content === userQuestion) {
+                promptHistory.pop();
+            }
+            var lastMessages = promptHistory.slice(-10);
             for (var i = 0; i < lastMessages.length; i++) {
                 var msg = lastMessages[i];
                 prompt += (msg.role === 'user' ? '👤 ' : '🤖 ') + msg.content + '\n';
@@ -4207,32 +4215,46 @@ class AIContext {
                 if (token) {
                     var sign = token.change24h > 0 ? '+' : '';
                     var emoji = token.change24h > 5 ? '📈' : token.change24h < -5 ? '📉' : '➡️';
-                    var response = isRu ?
-                        '📊 *' + coin + '*\n──────\n\n' +
-                        '💰 Цена: $' + token.price.toFixed(2) + '\n' +
-                        '📊 24h: ' + sign + token.change24h.toFixed(1) + '% ' + emoji + '\n' +
-                        '💵 Объем: $' + (token.volume24h / 1000000).toFixed(1) + 'M\n\n' :
-                        '📊 *' + coin + '*\n──────\n\n' +
-                        '💰 Price: $' + token.price.toFixed(2) + '\n' +
-                        '📊 24h: ' + sign + token.change24h.toFixed(1) + '% ' + emoji + '\n' +
-                        '💵 Volume: $' + (token.volume24h / 1000000).toFixed(1) + 'M\n\n';
-                    
-                    if (token.change24h > 5) {
-                        response += isRu ?
-                            '📈 ' + coin + ' сильно растет. Будь осторожен — коррекция может быть резкой.\n\n⚠️ Не рекомендую покупать на пике.' :
-                            '📈 ' + coin + ' is rising strongly. Be careful — correction can be sharp.\n\n⚠️ I don\'t recommend buying at the peak.';
-                    } else if (token.change24h < -5) {
-                        response += isRu ?
-                            '📉 ' + coin + ' падает. Если этот актив есть в портфеле, сначала проверь его долю и общий риск. Не принимай решение только по одному дню движения.' :
-                            '📉 ' + coin + ' is falling. If this asset is in the portfolio, first check its weight and total risk. Do not make a decision from one day of movement alone.';
-                    } else {
-                        response += isRu ?
-                            '➡️ ' + coin + ' стабилен. Хорошее время для анализа, но не для спешных решений.' :
-                            '➡️ ' + coin + ' is stable. Good time for analysis, but not for rushed decisions.';
+                    var coinIds = {BTC:'bitcoin',ETH:'ethereum',SOL:'solana'};
+            var publicMarketResponse;
+            if (coinIds[coin]) {
+                try {
+                    var coinUrl='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids='+coinIds[coin]+'&price_change_percentage=24h&sparkline=false';
+                    if (COINGECKO_API_KEY) coinUrl+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
+                    var coinFetch=await withTimeout(fetch(coinUrl),10000,'CoinGecko '+coin+' quote');
+                    if (!coinFetch.ok) throw new Error('CoinGecko HTTP '+coinFetch.status);
+                    var coinRows=await coinFetch.json();
+                    var quote=Array.isArray(coinRows)?coinRows[0]:null;
+                    if (!quote || !Number.isFinite(Number(quote.current_price)) || !Number.isFinite(Number(quote.price_change_percentage_24h))) {
+                        throw new Error('CoinGecko returned incomplete '+coin+' quote');
                     }
-                    
-                    this.addMessage(chatId, 'assistant', response);
-                    return { success: true, answer: response };
+                    var change=Number(quote.price_change_percentage_24h);
+                    publicMarketResponse=isRu
+                        ? '📊 *'+coin+' — РЫНОЧНЫЕ ДАННЫЕ*\\n──────\\n\\n' +
+                          '💰 Цена: $'+Number(quote.current_price).toLocaleString('en-US',{maximumFractionDigits:8})+'\\n' +
+                          '📈 Изменение за 24ч: '+(change>=0?'+':'')+change.toFixed(2)+'%\\n' +
+                          (Number.isFinite(Number(quote.market_cap))?'🏦 Капитализация: $'+Number(quote.market_cap).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          (Number.isFinite(Number(quote.total_volume))?'💧 Объём за 24ч: $'+Number(quote.total_volume).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          '\\nИсточник: CoinGecko. Это рыночная сводка, не сигнал BUY/SELL.'
+                        : '📊 *'+coin+' — MARKET DATA*\\n──────\\n\\n' +
+                          '💰 Price: $'+Number(quote.current_price).toLocaleString('en-US',{maximumFractionDigits:8})+'\\n' +
+                          '📈 24h change: '+(change>=0?'+':'')+change.toFixed(2)+'%\\n' +
+                          (Number.isFinite(Number(quote.market_cap))?'🏦 Market cap: $'+Number(quote.market_cap).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          (Number.isFinite(Number(quote.total_volume))?'💧 24h volume: $'+Number(quote.total_volume).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          '\\nSource: CoinGecko. This is market context, not a BUY/SELL signal.';
+                } catch (coinError) {
+                    console.warn('Public coin quote unavailable for '+coin+':',coinError.message);
+                    publicMarketResponse=isRu
+                        ? '⚠️ Сейчас не удалось получить подтверждённые рыночные данные по '+coin+'. Попробуй позже.'
+                        : '⚠️ Confirmed market data for '+coin+' is temporarily unavailable. Please try again later.';
+                }
+            } else {
+                publicMarketResponse=isRu
+                    ? 'ℹ️ У меня пока нет подтверждённой публичной котировки для '+coin+'. Это не означает, что монеты нет в твоём портфеле. Подключи биржу или попробуй позже.'
+                    : 'ℹ️ I do not currently have a verified public quote for '+coin+'. This does not mean the asset is absent from your portfolio. Connect an exchange or try again later.';
+            }
+            this.addMessage(chatId, 'assistant', publicMarketResponse);
+            return { success: true, answer: publicMarketResponse };
                 }
             }
             
@@ -4246,7 +4268,11 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function() { controller.abort(); }, 25000);
+                var response;
+                try {
+                    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4262,32 +4288,63 @@ class AIContext {
                         ],
                         max_tokens: 1000,
                         temperature: 0.2
-                    })
-                });
-                
-                var data = await response.json();
-                
-                if (data.error) {
-                    console.error('OpenRouter error:', data.error);
-                    if (data.error.code === 402 || data.error.message.includes('insufficient')) {
-                        CURRENT_AI_MODEL = getNextFreeModel();
-                        console.log('🔄 Switching to model:', CURRENT_AI_MODEL);
-                        return await this.generateResponse(chatId, question, lang);
-                    }
-                    return this.getFallbackResponse(chatId, question, lang);
+                    }),
+                    signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeoutId);
                 }
-                
-                var answer = data.choices[0].message.content;
+
+                var rawBody = await response.text();
+                var data = null;
+                try { data = rawBody ? JSON.parse(rawBody) : null; } catch (parseError) {
+                    console.error('OpenRouter returned non-JSON response:', response.status, rawBody.slice(0, 500));
+                }
+
+                if (!response.ok || !data || data.error) {
+                    var apiError = data && data.error ? data.error : {};
+                    console.error('OpenRouter error:', {
+                        status: response.status,
+                        code: apiError.code || null,
+                        message: apiError.message || response.statusText || 'Invalid API response'
+                    });
+                    return {
+                        error: isRu
+                            ? '⚠️ ИИ-сервис временно недоступен. Попробуй повторить запрос позже. Лимит не будет списан повторно.'
+                            : '⚠️ The AI service is temporarily unavailable. Please try again later. Your request will not be charged twice.'
+                    };
+                }
+
+                var answer = data && data.choices && data.choices[0] &&
+                    data.choices[0].message && data.choices[0].message.content;
+                if (typeof answer !== 'string' || !answer.trim()) {
+                    console.error('OpenRouter returned an empty completion:', response.status, data && data.model);
+                    return {
+                        error: isRu
+                            ? '⚠️ ИИ вернул пустой ответ. Попробуй повторить запрос.'
+                            : '⚠️ The AI returned an empty response. Please try again.'
+                    };
+                }
+
+                console.log('🧠 OpenRouter model used:', data.model || CURRENT_AI_MODEL);
                 this.addMessage(chatId, 'assistant', answer);
-                return { success: true, answer: answer };
-                
+                return { success: true, answer: answer.trim() };
+
             } catch (error) {
-                console.error('OpenRouter fetch error:', error);
-                return this.getFallbackResponse(chatId, question, lang);
+                console.error('OpenRouter fetch error:', error.message || error);
+                return {
+                    error: isRu
+                        ? '⚠️ Не удалось связаться с ИИ-сервисом. Попробуй повторить запрос позже.'
+                        : '⚠️ Could not reach the AI service. Please try again later.'
+                };
             }
         }
-        
-        return this.getFallbackResponse(chatId, question, lang);
+
+        return {
+            error: isRu
+                ? '⚠️ ИИ-советник не настроен: отсутствует OPENROUTER_API_KEY.'
+                : '⚠️ AI advisor is not configured: OPENROUTER_API_KEY is missing.'
+        };
     }
     
     getFallbackResponse(chatId, question, lang) {
@@ -4337,14 +4394,26 @@ class AIContext {
 
 var aiContext = new AIContext();
 
-function getNextFreeModel() {
-    var currentIndex = FREE_MODELS.indexOf(CURRENT_AI_MODEL);
-    var nextIndex = (currentIndex + 1) % FREE_MODELS.length;
-    return FREE_MODELS[nextIndex];
-}
-
 async function handleAICommand(chatId, question, lang, messageId) {
-    var aiLimit=await checkLimit(chatId,'ai'); if(!aiLimit.allowed){await sendUpdatedMessage(chatId,aiLimit.reason,{inline_keyboard:[[{text:'💳 '+(lang==='ru'?'Посмотреть тарифы':'View plans'),callback_data:'menu_plans'}],[{text:getText(lang,'back_to_menu'),callback_data:'back_to_menu'}]]},'Markdown',messageId);return;} await sendTyping(chatId);
+    // Incoming user messages are not editable by the bot. Delete the user's
+    // message and update the bot-owned single-message UI instead.
+    async function renderAIMessage(text, keyboard, parseMode) {
+        if (messageId) await deleteUserMessage(chatId, messageId);
+        return await sendUpdatedMessage(chatId, text, keyboard, parseMode || 'Markdown', null);
+    }
+    await sendTyping(chatId);
+
+    if (question && question.trim()) {
+        var normalizedQuestion = question.toLowerCase().replace(/ё/g, 'е').trim();
+        var asksForMarketOverview = /\bрынок\b|\bmarket\b/.test(normalizedQuestion) &&
+            !/\b(портфель|portfolio|баланс|balance)\b/.test(normalizedQuestion);
+        if (asksForMarketOverview) {
+            if (messageId) await deleteUserMessage(chatId, messageId);
+            await showMarketPulse(chatId);
+            return;
+        }
+    }
+
     
     if (!question || question.trim().length === 0) {
         var helpText = lang === 'ru' ?
@@ -4368,7 +4437,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
             '👇 *Or choose an action:*';
         
         var keyboard = getAIMenuKeyboard(lang);
-        await sendUpdatedMessage(chatId, helpText, keyboard, 'Markdown', messageId);
+        await renderAIMessage(helpText, keyboard, 'Markdown');
         return;
     }
     
@@ -4383,7 +4452,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
                 [{ text: getText(lang, 'back_to_functions'), callback_data: 'back_to_functions' }]
             ]
         };
-        await sendUpdatedMessage(chatId, result.error, errorKeyboard, 'Markdown', messageId);
+        await renderAIMessage(result.error, errorKeyboard, 'Markdown');
         return;
     }
     
@@ -4394,7 +4463,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
     aiFixes.slice(0,3).forEach(function(f){keyboardRows.push([{text:'🛠️ '+(lang==='ru'?'Исправить: ':'Fix: ')+f.title,callback_data:'fix_'+f.id}]);});
     keyboardRows.push([{ text:'💬 ' + (lang === 'ru' ? 'Продолжить диалог' : 'Continue dialogue'), callback_data:'ai_chat_start' }]);
     keyboardRows.push([{ text:getText(lang,'back_to_functions'),callback_data:'back_to_functions' }]);
-    await sendUpdatedMessage(chatId, escapeMarkdown(result.answer), {inline_keyboard:keyboardRows}, 'Markdown', messageId);
+    await renderAIMessage(escapeMarkdown(result.answer), {inline_keyboard:keyboardRows}, 'Markdown');
 }
 
 console.log('🤖 AI Advisor initialized with OpenRouter support');
