@@ -2458,13 +2458,19 @@ async function showMarketPulse(chatId) {
     try {
         var url='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false';
         if(COINGECKO_API_KEY) url+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
-        var r=await fetch(url); if(!r.ok) throw new Error('market api '+r.status); var data=await r.json();
+        var r=await withTimeout(fetch(url),10000,'CoinGecko market pulse');
+        if(!r.ok) throw new Error('market api '+r.status);
+        var data=await r.json();
+        if(!Array.isArray(data)) throw new Error('market api returned invalid data');
         var btc=data.find(function(x){return x.id==='bitcoin'})||{},eth=data.find(function(x){return x.id==='ethereum'})||{},sol=data.find(function(x){return x.id==='solana'})||{};
-        var avg=[btc.price_change_percentage_24h,eth.price_change_percentage_24h,sol.price_change_percentage_24h].filter(function(x){return typeof x==='number'}); var m=avg.length?avg.reduce(function(a,b){return a+b},0)/avg.length:0;
+        var validAssets=[btc,eth,sol].filter(function(x){return Number.isFinite(Number(x.current_price))&&Number(x.current_price)>0&&Number.isFinite(Number(x.price_change_percentage_24h));});
+        if(!validAssets.length) throw new Error('market api returned no usable prices');
+        var avg=validAssets.map(function(x){return Number(x.price_change_percentage_24h);});
+        var m=avg.reduce(function(a,b){return a+b},0)/avg.length;
         var state=m<=-5?'🔴 Сильное давление':m<=-2?'🟡 Напряжённо':m>=3?'🟢 Сильный импульс':'🟢 Умеренно';
         var text=lang==='ru'?'❤️ *ПУЛЬС РЫНКА*\n──────\n\n':'❤️ *MARKET PULSE*\n──────\n\n';
         text+='Состояние: *'+state+'*\n\n';
-        [[btc,'BTC'],[eth,'ETH'],[sol,'SOL']].forEach(function(x){if(x[0].current_price)text+='• '+x[1]+': $'+Number(x[0].current_price).toLocaleString('en-US',{maximumFractionDigits:2})+' · '+(Number(x[0].price_change_percentage_24h)>=0?'+':'')+Number(x[0].price_change_percentage_24h||0).toFixed(1)+'%\n';});
+        [[btc,'BTC'],[eth,'ETH'],[sol,'SOL']].forEach(function(x){if(Number.isFinite(Number(x[0].current_price))&&Number(x[0].current_price)>0&&Number.isFinite(Number(x[0].price_change_percentage_24h)))text+='• '+x[1]+': $'+Number(x[0].current_price).toLocaleString('en-US',{maximumFractionDigits:2})+' · '+(Number(x[0].price_change_percentage_24h)>=0?'+':'')+Number(x[0].price_change_percentage_24h).toFixed(1)+'%\n';});
         var aRaw=await getData('analysis_'+chatId);var a=aRaw?(typeof aRaw==='string'?JSON.parse(aRaw):aRaw):null;
         if(a){var relevant='';if(Number(a.altPercent||0)>10 && sol.price_change_percentage_24h< -3) relevant=lang==='ru'?'\n⚠️ SOL заметно слабее, а его доля в твоём портфеле значимая.':'\n⚠️ SOL is materially weaker while it is a meaningful portfolio position.';if(Number(a.btcPercent||0)>40)relevant+='\n📊 '+(lang==='ru'?'BTC имеет большой вес в твоём портфеле.':'BTC has a large portfolio weight.');if(relevant)text+=relevant+'\n';}
         text+='\n🧭 *'+(lang==='ru'?'Вывод':'Takeaway')+'*\n'+(lang==='ru'?(m<=-2?'Рынок сейчас под давлением. Если у тебя высокая доля рисковых активов, важнее контролировать экспозицию, чем пытаться угадать дно.':m>=3?'Рынок показывает сильный импульс. Это не подтверждает продолжение движения, поэтому не стоит принимать решение только из-за роста.':'Рынок без выраженного экстремума. Сейчас полезнее смотреть на изменения твоего портфеля и концентрацию, чем на один показатель 24h.'):(m<=-2?'The market is under pressure. If your portfolio has high risk exposure, controlling exposure matters more than trying to call a bottom.':m>=3?'The market shows strong momentum. That does not confirm continuation, so do not act on the rise alone.':'The market has no strong extreme. It is more useful to watch your portfolio changes and concentration than one 24h metric.'))+'\n\n'+(lang==='ru'?'Это состояние рынка, а не сигнал BUY/SELL.':'This is market state, not a BUY/SELL signal.');
@@ -4382,6 +4388,18 @@ async function handleAICommand(chatId, question, lang, messageId) {
         return await sendUpdatedMessage(chatId, text, keyboard, parseMode || 'Markdown', null);
     }
     await sendTyping(chatId);
+
+    if (question && question.trim()) {
+        var normalizedQuestion = question.toLowerCase().replace(/ё/g, 'е').trim();
+        var asksForMarketOverview = /\bрынок\b|\bmarket\b/.test(normalizedQuestion) &&
+            !/\b(портфель|portfolio|баланс|balance)\b/.test(normalizedQuestion);
+        if (asksForMarketOverview) {
+            if (messageId) await deleteUserMessage(chatId, messageId);
+            await showMarketPulse(chatId);
+            return;
+        }
+    }
+
     
     if (!question || question.trim().length === 0) {
         var helpText = lang === 'ru' ?
