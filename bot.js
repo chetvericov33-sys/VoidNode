@@ -608,6 +608,12 @@ function escapeMarkdown(text) {
     return String(text == null ? '' : text).replace(/([_*`\[])/g, '\\$1');
 }
 
+function cleanAIAnswerFormatting(text) {
+    // AI replies should read as plain, polished text; remove Markdown emphasis markers
+    // that Telegram would otherwise display literally after escaping.
+    return String(text == null ? '' : text).replace(/\*/g, '').trim();
+}
+
 function formatHelpAnswer(text, lang) {
     var answer = String(text || '').trim();
     var back = lang === 'ru' ? '\n\n← Назад: /help' : '\n\n← Back: /help';
@@ -1012,7 +1018,7 @@ var LANGUAGES = {
         mood_panic: 'Паника',
         mood_angry: 'Зол',
         mood_euphoric: 'Эйфория',
-        plans_title: '💳 *Тарифы*\n──────\n\nВыбери тариф:',
+        plans_title: '💳 *Тарифы*\n──────\n\nВыберите подходящий тариф из доступных вариантов:',
         plans_current: function(plan, expires) { return '📊 ' + plan + '\n📅 До: ' + expires; },
         plans_trial: '🔰 *Trial — знакомство*\n\n📊 3 анализа портфеля за всё время\n🛡️ 3 антискам-проверки\n📰 3 запроса новостей\n📈 3 соц.тренда\n📅 2 запроса календаря\n🤖 3 AI-сообщения\n🔔 Оповещения: нет\n🧾 Контроль ордеров: нет\n☀️ Daily briefing: выключен\n📊 CSV: нет\n🆘 Kill Switch: нет\n🧬 Portfolio DNA: нет\n\nЛимиты Trial не сбрасываются. Данные и история после Trial не удаляются.',
         plans_silver: '🥈 *Silver — 600 ₽/мес*\n\nЕжедневный контроль риска.\n\n✅ Daily briefing в 08:00\n✅ 30 анализов портфеля в месяц\n✅ 300 AI-сообщений в месяц\n✅ Контроль ордеров и Stop Loss\n✅ Оповещения\n✅ Полные отчёты + CSV\n🚨 Panic alerts',
@@ -1021,7 +1027,7 @@ var LANGUAGES = {
         plans_payment_creating: '⏳ Создаю счёт...',
         plans_payment_error: '❌ Ошибка создания счёта.',
         plans_success: function(plan) { return '✅ *' + plan + ' активирован!*'; },
-        plans_already: function(plan) { return 'ℹ️ У вас уже активен ' + plan; },
+        plans_already: function(plan, expires) { return 'ℹ️ У вас уже активна подписка ' + plan + ' до ' + expires + '. Новая оплата будет доступна после окончания текущей подписки.'; },
         plans_not_found: '❌ Тариф не найден.',
         plans_trial_used: '❌ Триал уже использован.\n💳 /subscribe',
         plans_trial_success: '🎉 *Trial активирован!*',
@@ -1232,7 +1238,7 @@ var LANGUAGES = {
         mood_panic: 'Panic',
         mood_angry: 'Angry',
         mood_euphoric: 'Euphoric',
-        plans_title: '💳 *Plans*\n──────\n\nChoose a plan:',
+        plans_title: '💳 *Plans*\n──────\n\nChoose a plan from the available options:',
         plans_current: function(plan, expires) { return '📊 ' + plan + '\n📅 Until: ' + expires; },
         plans_trial: '🔰 *Trial*\n💰 0 ₽ • 7 days\n\n📋 *What\'s included:*\n• 📊 2 portfolio analyses per day\n• 🛡️ 3 anti-scam checks\n• 📈 Social trends\n\n💡 *Perfect for:* getting to know the bot and initial assessment.\n\n⚠️ After trial, access to functions is limited.',
 
@@ -1242,7 +1248,7 @@ var LANGUAGES = {
         plans_payment_creating: '⏳ Creating invoice...',
         plans_payment_error: '❌ Payment error.',
         plans_success: function(plan) { return '✅ *' + plan + ' activated!*'; },
-        plans_already: function(plan) { return 'ℹ️ You already have ' + plan; },
+        plans_already: function(plan, expires) { return 'ℹ️ You already have an active ' + plan + ' subscription until ' + expires + '. A new payment will be available after the current subscription expires.'; },
         plans_not_found: '❌ Plan not found.',
         plans_trial_used: '❌ Trial already used.\n💳 /subscribe',
         plans_trial_success: '🎉 *Trial activated for 7 days!*',
@@ -1793,8 +1799,12 @@ async function handlePlanSelection(chatId, planId, lang, messageId) {
         return;
     }
     var userPlan = await getUserPlan(chatId);
-    if (userPlan.plan === planId && userPlan.expires > Date.now()) {
-        await sendUpdatedMessage(chatId, getText(lang, 'plans_already', plan.name), null, 'Markdown', messageId);
+    if ((userPlan.plan === 'SILVER' || userPlan.plan === 'PLATINUM') && Number(userPlan.expires) > Date.now()) {
+        var activePlanName = lang === 'ru'
+            ? (userPlan.plan === 'PLATINUM' ? '🥇 Platinum' : '🥈 Silver')
+            : (userPlan.name_en || userPlan.name);
+        var activePlanExpiry = formatDateShort(userPlan.expires);
+        await sendUpdatedMessage(chatId, getText(lang, 'plans_already', activePlanName, activePlanExpiry), null, 'Markdown', messageId);
         return;
     }
     await sendUpdatedMessage(chatId, getText(lang, 'plans_payment_creating'), null, 'Markdown', messageId);
@@ -2517,11 +2527,9 @@ async function showModeSelect(chatId) {
 }
 
 async function showPlansMenu(chatId) {
-    var lang=await getData('lang_'+chatId)||'ru', plan=await getUserPlan(chatId);
-    var exp=plan.expires?formatDateShort(plan.expires):(lang==='ru'?'без срока':'no expiry');
-    var displayPlan = lang === 'ru' ? (plan.plan === 'PLATINUM' ? '🥇 Platinum' : plan.plan === 'SILVER' ? '🥈 Silver' : plan.plan === 'TRIAL' ? '🔰 Trial' : plan.name) : (plan.name_en || plan.name);
-    var text=getText(lang,'plans_title')+'\n'+getText(lang,'plans_current',[displayPlan,exp])+'\n\n'+getText(lang,'plans_platinum')+'\n\n──────\n\n'+getText(lang,'plans_silver')+'\n\n──────\n\n'+getText(lang,'plans_trial')+'\n\n'+getText(lang,'plans_select');
-    await sendUpdatedMessage(chatId,text,getPlansMenuKeyboard(lang),'Markdown');
+    var lang=await getData('lang_'+chatId)||'ru';
+    // Keep the existing plan buttons and callbacks unchanged; show only the selection prompt here.
+    await sendUpdatedMessage(chatId,getText(lang,'plans_title'),getPlansMenuKeyboard(lang),'Markdown');
 }
 async function showHelpMenu(chatId) {
     var lang = await getData('lang_' + chatId) || 'ru';
@@ -4463,7 +4471,7 @@ async function handleAICommand(chatId, question, lang, messageId) {
     aiFixes.slice(0,3).forEach(function(f){keyboardRows.push([{text:'🛠️ '+(lang==='ru'?'Исправить: ':'Fix: ')+f.title,callback_data:'fix_'+f.id}]);});
     keyboardRows.push([{ text:'💬 ' + (lang === 'ru' ? 'Продолжить диалог' : 'Continue dialogue'), callback_data:'ai_chat_start' }]);
     keyboardRows.push([{ text:getText(lang,'back_to_functions'),callback_data:'back_to_functions' }]);
-    await renderAIMessage(escapeMarkdown(result.answer), {inline_keyboard:keyboardRows}, 'Markdown');
+    await renderAIMessage(escapeMarkdown(cleanAIAnswerFormatting(result.answer)), {inline_keyboard:keyboardRows}, 'Markdown');
 }
 
 console.log('🤖 AI Advisor initialized with OpenRouter support');
@@ -4807,6 +4815,7 @@ async function handleMessage(update) {
 
         // GLOBAL COMMANDS: never allow an active state or AI mode to trap the user.
         var isStartCommand = /^\/start(?:@[^\s]+)?(?:\s+.*)?$/i.test(cleanText);
+        var isMenuCommand = /^\/menu(?:@[^\s]+)?$/i.test(cleanText);
         var isCancelCommand = /^(?:\/cancel(?:@[^\s]+)?|\/cansel(?:@[^\s]+)?|❌ Отмена|❌ Cancel)$/i.test(cleanText);
         var isResetCommand = /^\/reset(?:@[^\s]+)?$/i.test(cleanText);
 
@@ -4838,6 +4847,13 @@ async function handleMessage(update) {
                 return;
             }
             console.log('🧭 Branch: /start -> main menu');
+            await showMainMenu(chatId);
+            return;
+        }
+
+        if (isMenuCommand) {
+            console.log('🧭 Branch: GLOBAL /menu');
+            await clearTransientState(chatId);
             await showMainMenu(chatId);
             return;
         }
