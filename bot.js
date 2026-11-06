@@ -4215,32 +4215,46 @@ class AIContext {
                 if (token) {
                     var sign = token.change24h > 0 ? '+' : '';
                     var emoji = token.change24h > 5 ? '📈' : token.change24h < -5 ? '📉' : '➡️';
-                    var response = isRu ?
-                        '📊 *' + coin + '*\n──────\n\n' +
-                        '💰 Цена: $' + token.price.toFixed(2) + '\n' +
-                        '📊 24h: ' + sign + token.change24h.toFixed(1) + '% ' + emoji + '\n' +
-                        '💵 Объем: $' + (token.volume24h / 1000000).toFixed(1) + 'M\n\n' :
-                        '📊 *' + coin + '*\n──────\n\n' +
-                        '💰 Price: $' + token.price.toFixed(2) + '\n' +
-                        '📊 24h: ' + sign + token.change24h.toFixed(1) + '% ' + emoji + '\n' +
-                        '💵 Volume: $' + (token.volume24h / 1000000).toFixed(1) + 'M\n\n';
-                    
-                    if (token.change24h > 5) {
-                        response += isRu ?
-                            '📈 ' + coin + ' сильно растет. Будь осторожен — коррекция может быть резкой.\n\n⚠️ Не рекомендую покупать на пике.' :
-                            '📈 ' + coin + ' is rising strongly. Be careful — correction can be sharp.\n\n⚠️ I don\'t recommend buying at the peak.';
-                    } else if (token.change24h < -5) {
-                        response += isRu ?
-                            '📉 ' + coin + ' падает. Если этот актив есть в портфеле, сначала проверь его долю и общий риск. Не принимай решение только по одному дню движения.' :
-                            '📉 ' + coin + ' is falling. If this asset is in the portfolio, first check its weight and total risk. Do not make a decision from one day of movement alone.';
-                    } else {
-                        response += isRu ?
-                            '➡️ ' + coin + ' стабилен. Хорошее время для анализа, но не для спешных решений.' :
-                            '➡️ ' + coin + ' is stable. Good time for analysis, but not for rushed decisions.';
+                    var coinIds = {BTC:'bitcoin',ETH:'ethereum',SOL:'solana'};
+            var publicMarketResponse;
+            if (coinIds[coin]) {
+                try {
+                    var coinUrl='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids='+coinIds[coin]+'&price_change_percentage=24h&sparkline=false';
+                    if (COINGECKO_API_KEY) coinUrl+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
+                    var coinFetch=await withTimeout(fetch(coinUrl),10000,'CoinGecko '+coin+' quote');
+                    if (!coinFetch.ok) throw new Error('CoinGecko HTTP '+coinFetch.status);
+                    var coinRows=await coinFetch.json();
+                    var quote=Array.isArray(coinRows)?coinRows[0]:null;
+                    if (!quote || !Number.isFinite(Number(quote.current_price)) || !Number.isFinite(Number(quote.price_change_percentage_24h))) {
+                        throw new Error('CoinGecko returned incomplete '+coin+' quote');
                     }
-                    
-                    this.addMessage(chatId, 'assistant', response);
-                    return { success: true, answer: response };
+                    var change=Number(quote.price_change_percentage_24h);
+                    publicMarketResponse=isRu
+                        ? '📊 *'+coin+' — РЫНОЧНЫЕ ДАННЫЕ*\\n──────\\n\\n' +
+                          '💰 Цена: $'+Number(quote.current_price).toLocaleString('en-US',{maximumFractionDigits:8})+'\\n' +
+                          '📈 Изменение за 24ч: '+(change>=0?'+':'')+change.toFixed(2)+'%\\n' +
+                          (Number.isFinite(Number(quote.market_cap))?'🏦 Капитализация: $'+Number(quote.market_cap).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          (Number.isFinite(Number(quote.total_volume))?'💧 Объём за 24ч: $'+Number(quote.total_volume).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          '\\nИсточник: CoinGecko. Это рыночная сводка, не сигнал BUY/SELL.'
+                        : '📊 *'+coin+' — MARKET DATA*\\n──────\\n\\n' +
+                          '💰 Price: $'+Number(quote.current_price).toLocaleString('en-US',{maximumFractionDigits:8})+'\\n' +
+                          '📈 24h change: '+(change>=0?'+':'')+change.toFixed(2)+'%\\n' +
+                          (Number.isFinite(Number(quote.market_cap))?'🏦 Market cap: $'+Number(quote.market_cap).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          (Number.isFinite(Number(quote.total_volume))?'💧 24h volume: $'+Number(quote.total_volume).toLocaleString('en-US',{maximumFractionDigits:0})+'\\n':'') +
+                          '\\nSource: CoinGecko. This is market context, not a BUY/SELL signal.';
+                } catch (coinError) {
+                    console.warn('Public coin quote unavailable for '+coin+':',coinError.message);
+                    publicMarketResponse=isRu
+                        ? '⚠️ Сейчас не удалось получить подтверждённые рыночные данные по '+coin+'. Попробуй позже.'
+                        : '⚠️ Confirmed market data for '+coin+' is temporarily unavailable. Please try again later.';
+                }
+            } else {
+                publicMarketResponse=isRu
+                    ? 'ℹ️ У меня пока нет подтверждённой публичной котировки для '+coin+'. Это не означает, что монеты нет в твоём портфеле. Подключи биржу или попробуй позже.'
+                    : 'ℹ️ I do not currently have a verified public quote for '+coin+'. This does not mean the asset is absent from your portfolio. Connect an exchange or try again later.';
+            }
+            this.addMessage(chatId, 'assistant', publicMarketResponse);
+            return { success: true, answer: publicMarketResponse };
                 }
             }
             
