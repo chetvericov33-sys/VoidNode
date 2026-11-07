@@ -4627,6 +4627,36 @@ console.log('🤖 AI Advisor initialized with OpenRouter support');
 console.log('📡 OpenRouter key: ' + (HAS_OPENROUTER ? '✅ Found' : '❌ Not found (using fallback mode)'));
 console.log('🧠 Current model: ' + CURRENT_AI_MODEL);
 
+function scheduleDisconnectFinalization(chatId, pendingRaw, expectedUserRaw, delayMs) {
+    setTimeout(async function() {
+        try {
+            var completed = await VOID_KV.completeDisconnect(chatId, pendingRaw, expectedUserRaw);
+            if (completed) console.log('🔌 Exchange disconnected after grace period for ' + chatId);
+        } catch (e) {
+            console.error('Delayed disconnect failed safely:', e.message);
+        }
+    }, Math.max(0, Number(delayMs) || 0));
+}
+
+async function recoverPendingDisconnects() {
+    var pendingKeys = await VOID_KV.list('pending_disconnect_');
+    for (var i = 0; i < pendingKeys.length; i++) {
+        var key = pendingKeys[i].name;
+        var chatId = Number(String(key).slice('pending_disconnect_'.length));
+        if (!Number.isSafeInteger(chatId)) continue;
+        var pendingRaw = await getData(key);
+        if (!pendingRaw) continue;
+        var pending;
+        try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
+        if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
+            await deleteData(key);
+            continue;
+        }
+        var remaining = 10000 - (Date.now() - Number(pending.scheduledAt));
+        scheduleDisconnectFinalization(chatId, pendingRaw, pending.userRecord, remaining);
+    }
+}
+
 async function scheduleDisconnect(chatId) {
     var raw = await getData('user_' + chatId);
     if (!raw) {
@@ -4644,14 +4674,7 @@ async function scheduleDisconnect(chatId) {
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     });
-    setTimeout(async function() {
-        try {
-            var completed = await VOID_KV.completeDisconnect(chatId, pendingRecord, stored);
-            if (completed) console.log('🔌 Exchange disconnected after grace period for ' + chatId);
-        } catch (e) {
-            console.error('Delayed disconnect failed safely:', e.message);
-        }
-    }, 10000);
+    scheduleDisconnectFinalization(chatId, pendingRecord, stored, 10000);
 }
 
 async function undoDisconnect(chatId) {
@@ -6054,6 +6077,9 @@ async function configureTelegramWebhook() {
 app.listen(PORT, '0.0.0.0', function() {
     console.log('✅ Bot started on port ' + PORT);
     console.log('📡 Webhook URL: /webhook');
+    recoverPendingDisconnects().catch(function() {
+        console.warn('Pending exchange disconnect recovery could not be completed.');
+    });
     configureTelegramWebhook();
 });
 
