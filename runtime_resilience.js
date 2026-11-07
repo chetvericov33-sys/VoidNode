@@ -9,6 +9,22 @@ function withTimeout(promise, ms, label) {
     return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(timer));
 }
 
+async function fetchWithTimeout(url, options = {}, ms, label) {
+    const timeoutMs = Number(ms || 10000);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (controller.signal.aborted) {
+            throw new Error((label || 'HTTP request') + ' timeout after ' + timeoutMs + 'ms');
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 class BoundedTTLCache {
     constructor(options = {}) {
         this.maxEntries = Math.max(1, Number(options.maxEntries) || 1000);
@@ -48,4 +64,4 @@ class BoundedTTLCache {
     }
 }
 
-module.exports = { withTimeout, BoundedTTLCache };
+module.exports = { withTimeout, fetchWithTimeout, BoundedTTLCache };
