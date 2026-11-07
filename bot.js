@@ -265,6 +265,33 @@ class RedisStorage {
             return result === 'OK' || result === true ? token : null;
         } catch (e) { return null; }
     }
+    async activatePaidInvoice(invoiceId, chatId, planId, planRecord, paymentRecord) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        var script = "if redis.call('EXISTS', KEYS[3]) == 1 then return 0 end " +
+            "redis.call('SET', KEYS[1], ARGV[1]) " +
+            "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3]) " +
+            "redis.call('SET', KEYS[3], ARGV[4], 'EX', ARGV[5]) " +
+            "return 1";
+        try {
+            var result = await withTimeout(this.redis.eval(
+                script,
+                ['plan_' + chatId, 'payment_' + invoiceId, 'payment_processed_' + invoiceId],
+                [
+                    JSON.stringify(planRecord),
+                    JSON.stringify(paymentRecord),
+                    180 * 24 * 60 * 60,
+                    JSON.stringify({ processedAt: Date.now(), chatId: chatId, planId: planId }),
+                    180 * 24 * 60 * 60
+                ]
+            ), 8000, 'Atomic payment activation');
+            return Number(result) === 1;
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            console.error('Atomic payment activation error:', error.message);
+            throw new Error('Critical payment storage unavailable');
+        }
+    }
     async releaseLock(key, token) {
         if (!token || !this.isRedisAvailable) return;
         try {
@@ -5673,29 +5700,39 @@ async function handleCryptoWebhook(request) {
         var invoiceId = String(invoice.invoice_id || invoice.id || '');
         if (!invoiceId) return { status: 400, error: 'Missing invoice id' };
 
-        // Idempotency: the same paid invoice must activate a plan only once.
-        var processedKey = 'payment_processed_' + invoiceId;
-        if (await getData(processedKey)) return { status: 200, duplicate: true };
+        // Serialize concurrent deliveries for this invoice; fail closed if Redis is unavailable.
+        var paymentLockKey = 'payment_processing_' + invoiceId;
+        var paymentLockToken = await VOID_KV.acquireLock(paymentLockKey, 300);
+        if (!paymentLockToken) return { status: 503, error: 'Payment processing busy or storage unavailable' };
+        try {
+            var processedKey = 'payment_processed_' + invoiceId;
+            if (await getData(processedKey)) return { status: 200, duplicate: true };
 
-        var paymentRecord = await getData('payment_' + invoiceId);
-        if (!paymentRecord) return { status: 400, error: 'Unknown invoice' };
-        paymentRecord = typeof paymentRecord === 'string' ? JSON.parse(paymentRecord) : paymentRecord;
-        if (paymentRecord.status === 'paid') return { status: 200, duplicate: true };
+            var paymentRecord = await getData('payment_' + invoiceId);
+            if (!paymentRecord) return { status: 400, error: 'Unknown invoice' };
+            paymentRecord = typeof paymentRecord === 'string' ? JSON.parse(paymentRecord) : paymentRecord;
 
-        if (String(invoice.status || 'paid') !== 'paid') return { status: 400, error: 'Invoice is not paid' };
-        if (String(invoice.asset || '').toUpperCase() !== String(paymentRecord.asset).toUpperCase()) return { status: 400, error: 'Asset mismatch' };
-        if (String(invoice.amount) !== String(paymentRecord.amount)) return { status: 400, error: 'Amount mismatch' };
+            if (String(invoice.status || 'paid') !== 'paid') return { status: 400, error: 'Invoice is not paid' };
+            if (String(invoice.asset || '').toUpperCase() !== String(paymentRecord.asset).toUpperCase()) return { status: 400, error: 'Asset mismatch' };
+            if (String(invoice.amount) !== String(paymentRecord.amount)) return { status: 400, error: 'Amount mismatch' };
 
-        var chatId = parseInt(paymentRecord.chatId, 10);
-        var planId = String(paymentRecord.planId || '');
-        if (!Number.isSafeInteger(chatId) || !PLANS[planId]) return { status: 400, error: 'Invalid payment metadata' };
+            var chatId = parseInt(paymentRecord.chatId, 10);
+            var planId = String(paymentRecord.planId || '');
+            if (!Number.isSafeInteger(chatId) || !PLANS[planId]) return { status: 400, error: 'Invalid payment metadata' };
 
-        // Mark before side effects; retries will not double-credit.
-        await setData(processedKey, JSON.stringify({ processedAt: Date.now(), chatId: chatId, planId: planId }), 180 * 24 * 60 * 60);
-        await setData('payment_' + invoiceId, JSON.stringify({ ...paymentRecord, status: 'paid', paidAt: Date.now() }), 180 * 24 * 60 * 60);
+            var activatedAt = Date.now();
+            var paidRecord = { ...paymentRecord, status: 'paid', paidAt: activatedAt };
+            var planRecord = {
+                planId: planId,
+                activatedAt: activatedAt,
+                expires: activatedAt + PLANS[planId].duration * 24 * 60 * 60 * 1000
+            };
+            var activated = await VOID_KV.activatePaidInvoice(invoiceId, chatId, planId, planRecord, paidRecord);
+            if (!activated) return { status: 200, duplicate: true };
+            await invalidatePlanCache(chatId);
 
-        var lang = await getData('lang_' + chatId) || 'ru';
-        var plan = await activatePlan(chatId, planId);
+            var lang = await getData('lang_' + chatId) || 'ru';
+            var plan = PLANS[planId];
         if (plan) {
             try {
                 var bonusResult = await REFERRAL.processPlanActivation(chatId, planId);
@@ -5710,8 +5747,11 @@ async function handleCryptoWebhook(request) {
             await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
             await showMainMenu(chatId);
             await addHistory(chatId, '💳 Payment', plan.name + ' activated');
+            }
+            return { status: 200 };
+        } finally {
+            await VOID_KV.releaseLock(paymentLockKey, paymentLockToken);
         }
-        return { status: 200 };
     } catch (error) {
         console.error('Webhook error:', error.message);
         return { status: 500, error: 'Webhook processing failed' };
