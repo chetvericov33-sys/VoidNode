@@ -27,9 +27,11 @@ function parseResponse(response) {
         var answer = extractText(choice && choice.message && choice.message.content);
         if (!answer && choice && choice.text) answer = extractText(choice.text);
         if (!answer) {
-            var empty = new Error('OpenRouter returned an empty completion');
+            var finishReason = choice && choice.finish_reason ? String(choice.finish_reason) : 'unknown';
+            var empty = new Error('OpenRouter returned an empty completion (model=' + String(data.model || 'unknown') + '; finish_reason=' + finishReason + ')');
             empty.retryable = true;
             empty.model = data.model || null;
+            empty.finishReason = finishReason;
             throw empty;
         }
         return { answer: answer, model: data.model || null };
@@ -38,16 +40,23 @@ function parseResponse(response) {
 
 async function requestOpenRouterCompletion(options) {
     var primary = String(options.primaryModel || 'openrouter/free').trim();
-    var fallbacks = Array.isArray(options.fallbackModels) ? options.fallbackModels : [];
-    // Never silently switch to a paid model. Explicit fallbacks must be configured by the owner.
-    var models = [primary].concat(fallbacks.map(function(model) { return String(model || '').trim(); }).filter(Boolean));
-    if (!models.some(function(model) { return model !== primary; })) {
-        models.push('openrouter/free');
+    var configuredFallbacks = Array.isArray(options.fallbackModels) ? options.fallbackModels : [];
+    // Empty completions from the dynamic free router are a provider/model failure, not proof that
+    // the account quota is exhausted. Move to known free model IDs instead of retrying the same
+    // router repeatedly. These are free-tier routes only; no paid model is selected implicitly.
+    var observedFreeFallbacks = [
+        'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+        'nvidia/nemotron-3-ultra-550b-a55b:free'
+    ];
+    var fallbacks = configuredFallbacks.map(function(model) { return String(model || '').trim(); }).filter(Boolean);
+    if (primary === 'openrouter/free') {
+        fallbacks = fallbacks.concat(observedFreeFallbacks);
+    } else if (!fallbacks.length) {
+        fallbacks.push('openrouter/free');
     }
+    var models = [primary].concat(fallbacks);
     var uniqueModels = [];
     models.forEach(function(model) { if (model && uniqueModels.indexOf(model) === -1) uniqueModels.push(model); });
-    // If the primary is the free router, retry it once: its dynamic routing can select another free model.
-    if (uniqueModels.length === 1) uniqueModels.push(uniqueModels[0]);
 
     var lastError;
     for (var i = 0; i < uniqueModels.length && i < 3; i++) {
