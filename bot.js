@@ -2508,15 +2508,11 @@ async function showMainMenu(chatId) {
         var userName = 'Друг';
         try {
             var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
-            var controller = new AbortController();
-            var timeoutId = setTimeout(() => controller.abort(), 3000);
-            var response = await fetch(url, {
+            var response = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId }),
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
+                body: JSON.stringify({ chat_id: chatId })
+            }, 3000, 'Telegram getChat');
             var data = await response.json();
             if (data.ok && data.result) {
                 userName = data.result.username || data.result.first_name || 'Друг';
@@ -4250,15 +4246,11 @@ class AIContext {
             var name = 'друг';
             try {
                 var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
-                var controller = new AbortController();
-                var timeoutId = setTimeout(() => controller.abort(), 3000);
-                var response = await fetch(url, {
+                var response = await fetchWithTimeout(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chat_id: chatId }),
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
+                    body: JSON.stringify({ chat_id: chatId })
+                }, 3000, 'Telegram getChat');
                 var data = await response.json();
                 if (data.ok && data.result) {
                     name = data.result.username || data.result.first_name || 'друг';
@@ -4398,11 +4390,9 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var controller = new AbortController();
-                var timeoutId = setTimeout(function() { controller.abort(); }, 25000);
                 var response;
                 try {
-                    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4418,11 +4408,10 @@ class AIContext {
                         ],
                         max_tokens: 1000,
                         temperature: 0.2
-                    }),
-                    signal: controller.signal
-                    });
+                    })
+                    }, 25000, 'OpenRouter chat completion');
                 } finally {
-                    clearTimeout(timeoutId);
+                    // fetchWithTimeout consumes and bounds the response before returning.
                 }
 
                 var rawBody = await response.text();
