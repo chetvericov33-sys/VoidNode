@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
-const { withTimeout, fetchWithTimeout, BoundedTTLCache } = require('./runtime_resilience');
+const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -165,7 +165,18 @@ class RedisStorage {
     markUnavailable() { this.isRedisAvailable = false; }
     scheduleRetry() {
         if (this.retryTimer) return;
-        this.retryTimer = setTimeout(function() { this.isRedisAvailable = true; this.retryTimer = null; }.bind(this), 30000);
+        this.retryTimer = setTimeout(async function() {
+            this.retryTimer = null;
+            const recovered = await probeRedisConnection(this.redis, 5000);
+            if (recovered) {
+                this.isRedisAvailable = true;
+                console.log('Redis connection recovered');
+            } else {
+                this.isRedisAvailable = false;
+                this.scheduleRetry();
+            }
+        }.bind(this), 30000);
+        if (this.retryTimer && typeof this.retryTimer.unref === 'function') this.retryTimer.unref();
     }
     async get(key) {
         try {
@@ -180,7 +191,8 @@ class RedisStorage {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis get error:', error.message);
             if (this.isCritical(key)) throw new Error('Critical storage unavailable');
-            return this.localCache.get(key) || null;
+            var cached = this.localCache.get(key);
+            return cached === null || cached === undefined ? null : cached;
         }
     }
     async put(key, value, ttl) {
@@ -562,7 +574,7 @@ async function editBotMessage(chatId, messageId, text, keyboard, parseMode) {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/editMessageText';
         var body = { chat_id: chatId, message_id: messageId, text: String(text), parse_mode: mode, disable_web_page_preview: true };
         if (keyboard) body.reply_markup = keyboard;
-        var response = await withTimeout(fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }), 10000, 'Telegram editMessageText');
+        var response = await fetchWithTimeout(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }, 10000, 'Telegram editMessageText');
         var raw = await withTimeout(response.text(), 5000, 'Telegram edit response');
         var data = {};
         try { data = JSON.parse(raw); } catch (e) {}
@@ -589,11 +601,11 @@ async function deleteUserMessage(chatId, messageId) {
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
         var body = { chat_id: chatId, message_id: messageId };
-        await withTimeout(fetch(url, {
+        await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        }), 10000, 'Telegram deleteMessage');
+        }, 10000, 'Telegram deleteMessage');
     } catch (error) {
         console.error('Failed to delete user message:', error.message);
     }
@@ -610,11 +622,11 @@ async function deleteUserMessageWithDelay(chatId, messageId, delay) {
 async function sendTyping(chatId) {
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendChatAction';
-        await withTimeout(fetch(url, {
+        await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chat_id: chatId, action: 'typing' })
-        }), 5000, 'Telegram sendChatAction');
+        }, 5000, 'Telegram sendChatAction');
     } catch (error) {
         console.error('sendTyping error:', error.message);
     }
@@ -626,11 +638,11 @@ async function answerCallback(callbackId, text) {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/answerCallbackQuery';
         var body = { callback_query_id: callbackId };
         if (text) body.text = String(text).slice(0, 200);
-        var response = await withTimeout(fetch(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        }), 5000, 'Telegram answerCallbackQuery');
+        }, 5000, 'Telegram answerCallbackQuery');
         var raw = await response.text();
         var data = raw ? JSON.parse(raw) : null;
         return !!(response.ok && data && data.ok);
@@ -672,7 +684,7 @@ async function sendDocument(chatId, content, filename) {
         form.append('chat_id', String(chatId));
         form.append('document', blob, filename || 'report.csv');
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendDocument';
-        var response = await withTimeout(fetch(url, { method: 'POST', body: form }), 15000, 'Telegram sendDocument');
+        var response = await fetchWithTimeout(url, { method: 'POST', body: form }, 15000, 'Telegram sendDocument');
         var raw = await response.text();
         var data = raw ? JSON.parse(raw) : null;
         if (!response.ok || !data || !data.ok) {
@@ -695,7 +707,7 @@ async function sendMessage(chatId, text, keyboard, parseMode) {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
         var body = { chat_id: chatId, text: String(text), parse_mode: mode, disable_web_page_preview: true };
         if (keyboard) body.reply_markup = keyboard;
-        var response = await withTimeout(fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }), 10000, 'Telegram sendMessage');
+        var response = await fetchWithTimeout(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }, 10000, 'Telegram sendMessage');
         var raw = '';
         try { raw = await withTimeout(response.text(), 5000, 'Telegram response'); } catch (e) { raw = ''; }
         var data = null;
