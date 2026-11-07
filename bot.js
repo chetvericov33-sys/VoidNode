@@ -1666,7 +1666,7 @@ async function analyzePortfolio(chatId,lang) {
             var usdt=Number(balances.USDT||0); if(usdt>0){rows.push({symbol:'USDT',amount:usdt,price:1,value:usdt,change24h:0});total+=usdt;}
             var tickers={}; try{if(typeof ex.fetchTickers==='function')tickers=await ex.fetchTickers();}catch(e){console.warn('Ticker snapshot unavailable:',e.message);}
             Object.keys(balances).forEach(function(coin){
-                var amt=Number(balances[coin]); if(coin==='USDT'||!Number.isFinite(amt)||amt<=0)return;
+                var amt=Number(balances[coin]); if(coin==='USDT')return; if(!Number.isFinite(amt)||amt<0){coverageComplete=false;unknownAssets.push({symbol:coin,amount:null,reason:'invalid_balance'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_balance'});return;} if(amt===0)return;
                 var ticker=tickers[coin+'/USDT'],price=Number(ticker&&(ticker.last||ticker.close)||0);
                 if(Number.isFinite(price)&&price>0){
                     var v=amt*price, tickerTime=Number(ticker.timestamp||0);
