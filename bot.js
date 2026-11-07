@@ -14,6 +14,7 @@ const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = r
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
+const { createReadOnlyExchangeConfig, validateExchangeId } = require('./exchange_safety');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -1454,9 +1455,11 @@ function getText(lang, key, args) {
 // ============================================================
 
 async function connectExchange(exchangeId, apiKey, secretKey, chatId) {
-    if (!ccxt[exchangeId]) throw new Error('Unsupported exchange');
-    if (!apiKey || !secretKey || apiKey.length > 256 || secretKey.length > 512) throw new Error('Invalid API credentials');
-    const exchange = new ccxt[exchangeId]({apiKey, secret:secretKey, enableRateLimit:true, timeout:30000});
+    const exchangeConfig = createReadOnlyExchangeConfig(exchangeId, apiKey, secretKey);
+    if (!validateExchangeId(exchangeId) || typeof ccxt[exchangeId] !== 'function') {
+        throw new Error('Unsupported exchange');
+    }
+    const exchange = new ccxt[exchangeId](exchangeConfig);
     // Read-only product design: connection is used only for fetching portfolio/market data.
     // No createOrder/createMarketBuyOrder/createMarketSellOrder methods are exposed by Void Node.
     await exchange.fetchBalance();
