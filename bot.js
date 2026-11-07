@@ -5919,12 +5919,14 @@ async function processPendingPaymentEffects(invoiceId) {
         var bonusMessage = '🎁 ' + (referrerLang === 'ru'
             ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
             : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
-        await sendMessage(bonusResult.referrerId, bonusMessage);
+        var referrerNotice = await sendMessage(bonusResult.referrerId, bonusMessage);
+        if (!referrerNotice || referrerNotice.ok !== true) throw new Error('Referral bonus notification failed');
     }
 
     var lang = await getData('lang_' + chatId) || 'ru';
     var plan = PLANS[planId];
-    await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
+    var paymentNotice = await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
+    if (!paymentNotice || paymentNotice.ok !== true) throw new Error('Payment activation notification failed');
     await showMainMenu(chatId);
     await addHistory(chatId, '💳 Payment', plan.name + ' activated');
     await deleteData(pendingKey);
