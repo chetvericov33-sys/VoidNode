@@ -4965,9 +4965,14 @@ async function handleMessage(update) {
     try { lang = await getData('lang_' + chatId) || 'ru'; } catch (e) { console.error('Initial lang read failed:', e.message); }
     try { state = await getData('state_' + chatId) || 'idle'; } catch (e) { console.error('Initial state read failed:', e.message); }
     if (update.message.chat.type !== 'private' && state === 'waiting_for_keys') {
+        var groupCredentialMessageDeleted = await deleteUserMessage(chatId, messageId);
         await setState(chatId, 'idle');
         await deleteData('connect_exchange_' + chatId);
-        await sendMessage(chatId, '🔒 Подключение биржи и отправка API-ключей доступны только в личном чате с Void Node.');
+        if (groupCredentialMessageDeleted) {
+            await sendMessage(chatId, '🔒 Подключение биржи доступно только в личном чате. Сообщение с потенциальными ключами удалено.');
+        } else {
+            await sendMessage(chatId, '🚨 ВНИМАНИЕ: не удалось удалить сообщение с потенциальными API-ключами. Удали его вручную и немедленно отзови эти ключи на бирже. Подключение не выполнено.');
+        }
         return;
     }
     try {
