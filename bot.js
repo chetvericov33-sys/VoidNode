@@ -1694,8 +1694,8 @@ async function analyzePortfolio(chatId,lang) {
     if(!rec.length)rec.push(lang==='ru'?'Критичных перекосов по текущим проверенным данным не найдено.':'No critical imbalance was found in the currently verified data.');
     var pricedAssets=rows.length, allPositiveAssets=pricedAssets+unknownAssets.length;
     var coveragePct=allPositiveAssets?Math.round((pricedAssets/allPositiveAssets)*100):0;
-    var confidencePct=coverageComplete ? 100 : (pricedAssets > 0 ? 50 : 0);
-    var dataStatus=coveragePct===100?'FRESH':(coveragePct>0?'PARTIAL':'UNKNOWN');
+    var confidencePct=coverageComplete ? 100 : 0;
+    var dataStatus=coveragePct===100?'COMPLETE':(coveragePct>0?'PARTIAL':'UNKNOWN');
     var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':(pricedAssets>0?'low':'unknown'),btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
     a.insight=await generateVerifiedInsight(a,lang);
     var previousSnapshot=await savePortfolioSnapshot(chatId,a); if(wallet.type!=='demo') await collectTradeSnapshot(chatId); await setData('analysis_'+chatId,JSON.stringify(a),24*60*60); await addHistory(chatId,getText(lang,'history_analyze'),'Risk '+score+'/100; value ≈ $'+total.toFixed(2));
@@ -1791,7 +1791,7 @@ function formatPortfolioAnalysis(r,lang){
     t+='• '+(ru?'Итого':'Total')+': *'+a.riskScore+'/100*\n';
     if(topFactor&&topFactor.points>0)t+='🎯 '+(ru?'Главная причина: ':'Main reason: ')+(ru?topFactor.labelRu:topFactor.labelEn)+'.\n';
     if(a.topPosition&&a.topPosition.weight>0){var impact=(a.topPosition.weight*0.30);t+='📉 '+(ru?'При падении крупнейшей позиции на 30% вклад в снижение портфеля был бы около ':'A 30% drop in the largest position would reduce the portfolio by about ')+impact.toFixed(1)+'%.\n';}
-    t+='📡 '+(ru?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(ru?'активов по количеству':'assets by count')+', '+Number(a.confidencePct||0)+'% '+(ru?'надёжности':'confidence')+', '+String(a.dataStatus||'UNKNOWN')+'\n';
+    t+='📡 '+(ru?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(ru?'активов по количеству':'assets by count')+', '+(ru?'уверенность: ':'confidence: ')+(a.confidence||'unknown')+', '+String(a.dataStatus||'UNKNOWN')+'\n';
 
 t+='\n🔎 *'+(ru?'Крупнейшие позиции':'Largest positions')+'*\n';
     a.assets.slice(0,5).forEach(function(x){t+='• '+x.symbol+': '+x.weight.toFixed(1)+'% ($'+x.value.toFixed(2)+')\n';});
@@ -2651,7 +2651,7 @@ async function showProtectionDashboard(chatId){
     t+=(wallet?(wallet.type==='demo'?'🧪 Демо-режим':'👁️ Read-only подключён'):'⚪ Кошелёк не подключён')+'\n';
     if(a)t+=em+' Risk Score: *'+a.riskScore+'/100*\n';
     t+=(a?(fresh?'🟢 ':'🟡 ')+(lang==='ru'?'Анализ':'Analysis')+': '+age+' мин. назад':'⚪ '+(lang==='ru'?'Анализ ещё не создан':'No analysis yet'))+'\n';
-    if(a)t+='🔎 '+(lang==='ru'?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(lang==='ru'?'активов по количеству':'assets by count')+' | '+Number(a.confidencePct||0)+'% '+(lang==='ru'?'надёжности':'confidence')+' | '+String(a.dataStatus||'UNKNOWN')+'\n';
+    if(a)t+='🔎 '+(lang==='ru'?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(lang==='ru'?'активов по количеству':'assets by count')+' | '+(lang==='ru'?'уверенность: ':'confidence: ')+(a.confidence||'unknown')+' | '+String(a.dataStatus||'UNKNOWN')+'\n';
     t+='🔔 '+(lang==='ru'?'Активных оповещений: ':'Active alerts: ')+alerts.length+'\n\n';
     if(fixes.length){
         t+=(lang==='ru'?'🚨 *ЧТО ТРЕБУЕТ ВНИМАНИЯ*':'🚨 *WHAT NEEDS ATTENTION*')+'\n';
@@ -3916,7 +3916,7 @@ function buildDeterministicInsight(a, lang) {
     var why=top ? (ru?top.labelRu:top.labelEn) : (ru?'Базовые факторы риска':'Baseline risk factors');
     var action;
     if(!a) action=ru?'Обнови анализ, чтобы получить проверяемый вывод.':'Refresh the analysis to get a verifiable conclusion.';
-    else if(a.dataStatus!=='FRESH' || Number(a.coveragePct||0)<100) action=ru?'Сначала обнови данные и проверь активы без оценки.':'Refresh the data and review any unpriced assets first.';
+    else if(a.dataStatus!=='COMPLETE' || Number(a.coveragePct||0)<100) action=ru?'Сначала обнови данные и проверь активы без оценки.':'Refresh the data and review any unpriced assets first.';
     else if(top && top.key==='concentration') action=ru?'Сравни долю крупнейшей позиции с целевой и после ручного изменения снова запусти анализ.':'Compare the largest position with its target, then rerun the analysis after any manual change.';
     else if(top && top.key==='reserve') action=ru?'Проверь, соответствует ли резерв твоей цели и горизонту.':'Check whether the liquid reserve matches your objective and horizon.';
     else action=ru?'Не действуй только из-за цифры. Посмотри, изменился ли сам фактор риска, и проверь его повторным анализом.':'Do not act on the number alone. Check whether the underlying risk factor changed, then verify with a fresh analysis.';
@@ -3930,7 +3930,7 @@ async function generateVerifiedInsight(a, lang) {
         var facts={
             riskScore:Number(a.riskScore||0), riskLevel:String(a.riskLevel||'unknown'), totalUSDT:Number(a.totalUSDT||0),
             btcPercent:Number(a.btcPercent||0), altPercent:Number(a.altPercent||0), stablePercent:Number(a.usdtPercent||0),
-            coveragePct:Number(a.coveragePct||0), confidencePct:Number(a.confidencePct||0), dataStatus:String(a.dataStatus||'UNKNOWN'),
+            coveragePct:Number(a.coveragePct||0), confidence:String(a.confidence||'unknown'), dataStatus:String(a.dataStatus||'UNKNOWN'),
             topPosition:a.topPosition?{symbol:String(a.topPosition.symbol||''),weight:Number(a.topPosition.weight||0)}:null,
             riskBreakdown:(a.riskBreakdown||[]).map(function(f){return {key:f.key,label:lang==='ru'?f.labelRu:f.labelEn,points:Number(f.points||0),detail:riskFactorDetail(f,a,lang)};}).filter(function(f){return f.points>0;}),
             recommendations:(a.recommendations||[]).slice(0,3)
