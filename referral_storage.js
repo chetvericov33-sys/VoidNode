@@ -12,7 +12,7 @@ async function activateReferralBonusIfUnprocessed(redis, withTimeout, invoiceId,
     const referrerId = await withTimeout(redis.get(referrerKey), 8000, 'Referral lookup');
     if (!referrerId || !/^\d{1,20}$/.test(String(referrerId))) return null;
 
-    const script = "if redis.call('EXISTS', KEYS[4]) == 1 then return nil end; " +
+    const script = "if redis.call('EXISTS', KEYS[4]) == 1 then return redis.call('GET', KEYS[4]) end; " +
         "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return nil end; " +
         "local planRaw = redis.call('GET', KEYS[2]); if not planRaw then return nil end; " +
         "local okPlan, plan = pcall(cjson.decode, planRaw); " +
@@ -26,8 +26,8 @@ async function activateReferralBonusIfUnprocessed(redis, withTimeout, invoiceId,
         "table.insert(bonuses, { from = ARGV[4], plan = ARGV[5], days = days, date = now }); " +
         "redis.call('SET', KEYS[2], cjson.encode(plan)); " +
         "redis.call('SET', KEYS[3], cjson.encode(bonuses)); " +
-        "redis.call('SET', KEYS[4], '1', 'EX', ARGV[6]); " +
-        "return cjson.encode({ referrerId = ARGV[1], bonusDays = days, newExpires = newExpiry })";
+        "local result = cjson.encode({ referrerId = ARGV[1], bonusDays = days, newExpires = newExpiry }); " +
+        "redis.call('SET', KEYS[4], result, 'EX', ARGV[6]); return result";
 
     const raw = await withTimeout(
         redis.eval(
