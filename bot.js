@@ -14,7 +14,7 @@ const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = r
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
-const { scanKeysByPrefix, createPendingDisconnectIfUserMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
+const { scanKeysByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -325,14 +325,8 @@ class RedisStorage {
     }
     async completeDisconnect(chatId, pendingRaw, expectedUserRaw) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
-        var script = "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end; " +
-            "if redis.call('GET', KEYS[2]) ~= ARGV[2] then return 0 end; " +
-            "redis.call('DEL', KEYS[2]); redis.call('DEL', KEYS[1]); return 1";
         try {
-            var result = await withTimeout(this.redis.eval(script,
-                ['pending_disconnect_' + chatId, 'user_' + chatId],
-                [pendingRaw, expectedUserRaw]), 8000, 'Atomic exchange disconnect');
-            return Number(result) === 1;
+            return await completeDisconnectIfMatches(this.redis, withTimeout, chatId, pendingRaw, expectedUserRaw);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             throw new Error('Critical credential storage unavailable');
@@ -367,14 +361,8 @@ class RedisStorage {
     }
     async restoreDisconnect(chatId, pendingRaw, expectedUserRaw) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
-        var script = "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end; " +
-            "if redis.call('GET', KEYS[2]) ~= ARGV[2] then return 0 end; " +
-            "redis.call('SET', KEYS[2], ARGV[2]); redis.call('DEL', KEYS[1]); return 1";
         try {
-            var result = await withTimeout(this.redis.eval(script,
-                ['pending_disconnect_' + chatId, 'user_' + chatId],
-                [pendingRaw, expectedUserRaw]), 8000, 'Atomic exchange disconnect undo');
-            return Number(result) === 1;
+            return await restoreDisconnectIfMatches(this.redis, withTimeout, chatId, pendingRaw, expectedUserRaw);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             throw new Error('Critical credential storage unavailable');
