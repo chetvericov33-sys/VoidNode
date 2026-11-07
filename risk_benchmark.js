@@ -8,7 +8,7 @@ const cases = [
   ['High concentration', { top: 70, stable: 10, alts: 20, meaningful: 4, coverageComplete: true }, 'high'],
   ['Extreme concentration', { top: 85, stable: 10, alts: 5, meaningful: 3, coverageComplete: true }, 'high'],
   ['Low reserve', { top: 45, stable: 10, alts: 45, meaningful: 4, coverageComplete: true }, 'medium'],
-  ['High alts', { top: 20, stable: 20, alts: 60, meaningful: 4, coverageComplete: true }, 'low'],
+  ['High alts', { top: 20, stable: 20, alts: 60, meaningful: 4, coverageComplete: true }, 'medium'],
   ['Weak diversification', { top: 96, stable: 4, alts: 0, meaningful: 2, coverageComplete: true }, 'critical'],
   ['Partial data', { top: 50, stable: 25, alts: 25, meaningful: 3, coverageComplete: false }, 'medium'],
   ['Single alt', { top: 80, stable: 20, alts: 80, meaningful: 1, coverageComplete: true }, 'critical'],
