@@ -12,7 +12,7 @@ const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
-const { classifyUrlSafety } = require('./url_safety');
+const { classifyUrlSafety, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 
 // ============================================================
@@ -5501,8 +5501,19 @@ async function autoCheckLinks(chatId, text, lang, messageId) {
         var url = urls[i];
         try {
             var result = await checkUrl(url);
-            if (!result.safe) {
-                var message = '🚨 SUSPICIOUS LINK!\n\n🔗 ' + url + '\n\n⚠️ ' + result.reason + '\n\n🛡️ Never enter passwords or seed phrases!';
+            var alertLevel = getUrlAlertLevel(result);
+            if (alertLevel !== 'SAFE') {
+                var alertTitle = alertLevel === 'SUSPICIOUS'
+                    ? (lang === 'ru' ? '🚨 ПОДОЗРИТЕЛЬНАЯ ССЫЛКА!' : '🚨 SUSPICIOUS LINK!')
+                    : (lang === 'ru' ? '⚪ ССЫЛКА НЕ ПРОВЕРЕНА!' : '⚪ UNVERIFIED LINK!');
+                var alertAdvice = lang === 'ru'
+                    ? (alertLevel === 'SUSPICIOUS'
+                        ? 'Не открывай ссылку и не вводи пароли или seed-фразы.'
+                        : 'Статус домена неизвестен. Не вводи пароли, seed-фразы или платёжные данные, пока не проверишь его независимо.')
+                    : (alertLevel === 'SUSPICIOUS'
+                        ? 'Do not open the link or enter passwords or seed phrases.'
+                        : 'The domain status is unknown. Do not enter passwords, seed phrases, or payment details until you verify it independently.');
+                var message = alertTitle + '\\n\\n🔗 ' + url + '\\n\\n⚠️ ' + result.reason + '\\n\\n🛡️ ' + alertAdvice;
                 var keyboard = {
                     inline_keyboard: [
                         [{ text: '🛡️ Check other', callback_data: 'menu_security' }],
