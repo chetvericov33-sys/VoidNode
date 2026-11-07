@@ -10,6 +10,7 @@ const {
     createReadOnlyExchangeConfig
 } = require('./exchange_safety');
 
+async function run() {
 for (const id of ['binance', 'bybit', 'gate', 'kraken']) {
     assert.equal(validateExchangeId(id), true);
     const config = createReadOnlyExchangeConfig(id, 'A'.repeat(32), 'B'.repeat(32));
@@ -57,3 +58,9 @@ assert.equal(Object.prototype.hasOwnProperty.call(config, 'proxy'), false);
 assert.equal(Object.prototype.hasOwnProperty.call(config, 'fetchImplementation'), false);
 
 console.log('EXCHANGE SAFETY TEST: PASS');
+}
+
+run().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});
