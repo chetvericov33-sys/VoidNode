@@ -5513,7 +5513,7 @@ async function autoCheckLinks(chatId, text, lang, messageId) {
                     : (alertLevel === 'SUSPICIOUS'
                         ? 'Do not open the link or enter passwords or seed phrases.'
                         : 'The domain status is unknown. Do not enter passwords, seed phrases, or payment details until you verify it independently.');
-                var message = alertTitle + '\\n\\n🔗 ' + url + '\\n\\n⚠️ ' + result.reason + '\\n\\n🛡️ ' + alertAdvice;
+                var message = alertTitle + '\n\n🔗 ' + url + '\n\n⚠️ ' + result.reason + '\n\n🛡️ ' + alertAdvice;
                 var keyboard = {
                     inline_keyboard: [
                         [{ text: '🛡️ Check other', callback_data: 'menu_security' }],
