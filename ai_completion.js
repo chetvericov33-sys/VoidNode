@@ -65,7 +65,7 @@ async function requestOpenRouterCompletion(options) {
                     model: model,
                     messages: options.messages,
                     max_tokens: options.maxTokens || 1000,
-                    temperature: 0.2
+                    temperature: Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.45
                 })
             }, options.timeoutMs || 18000, 'OpenRouter chat completion (' + model + ')');
             var parsed = await parseResponse(response);
