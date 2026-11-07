@@ -12,6 +12,9 @@ assert.strictEqual(isMarketOrNewsQuestion('Что происходит на ры
 assert.strictEqual(isMarketOrNewsQuestion('Почему BTC падает сегодня?'), true);
 assert.strictEqual(isMarketOrNewsQuestion('Any important crypto news today?'), true);
 assert.strictEqual(isMarketOrNewsQuestion('Сколько у меня USDT в портфеле?'), false);
+assert.strictEqual(isMarketOrNewsQuestion('BTC'), false);
+assert.strictEqual(isMarketOrNewsQuestion('BTC падает сегодня'), true);
+assert.strictEqual(isMarketOrNewsQuestion('Why is BTC down today?'), true);
 
 const ru = appendNewsDisclosure('Bitcoin снижается.', 'ru');
 assert.ok(ru.includes('Bitcoin снижается.'));
