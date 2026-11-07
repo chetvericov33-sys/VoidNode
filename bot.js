@@ -542,11 +542,11 @@ async function botDeleteMessage(chatId, messageId) {
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
         var body = { chat_id: chatId, message_id: messageId };
-        var response = await fetch(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        });
+        }, 8000, 'Telegram deleteMessage');
         return response;
     } catch (error) {
         console.error('Delete message error:', error);
@@ -5965,11 +5965,11 @@ async function configureTelegramWebhook() {
     var baseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://voidnode.onrender.com';
     var webhookUrl = String(baseUrl).replace(/\/$/, '') + '/webhook';
     try {
-        var response = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/setWebhook', {
+        var response = await fetchWithTimeout('https://api.telegram.org/bot' + BOT_TOKEN + '/setWebhook', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url: webhookUrl, secret_token: TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['message', 'callback_query'] })
-        });
+        }, 10000, 'Telegram setWebhook');
         var data = await response.json();
         console.log('📡 Telegram webhook configured:', JSON.stringify(data), 'URL=' + webhookUrl);
     } catch (error) {
