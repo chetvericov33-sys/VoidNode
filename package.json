@@ -3,8 +3,13 @@
   "version": "1.7.4",
   "private": true,
   "main": "bot.js",
-  "engines": { "node": ">=20" },
-  "scripts": { "start": "node bot.js" },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bot.js",
+    "test": "node risk_engine.test.js && node market_data.test.js && node handler_audit.test.js && node handler_help_fix.test.js"
+  },
   "dependencies": {
     "@upstash/redis": "^1.35.0",
     "ccxt": "^4.4.0",
