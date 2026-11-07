@@ -6,13 +6,13 @@ const source = fs.readFileSync(__dirname + '/bot.js', 'utf8');
 const callbackLiterals = [...source.matchAll(/callback_data\s*:\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
 const uniqueCallbacks = [...new Set(callbackLiterals)];
 const requiredCallbackPrefixes = [
-  'back_to_', 'menu_', 'history_', 'ai_', 'wallet_', 'exchange_', 'tz_',
+  'back_to_', 'wizard_exchange_', 'menu_', 'history_', 'ai_', 'wallet_', 'exchange_', 'tz_',
   'settings_', 'lang_', 'mode_', 'antiscam_', 'trend_', 'plan_', 'alert_',
   'diary_mood_', 'action_', 'onboard_', 'security_fix_', 'fix_'
 ];
 const requiredExactCallbacks = [
   'cancel_action', 'undo_disconnect', 'portfolio_changes', 'autotrade_menu', 'demo_shock',
-  'help_contact_moderator'
+  'help_contact_moderator', 'wizard_send_keys', 'dna_details', 'dna_share'
 ];
 
 function handled(callback) {
@@ -20,6 +20,22 @@ function handled(callback) {
   if (requiredCallbackPrefixes.some(prefix => callback.startsWith(prefix))) return true;
   if (/^help_q[1-9]$/.test(callback)) return true;
   return false;
+}
+
+const requiredPaymentReliabilityMarkers = [
+  "payment_effects_pending_",
+  "payment_effect_' + stage + '_'",
+  "isDone('referral')",
+  "isDone('user_notice')",
+  "isDone('menu')",
+  "isDone('history')",
+  "Payment processing lease lost",
+  "if (!updateLease.isHealthy()) return res.sendStatus(503);",
+  "if (!paymentLease.isHealthy()) return { status: 503"
+];
+const missingPaymentMarkers = requiredPaymentReliabilityMarkers.filter(marker => !source.includes(marker));
+if (missingPaymentMarkers.length) {
+  throw new Error('Payment/webhook reliability guard missing: ' + missingPaymentMarkers.join(', '));
 }
 
 const unhandled = uniqueCallbacks.filter(cb => !handled(cb));

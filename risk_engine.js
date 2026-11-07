@@ -18,18 +18,22 @@ function calculateRiskBreakdown(input) {
   var stableTarget = Number(targets.USDT || 20);
   var altTarget = Number(targets.ALTS || 30);
 
-  // Factor caps: concentration 50, reserve 15, alt exposure 15,
-  // diversification 10, data quality 10. Total = 100.
-  var concentration = top <= 50 ? 0 : top <= 60 ? 20 : top <= 70 ? 30 : 50;
+  // Risk points are deterministic and additive; the final score is capped at 100.
+  // Missing valuation data receives a material uncertainty penalty because unknown
+  // balances can hide concentration and exposure outside the priced portfolio.
+  var concentration = top <= 35 ? 0 : top <= 45 ? 10 : top <= 50 ? 15 : top <= 60 ? 25 : top <= 70 ? 40 : 50;
   var reserveGap = Math.max(0, stableTarget - stable);
   var reserve = reserveGap <= 5 ? 5 : reserveGap <= 10 ? 10 : 15;
   if (reserveGap === 0) reserve = 0;
 
   var altGap = Math.max(0, alts - altTarget);
-  var altExposure = altGap === 0 ? 0 : altGap <= 10 ? 5 : altGap <= 20 ? 10 : 15;
+  var altExposure = altGap === 0 ? 0 : altGap <= 10 ? 5 : altGap <= 20 ? 10 : 20;
 
   var diversification = meaningful >= 3 ? 0 : meaningful === 2 ? 5 : 10;
-  var dataQuality = coverageComplete ? 0 : 10;
+  var dataQuality = coverageComplete ? 0 : 20;
+  var stablePegRisk = clamp(input.stablePegRisk, 0, 15);
+  var priceFreshnessRisk = clamp(input.priceFreshnessRisk, 0, 15);
+  var marketLiquidityRisk = clamp(input.marketLiquidityRisk, 0, 15);
 
   var breakdown = [
     { key: 'concentration', labelRu: 'Концентрация', labelEn: 'Concentration', points: concentration,
@@ -37,7 +41,10 @@ function calculateRiskBreakdown(input) {
     { key: 'reserve', labelRu: 'Ликвидный резерв', labelEn: 'Liquidity reserve', points: reserve },
     { key: 'alt_exposure', labelRu: 'Доля альткоинов', labelEn: 'Alt exposure', points: altExposure },
     { key: 'diversification', labelRu: 'Диверсификация', labelEn: 'Diversification', points: diversification },
-    { key: 'data_quality', labelRu: 'Качество данных', labelEn: 'Data quality', points: dataQuality }
+    { key: 'data_quality', labelRu: 'Качество данных', labelEn: 'Data quality', points: dataQuality },
+    { key: 'stable_peg', labelRu: 'Отклонение стейблкоинов от привязки', labelEn: 'Stablecoin peg deviation', points: stablePegRisk },
+    { key: 'price_freshness', labelRu: 'Актуальность котировок', labelEn: 'Price freshness', points: priceFreshnessRisk },
+    { key: 'market_liquidity', labelRu: 'Ликвидность рынка', labelEn: 'Market liquidity', points: marketLiquidityRisk }
   ];
 
   var score = clamp(breakdown.reduce(function(sum, f) { return sum + f.points; }, 0), 0, 100);

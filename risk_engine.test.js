@@ -12,5 +12,18 @@ const cases=[
 ];
 for(const [name,input,expected] of cases){const r=calculateRiskBreakdown(input);assert(expected.includes(level(r)), name+' => '+r.score+'/'+level(r));}
 const audit=calculateRiskBreakdown({top:42,weights:[42,25,18,15],stable:15,alts:43,meaningful:4,coverageComplete:true,targets:{BTC:50,USDT:20,ALTS:30}});
+assert.strictEqual(calculateRiskBreakdown({top:42,stable:15,alts:43,meaningful:4,coverageComplete:true}).score >= 20, true, '42% concentration must not be classified as low');
+assert.strictEqual(calculateRiskBreakdown({top:50,stable:25,alts:25,meaningful:3,coverageComplete:false}).score >= 20, true, 'partial valuation must carry a material uncertainty penalty');
+const depegNone = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,stablePegRisk:0});
+const depegMaterial = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,stablePegRisk:12});
+assert.strictEqual(depegMaterial.score - depegNone.score, 12, 'stablecoin peg risk must increase total score by its calculated points');
+assert.strictEqual(depegMaterial.breakdown.find(function(x){return x.key==='stable_peg';}).points, 12, 'stablecoin peg factor must be visible in breakdown');
+const stalePrices = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,priceFreshnessRisk:15});
+assert.strictEqual(stalePrices.score - depegNone.score, 15, 'stale price risk must increase total score by its calculated points');
+assert.strictEqual(stalePrices.breakdown.find(function(x){return x.key==='price_freshness';}).points, 15, 'price freshness factor must be visible in breakdown');
+
+const lowLiquidity = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,marketLiquidityRisk:10});
+assert.strictEqual(lowLiquidity.score - depegNone.score, 10, 'market liquidity risk must increase total score');
+assert.strictEqual(lowLiquidity.breakdown.find(function(x){return x.key==='market_liquidity';}).points, 10, 'market liquidity factor must be visible');
 console.log('Risk Engine tests passed:', cases.length+'/'+cases.length);
 console.log('Audit example:', JSON.stringify(audit));

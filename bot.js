@@ -10,6 +10,14 @@ const ccxt = require('ccxt');
 const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
+const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
+const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
+const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
+const { withTimeout, fetchWithTimeout, probeRedisConnection, startLeaseHeartbeat, BoundedTTLCache } = require('./runtime_resilience');
+const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
+const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parseCryptoWebhookPayload, parsePaymentChatId, validateCryptoPaidInvoice } = require('./webhook_safety');
+const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require('./referral_storage');
+const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -17,6 +25,7 @@ const { calculateRiskBreakdown } = require('./risk_engine');
 
 const BOT_VERSION = '1.8.0';
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 const CRYPTOBOT_WEBHOOK_PATH_SECRET = process.env.CRYPTOBOT_WEBHOOK_PATH_SECRET;
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
@@ -34,7 +43,6 @@ const DEMO_START_USDT = Number(process.env.DEMO_START_USDT || 10000);
 // INLINE SECURITY MODULES — single-file release
 // ============================================================
 const net = require('net');
-const dns = require('dns').promises;
 
 function isPrivateIp(ip) {
     if (net.isIPv4(ip)) {
@@ -57,11 +65,6 @@ function validateUrl(input) {
         if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || isPrivateIp(hostname)) return {ok:false, reason:'private-host'};
         return {ok:true, url};
     } catch { return {ok:false, reason:'syntax'}; }
-}
-async function resolveAndValidatePublicHost(hostname) {
-    const addresses = await dns.lookup(hostname, {all:true, verbatim:true});
-    if (!addresses.length || addresses.some(x => isPrivateIp(x.address))) throw new Error('Host resolves to a private/local address');
-    return addresses.map(x => x.address);
 }
 function keyFromSecret(secret) {
     if (typeof secret !== 'string' || secret.length < 32) throw new Error('ENCRYPTION_KEY must be at least 32 characters');
@@ -93,6 +96,10 @@ function redactSecret(value, visible = 4) {
     return `${s.slice(0,visible)}***${s.slice(-visible)}`;
 }
 if (!BOT_TOKEN) { console.error('❌ BOT_TOKEN not found'); process.exit(1); }
+if (!TELEGRAM_WEBHOOK_SECRET || !/^[A-Za-z0-9_-]{1,256}$/.test(TELEGRAM_WEBHOOK_SECRET)) {
+    console.error('❌ TELEGRAM_WEBHOOK_SECRET is required and must be 1-256 characters (A-Z, a-z, 0-9, _ or -). Refusing to start.');
+    process.exit(1);
+}
 if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length < 32) {
     console.error('❌ ENCRYPTION_KEY is required and must be at least 32 characters. Refusing to start.');
     process.exit(1);
@@ -132,32 +139,24 @@ var CONFIG = {
     MAX_ORDERS_PER_DAY: Number(process.env.MAX_ORDERS_PER_DAY || 10),
     DAILY_BRIEF_INTERVAL: Number(process.env.DAILY_BRIEF_INTERVAL || 30000),
     DEFAULT_TIMEZONE: process.env.DEFAULT_TIMEZONE || 'UTC',
-    RISK: { STABLE_TARGET: 20, MAX_SINGLE_POSITION: 50, MIN_MEANINGFUL_POSITIONS: 3, FRESH_MS: 15*60*1000, STALE_MS: 60*60*1000 },
+    RISK: { STABLE_TARGET: 20, MAX_SINGLE_POSITION: 50, MIN_MEANINGFUL_POSITIONS: 3, FRESH_MS: 15*60*1000, STALE_MS: 60*60*1000, MAX_SPREAD_PCT: 2, MIN_QUOTE_VOLUME_USDT: 10000 }
 };
 
 // ============================================================
 // 1. REDIS STORAGE
 // ============================================================
 
-function withTimeout(promise, ms, label) {
-    var timeoutMs = Number(ms || 8000);
-    return Promise.race([
-        promise,
-        new Promise(function(_, reject) {
-            setTimeout(function() { reject(new Error((label || 'Operation') + ' timeout after ' + timeoutMs + 'ms')); }, timeoutMs);
-        })
-    ]);
-}
 
 class RedisStorage {
     constructor() {
         this.redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
-        this.localCache = new Map();
+        this.localCache = new BoundedTTLCache({ maxEntries: 1000, defaultTtlMs: 5 * 60 * 1000 });
         this.isRedisAvailable = true;
         this.criticalPrefixes = [
             'user_', 'plan_', 'usage_', 'panic_', 'panic_price_',
-            'payment_', 'order_', 'orders_', 'kill_switch_', 'state_', 'alert_', 'last_update_',
-            'prefs_', 'briefing_', 'ai_history_', 'pending_disconnect_'
+            'payment_', 'payment_processed_', 'order_', 'orders_', 'kill_switch_', 'state_', 'alert_', 'last_update_',
+            'prefs_', 'briefing_', 'ai_history_', 'pending_disconnect_', 'telegram_update_done_',
+            'ref_code_', 'ref_code_to_user_', 'ref_used_', 'ref_referrer_', 'ref_invited_', 'ref_bonus_'
         ];
         console.log('✅ Redis storage initialized');
     }
@@ -167,22 +166,34 @@ class RedisStorage {
     markUnavailable() { this.isRedisAvailable = false; }
     scheduleRetry() {
         if (this.retryTimer) return;
-        this.retryTimer = setTimeout(function() { this.isRedisAvailable = true; this.retryTimer = null; }.bind(this), 30000);
+        this.retryTimer = setTimeout(async function() {
+            this.retryTimer = null;
+            const recovered = await probeRedisConnection(this.redis, 5000);
+            if (recovered) {
+                this.isRedisAvailable = true;
+                console.log('Redis connection recovered');
+            } else {
+                this.isRedisAvailable = false;
+                this.scheduleRetry();
+            }
+        }.bind(this), 30000);
+        if (this.retryTimer && typeof this.retryTimer.unref === 'function') this.retryTimer.unref();
     }
     async get(key) {
         try {
             if (!this.isRedisAvailable) {
                 if (this.isCritical(key)) throw new Error('Critical Redis storage unavailable');
-                return this.localCache.get(key) || null;
+                return this.localCache.get(key);
             }
             var data = await withTimeout(this.redis.get(key), 8000, 'Redis GET');
             if (data !== null && data !== undefined) return data;
-            return this.isCritical(key) ? null : (this.localCache.get(key) || null);
+            return this.isCritical(key) ? null : this.localCache.get(key);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis get error:', error.message);
             if (this.isCritical(key)) throw new Error('Critical storage unavailable');
-            return this.localCache.get(key) || null;
+            var cached = this.localCache.get(key);
+            return cached === null || cached === undefined ? null : cached;
         }
     }
     async put(key, value, ttl) {
@@ -190,16 +201,16 @@ class RedisStorage {
         try {
             if (!this.isRedisAvailable) {
                 if (this.isCritical(key)) throw new Error('Critical Redis storage unavailable');
-                this.localCache.set(key, value); return;
+                this.localCache.set(key, value, ttl); return;
             }
-            await withTimeout(this.redis.set(key, value), 8000, 'Redis SET');
-            if (ttl) await withTimeout(this.redis.expire(key, ttl), 8000, 'Redis EXPIRE');
-            if (!this.isCritical(key)) this.localCache.set(key, value);
+            if (ttl) await withTimeout(this.redis.set(key, value, { ex: Math.max(1, Math.floor(Number(ttl))) }), 8000, 'Redis SET EX');
+            else await withTimeout(this.redis.set(key, value), 8000, 'Redis SET');
+            if (!this.isCritical(key)) this.localCache.set(key, value, ttl);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis set error:', error.message);
             if (this.isCritical(key)) throw new Error('Critical storage unavailable');
-            this.localCache.set(key, value);
+            this.localCache.set(key, value, ttl);
         }
     }
     async delete(key) {
@@ -217,34 +228,55 @@ class RedisStorage {
             this.localCache.delete(key);
         }
     }
-    async list(prefix) {
+    async list(prefix, strict) {
         if (prefix === undefined) prefix = '';
         try {
             if (!this.isRedisAvailable) throw new Error('Redis unavailable');
-            var keys = await withTimeout(this.redis.keys(prefix + '*'), 8000, 'Redis KEYS');
+            var keys = await scanKeysByPrefix(this.redis, withTimeout, prefix);
+            if (!Array.isArray(keys)) throw new Error('Redis SCAN returned invalid data');
             return keys.map(function(k) { return { name: k }; });
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis list error:', error.message);
+            if (strict) throw new Error('Critical storage listing unavailable');
             return [];
+        }
+    }
+    async forEachKey(prefix, callback) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            await forEachKeyByPrefix(this.redis, withTimeout, prefix, callback);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical storage listing unavailable');
         }
     }
     async atomicIncrementWithLimit(key, limit, ttlSeconds) {
         if (limit === Infinity) return { allowed: true, count: 0 };
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
-        var count = await withTimeout(this.redis.incr(key), 8000, 'Redis INCR');
-        if (count === 1 && ttlSeconds) await withTimeout(this.redis.expire(key, ttlSeconds), 8000, 'Redis EXPIRE');
-        if (count > limit) {
-            await withTimeout(this.redis.decr(key), 8000, 'Redis DECR');
-            return { allowed: false, count: count - 1 };
+        try {
+            var result = await withTimeout(this.redis.eval(
+                "local count = redis.call('INCR', KEYS[1]); " +
+                "if count == 1 and tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])); end; " +
+                "if count > tonumber(ARGV[1]) then redis.call('DECR', KEYS[1]); return {0, count - 1}; end; " +
+                "return {1, count};",
+                [key], [limit, ttlSeconds || 0]
+            ), 8000, 'Redis atomic increment');
+            return { allowed: Number(result[0]) === 1, count: Number(result[1]) };
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical storage unavailable');
         }
-        return { allowed: true, count: count };
     }
     async incrementValue(key, amount, ttlSeconds) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
         try {
-            const value = await this.redis.incrby(key, Math.round(Number(amount)));
-            if (value === Math.round(Number(amount)) && ttlSeconds) await this.redis.expire(key, ttlSeconds);
+            const value = await withTimeout(this.redis.eval(
+                "local value = redis.call('INCRBY', KEYS[1], tonumber(ARGV[1])); " +
+                "if value == tonumber(ARGV[1]) and tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])); end; " +
+                "return value;",
+                [key], [Math.round(Number(amount)), ttlSeconds || 0]
+            ), 8000, 'Redis atomic increment value');
             return Number(value);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
@@ -256,15 +288,145 @@ class RedisStorage {
         if (!this.isRedisAvailable) return null;
         var token = crypto.randomBytes(16).toString('hex');
         try {
-            var result = await this.redis.set(key, token, { nx: true, ex: ttlSeconds });
+            var result = await withTimeout(this.redis.set(key, token, { nx: true, ex: ttlSeconds }), 8000, 'Redis acquire lock');
             return result === 'OK' || result === true ? token : null;
-        } catch (e) { return null; }
+        } catch (e) { this.markUnavailable(); this.scheduleRetry(); return null; }
+    }
+    async renewLock(key, token, ttlSeconds) {
+        if (!token || !this.isRedisAvailable) return false;
+        try {
+            var result = await withTimeout(
+                this.redis.eval(
+                    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) else return 0 end",
+                    [key],
+                    [token, Math.max(1, Math.floor(Number(ttlSeconds) || 60))]
+                ),
+                8000,
+                'Redis renew lock'
+            );
+            return Number(result) === 1;
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            return false;
+        }
+    }
+    async activatePaidInvoice(invoiceId, chatId, planId, planRecord, paymentRecord, effectsRecord) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        var script = "if redis.call('EXISTS', KEYS[3]) == 1 then return 0 end " +
+            "local now = tonumber(ARGV[3]); local duration = tonumber(ARGV[4]); " +
+            "local plan = cjson.decode(ARGV[1]); local existingRaw = redis.call('GET', KEYS[1]); " +
+            "local expiry = now + duration; " +
+            "if existingRaw then local ok, existing = pcall(cjson.decode, existingRaw); " +
+            "if ok and existing then local oldExpiry = tonumber(existing.expires or 0) or 0; " +
+            "if oldExpiry > now then expiry = oldExpiry + duration end; " +
+            "if existing.trialUsed or existing.planId == 'TRIAL' then plan.trialUsed = true end; end end; " +
+            "plan.activatedAt = now; plan.expires = expiry; " +
+            "redis.call('SET', KEYS[1], cjson.encode(plan)); " +
+            "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[5]); " +
+            "redis.call('SET', KEYS[3], ARGV[6], 'EX', ARGV[7]); " +
+            "redis.call('SET', KEYS[4], ARGV[8], 'EX', ARGV[7]); " +
+            "return 1";
+        try {
+            var result = await withTimeout(this.redis.eval(
+                script,
+                ['plan_' + chatId, 'payment_' + invoiceId, 'payment_processed_' + invoiceId, 'payment_effects_pending_' + invoiceId],
+                [
+                    JSON.stringify(planRecord),
+                    JSON.stringify(paymentRecord),
+                    Date.now(),
+                    planRecord.durationMs,
+                    180 * 24 * 60 * 60,
+                    JSON.stringify({ processedAt: Date.now(), chatId: chatId, planId: planId }),
+                    180 * 24 * 60 * 60,
+                    JSON.stringify(effectsRecord)
+                ]
+            ), 8000, 'Atomic payment activation');
+            return Number(result) === 1;
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            console.error('Atomic payment activation error:', error.message);
+            throw new Error('Critical payment storage unavailable');
+        }
+    }
+    async registerReferral(refereeId, referrerId) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await registerReferralIfUnused(this.redis, withTimeout, refereeId, referrerId);
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            throw new Error('Critical referral storage unavailable');
+        }
+    }
+    async activateReferralBonus(invoiceId, refereeId, planId, bonusDays) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await activateReferralBonusIfUnprocessed(
+                this.redis, withTimeout, invoiceId, refereeId, planId, bonusDays
+            );
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            console.error('Atomic referral bonus error:', error.message);
+            throw new Error('Critical referral storage unavailable');
+        }
     }
     async releaseLock(key, token) {
         if (!token || !this.isRedisAvailable) return;
         try {
-            await this.redis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [key], [token]);
-        } catch (e) {}
+            await withTimeout(this.redis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [key], [token]), 8000, 'Redis release lock');
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            console.warn('Redis lock release deferred until TTL expiry:', error.message);
+        }
+    }
+    async completeDisconnect(chatId, pendingRaw, expectedUserRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await completeDisconnectIfMatches(this.redis, withTimeout, chatId, pendingRaw, expectedUserRaw);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async deletePendingDisconnectIfMatches(chatId, pendingRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await deletePendingDisconnectIfMatches(this.redis, withTimeout, chatId, pendingRaw);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async createPendingDisconnectIfUserMatches(chatId, expectedUserRaw, pendingRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await createPendingDisconnectIfUserMatches(this.redis, withTimeout, chatId, expectedUserRaw, pendingRaw);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async replaceUserAndClearPending(chatId, userRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await replaceUserAndClearPending(this.redis, withTimeout, chatId, userRaw);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async restoreDisconnect(chatId, pendingRaw, expectedUserRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await restoreDisconnectIfMatches(this.redis, withTimeout, chatId, pendingRaw, expectedUserRaw);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
     }
 }
 
@@ -497,11 +659,11 @@ async function botDeleteMessage(chatId, messageId) {
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
         var body = { chat_id: chatId, message_id: messageId };
-        var response = await fetch(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        });
+        }, 8000, 'Telegram deleteMessage');
         return response;
     } catch (error) {
         console.error('Delete message error:', error);
@@ -517,7 +679,7 @@ async function editBotMessage(chatId, messageId, text, keyboard, parseMode) {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/editMessageText';
         var body = { chat_id: chatId, message_id: messageId, text: String(text), parse_mode: mode, disable_web_page_preview: true };
         if (keyboard) body.reply_markup = keyboard;
-        var response = await withTimeout(fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }), 10000, 'Telegram editMessageText');
+        var response = await fetchWithTimeout(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }, 10000, 'Telegram editMessageText');
         var raw = await withTimeout(response.text(), 5000, 'Telegram edit response');
         var data = {};
         try { data = JSON.parse(raw); } catch (e) {}
@@ -540,17 +702,21 @@ async function editBotMessage(chatId, messageId, text, keyboard, parseMode) {
 }
 
 async function deleteUserMessage(chatId, messageId) {
-    if (!messageId) return;
+    if (!messageId) return false;
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
         var body = { chat_id: chatId, message_id: messageId };
-        await withTimeout(fetch(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        }), 10000, 'Telegram deleteMessage');
+        }, 10000, 'Telegram deleteMessage');
+        if (!response.ok) return false;
+        var result = await response.json();
+        return !!(result && result.ok === true && result.result === true);
     } catch (error) {
-        console.error('Failed to delete user message:', error.message);
+        console.warn('Telegram message deletion could not be confirmed.');
+        return false;
     }
 }
 
@@ -565,11 +731,11 @@ async function deleteUserMessageWithDelay(chatId, messageId, delay) {
 async function sendTyping(chatId) {
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendChatAction';
-        await withTimeout(fetch(url, {
+        await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chat_id: chatId, action: 'typing' })
-        }), 5000, 'Telegram sendChatAction');
+        }, 5000, 'Telegram sendChatAction');
     } catch (error) {
         console.error('sendTyping error:', error.message);
     }
@@ -581,11 +747,11 @@ async function answerCallback(callbackId, text) {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/answerCallbackQuery';
         var body = { callback_query_id: callbackId };
         if (text) body.text = String(text).slice(0, 200);
-        var response = await withTimeout(fetch(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        }), 5000, 'Telegram answerCallbackQuery');
+        }, 5000, 'Telegram answerCallbackQuery');
         var raw = await response.text();
         var data = raw ? JSON.parse(raw) : null;
         return !!(response.ok && data && data.ok);
@@ -627,7 +793,7 @@ async function sendDocument(chatId, content, filename) {
         form.append('chat_id', String(chatId));
         form.append('document', blob, filename || 'report.csv');
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendDocument';
-        var response = await withTimeout(fetch(url, { method: 'POST', body: form }), 15000, 'Telegram sendDocument');
+        var response = await fetchWithTimeout(url, { method: 'POST', body: form }, 15000, 'Telegram sendDocument');
         var raw = await response.text();
         var data = raw ? JSON.parse(raw) : null;
         if (!response.ok || !data || !data.ok) {
@@ -650,7 +816,7 @@ async function sendMessage(chatId, text, keyboard, parseMode) {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
         var body = { chat_id: chatId, text: String(text), parse_mode: mode, disable_web_page_preview: true };
         if (keyboard) body.reply_markup = keyboard;
-        var response = await withTimeout(fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }), 10000, 'Telegram sendMessage');
+        var response = await fetchWithTimeout(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }, 10000, 'Telegram sendMessage');
         var raw = '';
         try { raw = await withTimeout(response.text(), 5000, 'Telegram response'); } catch (e) { raw = ''; }
         var data = null;
@@ -875,10 +1041,22 @@ async function getUserPlan(chatId) {
 async function invalidatePlanCache(chatId) { planCache.delete(chatId); }
 
 async function activateTrial(chatId) {
-    var key='plan_'+chatId, existing=await getData(key);
-    if(existing){try{var p=typeof existing==='string'?JSON.parse(existing):existing;if(p.trialUsed||p.planId==='TRIAL')return null;}catch(e){}}
-    await setData(key,JSON.stringify({planId:'TRIAL',activatedAt:Date.now(),expires:0,trialUsed:true}));
-    await invalidatePlanCache(chatId); return true;
+    var key = 'plan_' + chatId;
+    var existing = await getData(key);
+    if (existing) {
+        try {
+            var current = typeof existing === 'string' ? JSON.parse(existing) : existing;
+            if (!current || typeof current !== 'object') return null;
+            if (current.trialUsed || current.planId === 'TRIAL') return null;
+            if (current.planId && current.planId !== 'TRIAL' && Number(current.expires) > Date.now()) return null;
+        } catch (error) {
+            console.error('Trial activation blocked: invalid existing plan record');
+            return null;
+        }
+    }
+    await setData(key, JSON.stringify({ planId: 'TRIAL', activatedAt: Date.now(), expires: 0, trialUsed: true }));
+    await invalidatePlanCache(chatId);
+    return true;
 }
 
 async function activatePlan(chatId, planId) {
@@ -966,7 +1144,7 @@ var LANGUAGES = {
         help_answer_q6: '🛡️ *Есть ли автоторговля?*\n──────\n\nНет. Void Node намеренно не выполняет автоматические сделки. Это сделано, чтобы не создавать ложного ощущения гарантированной защиты и не принимать необратимые решения за пользователя.\n\nВместо этого бот обнаруживает риск, объясняет причину и даёт кнопку *«Исправить»* с безопасным следующим действием.\n\n🧪 Для тестов используй Демо-кошелёк.',
         help_answer_q7: '❄️ *Что такое холодный душ?*\n──────\n\nЭто предупреждение о резком движении рынка. Void Node только сообщает об изменении и предлагает открыть анализ; автоматических продаж нет.\n\n🛡️ Доступен на Silver и Platinum.',
         help_answer_q8: '📝 *Как работает дневник настроения?*\n──────\n\n/diary открывает дневник эмоций.\n\nВыберите настроение:\n😌 Спокоен | 🤔 Задумчив | 😰 Тревожен | 😱 Паника | 😤 Зол | 😊 Эйфория\n\n📌 Бот сохраняет записи. Если вы тревожны 3 дня подряд — бот предупредит вас.',
-        help_answer_q9: '🔌 *Как отключить биржу?*\n──────\n\n/disconnect или *Настройки* → *Отключить биржу*.\n\nПосле подтверждения API-ключи будут удалены.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
+        help_answer_q9: '🔌 *Как отключить биржу?*\n──────\n\n/disconnect или *Настройки* → *Отключить биржу*.\n\nVoid Node удалит сохранённые у него учётные данные. Это не отзывает API-ключ на самой бирже — отзови его отдельно в настройках биржи.\n\n📌 Если вы случайно подтвердили, есть 10 секунд на отмену: /undo',
         help_contact_moderator_message: '👤 *Связь с модератором*\n──────\n\nНапишите @clofeLEAN — он вам поможет!',
         market_menu: 'Рынок',
         market_menu_desc: '📰 Новости — уникальные истории по твоим активам.\n📅 Календарь — важные макро-события.\n📊 Соц.тренды — интерес и настроение рынка.',
@@ -1081,9 +1259,9 @@ var LANGUAGES = {
         connect_confirm: '⚠️ *Точно отключить биржу?*\n\nВсе ключи будут удалены.',
         connect_confirm_yes: '✅ Да, отключить',
         connect_confirm_no: '❌ Нет, оставить',
-        connect_undo: '⏳ Ключи будут удалены через 10 секунд. Отмена: /undo',
+        connect_undo: '⏳ Сохранённые в Void Node ключи будут удалены через 10 секунд. Сам API-ключ на бирже нужно отозвать отдельно. Отмена: /undo',
         connect_undo_success: '✅ *Отмена выполнена!* Ключи сохранены.',
-        connect_disconnected: '🔌 *Биржа отключена.* Все ключи удалены.',
+        connect_disconnected: '🔌 *Биржа отключена.* Сохранённые в Void Node данные удалены. Не забудь отдельно отозвать API-ключ на бирже.',
         invalid_format: '❌ *Неверный формат!* Отправь ключи как "API_KEY:SECRET_KEY"\n⚠️ Не отправляй ключи в группы.',
         back_to_menu: 'Выйти в меню',
         back_to_functions: 'Назад к функциям',
@@ -1186,7 +1364,7 @@ var LANGUAGES = {
         help_answer_q6: '🛡️ *Is there autotrading?*\n──────\n\nNo. Void Node intentionally does not place automatic trades. This avoids false expectations of guaranteed protection and prevents irreversible decisions being made for the user.\n\nInstead, the bot detects risk, explains the cause and provides an *Fix* action with the safest next step.\n\n🧪 Use the Demo wallet for testing.',
         help_answer_q7: '❄️ *What is Panic mode?*\n──────\n\nIt is a warning for sharp market moves. Void Node never places orders or sells assets automatically.\n\n🛡️ Available on Silver and Platinum.',
         help_answer_q8: '📝 *How does mood diary work?*\n──────\n\n/diary opens emotion diary.\n\nChoose your current mood:\n😌 Calm | 🤔 Thoughtful | 😰 Anxious | 😱 Panic | 😤 Angry | 😊 Euphoric\n\n📌 Bot saves entries. If you\'re anxious for 3 days in a row — bot warns you.',
-        help_answer_q9: '🔌 *How to disconnect exchange?*\n──────\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nAfter confirmation API keys will be deleted.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
+        help_answer_q9: '🔌 *How to disconnect exchange?*\n──────\n\n/disconnect or *Settings* → *Disconnect exchange*.\n\nVoid Node removes the credentials stored by the bot. This does not revoke the API key at the exchange — revoke it separately in your exchange settings.\n\n📌 If you accidentally confirmed, you have 10 seconds to undo: /undo',
         help_contact_moderator_message: '👤 *Contact moderator*\n──────\n\nWrite to @clofeLEAN — he will help you!',
         market_menu: 'Market',
         market_menu_desc: '📰 News — unique stories for your assets.\n📅 Calendar — important macro events.\n📊 Social trends — market attention and sentiment.',
@@ -1302,9 +1480,9 @@ var LANGUAGES = {
         connect_confirm: '⚠️ *Really disconnect exchange?*\n\nAll keys will be deleted.',
         connect_confirm_yes: '✅ Yes, disconnect',
         connect_confirm_no: '❌ No, keep',
-        connect_undo: '⏳ Keys will be deleted in 10 seconds. Undo: /undo',
+        connect_undo: '⏳ Credentials stored in Void Node will be removed in 10 seconds. Revoke the API key at the exchange separately. Undo: /undo',
         connect_undo_success: '✅ *Undo successful!* Keys saved.',
-        connect_disconnected: '🔌 *Exchange disconnected.* All keys deleted.',
+        connect_disconnected: '🔌 *Exchange disconnected.* Credentials stored by Void Node were removed. Revoke the API key at the exchange separately.',
         invalid_format: '❌ *Invalid format!* Send as "API_KEY:SECRET_KEY"\n⚠️ Не отправляй ключи в группы.',
         back_to_menu: 'Back to menu',
         back_to_functions: 'Back to functions',
@@ -1389,9 +1567,11 @@ function getText(lang, key, args) {
 // ============================================================
 
 async function connectExchange(exchangeId, apiKey, secretKey, chatId) {
-    if (!ccxt[exchangeId]) throw new Error('Unsupported exchange');
-    if (!apiKey || !secretKey || apiKey.length > 256 || secretKey.length > 512) throw new Error('Invalid API credentials');
-    const exchange = new ccxt[exchangeId]({apiKey, secret:secretKey, enableRateLimit:true, timeout:30000});
+    const exchangeConfig = createReadOnlyExchangeConfig(exchangeId, apiKey, secretKey);
+    if (!validateExchangeId(exchangeId) || typeof ccxt[exchangeId] !== 'function') {
+        throw new Error('Unsupported exchange');
+    }
+    const exchange = enforceReadOnlyExchange(new ccxt[exchangeId](exchangeConfig));
     // Read-only product design: connection is used only for fetching portfolio/market data.
     // No createOrder/createMarketBuyOrder/createMarketSellOrder methods are exposed by Void Node.
     await exchange.fetchBalance();
@@ -1440,7 +1620,7 @@ function comparePortfolioSnapshots(prev,current,lang){
     if(Math.abs(deltaValue)>=1) changes.push((ru?'Стоимость: ':'Value: ')+'$'+prev.totalUSDT.toFixed(2)+' → $'+current.totalUSDT.toFixed(2)+' ('+(deltaValue>=0?'+':'')+deltaValue.toFixed(1)+'%)');
     [['btcPercent','BTC'],['altPercent',ru?'Альткоины':'Alts'],['usdtPercent',ru?'Стейблкоины':'Stable']].forEach(function(x){var d=current[x[0]]-prev[x[0]];if(Math.abs(d)>=2)changes.push(x[1]+': '+prev[x[0]].toFixed(1)+'% → '+current[x[0]].toFixed(1)+'% ('+(d>=0?'+':'')+d.toFixed(1)+' pp)');});
     if(prev.topPosition&&current.topPosition&&prev.topPosition.symbol===current.topPosition.symbol){var dc=current.topPosition.weight-prev.topPosition.weight;if(Math.abs(dc)>=2)changes.push((ru?'Концентрация ':'Concentration ')+current.topPosition.symbol+': '+prev.topPosition.weight.toFixed(1)+'% → '+current.topPosition.weight.toFixed(1)+'%');}
-    if(Number(prev.coveragePct||100)!==Number(current.coveragePct||100))changes.push((ru?'Полнота данных: ':'Data completeness: ')+Number(prev.coveragePct||0)+'% → '+Number(current.coveragePct||0)+'%');
+    if(Number(prev.coveragePct||100)!==Number(current.coveragePct||100))changes.push((ru?'Покрытие активов по количеству: ':'Asset-count coverage: ')+Number(prev.coveragePct||0)+'% → '+Number(current.coveragePct||0)+'%');
     return {deltaRisk:deltaRisk,deltaValue:deltaValue,changes:changes};
 }
 
@@ -1506,14 +1686,14 @@ async function createCryptoInvoice(chatId, planId, amountRub) {
         hidden_message: '✅ ' + plan.name + ' activated! Thank you! 🙏'
     };
     try {
-        var response = await fetch(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Crypto-Pay-API-Token': CRYPTOBOT_TOKEN
             },
             body: JSON.stringify(body)
-        });
+        }, 12000, 'CryptoBot create invoice');
         var data = await response.json();
         if (data.ok) {
             await setData('payment_' + data.result.invoice_id, JSON.stringify({
@@ -1541,15 +1721,27 @@ async function loadUserKeys(chatId) {
     if (!data) return null;
     try {
         var parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+            !validateExchangeId(parsed.exchangeId) ||
+            typeof parsed.apiKey !== 'string' || typeof parsed.secretKey !== 'string' ||
+            (parsed.permissionModel !== undefined && parsed.permissionModel !== 'read')) {
+            return null;
+        }
         var decryptedApiKey = decrypt(parsed.apiKey);
         var decryptedSecretKey = decrypt(parsed.secretKey);
+        if (typeof decryptedApiKey !== 'string' || decryptedApiKey.length < 8 || decryptedApiKey.length > 256 ||
+            typeof decryptedSecretKey !== 'string' || decryptedSecretKey.length < 8 || decryptedSecretKey.length > 512) {
+            return null;
+        }
         return {
             apiKey: decryptedApiKey,
             secretKey: decryptedSecretKey,
             exchangeId: parsed.exchangeId,
-            connectedAt: parsed.connectedAt, permissionModel: parsed.permissionModel || 'read', walletType: parsed.walletType || 'real'
+            connectedAt: parsed.connectedAt, permissionModel: 'read', walletType: 'real'
         };
     } catch (e) {
+        // Fail closed: never create an exchange connection from malformed or undecryptable data.
+        console.warn('Stored exchange credentials are invalid or cannot be decrypted.');
         return null;
     }
 }
@@ -1603,39 +1795,95 @@ async function collectTradeSnapshot(chatId){
 async function analyzePortfolio(chatId,lang) {
     var limit=await checkLimit(chatId,'analyze'); if(!limit.allowed)return {error:limit.reason};
     var wallet=await loadActiveWallet(chatId); if(!wallet)return {error:getText(lang,'analyzing_no_keys')};
-    var rows=[],total=0,unknownAssets=[],coverageComplete=true,sourceLabel=wallet.type==='demo'?'demo':'read-only';
+    var rows=[],total=0,unknownAssets=[],coverageComplete=true,sourceLabel=wallet.type==='demo'?'demo':'read-only',stalePriceAssets=[],agingPriceAssets=[],unverifiedPriceAssets=[],stalePriceWeight=0,agingPriceWeight=0,unverifiedPriceWeight=0,lowLiquidityAssets=[],lowLiquidityWeight=0,invalidMarketDataAssets=[];
     if(wallet.type==='demo'){
-        var p=demoPrices(); wallet.assets.forEach(function(d){var pr=d.symbol==='USDT'?1:(p[d.symbol]||d.price||0),v=Number(d.amount)*pr;if(v>0){rows.push({symbol:d.symbol,amount:Number(d.amount),price:pr,value:v,change24h:0});total+=v;}});
+        var p=demoPrices(); wallet.assets.forEach(function(d){var pr=d.symbol==='USDT'?1:(p[d.symbol]||d.price||0),v=Number(d.amount)*pr;if(v>0){rows.push({symbol:d.symbol,amount:Number(d.amount),price:pr,value:v,change24h:0,priceFreshness:'simulated'});total+=v;}});
     } else {
         try {
             var ex=await connectExchange(wallet.exchangeId,wallet.apiKey,wallet.secretKey,chatId),bal=await ex.fetchBalance(),balances=bal.total||{};
-            var usdt=Number(balances.USDT||0); if(usdt>0){rows.push({symbol:'USDT',amount:usdt,price:1,value:usdt,change24h:0});total+=usdt;}
+            var normalizedBalances=normalizeBalanceEntries(balances);
+            normalizedBalances.duplicates.forEach(function(coin){coverageComplete=false;unknownAssets.push({symbol:coin,amount:null,reason:'duplicate_asset_symbol'});invalidMarketDataAssets.push({symbol:coin,reason:'duplicate_asset_symbol'});});
+            var usdtEntry=normalizedBalances.entries.find(function(x){return x.symbol==='USDT';});
+            if(usdtEntry){if(!Number.isFinite(usdtEntry.amount)||usdtEntry.amount<0){coverageComplete=false;unknownAssets.push({symbol:'USDT',amount:null,reason:'invalid_balance'});invalidMarketDataAssets.push({symbol:'USDT',reason:'invalid_balance'});}else if(usdtEntry.amount>0){rows.push({symbol:'USDT',amount:usdtEntry.amount,price:1,value:usdtEntry.amount,change24h:0,priceFreshness:'unverified'});total+=usdtEntry.amount;unverifiedPriceWeight+=usdtEntry.amount;unverifiedPriceAssets.push({symbol:'USDT',weightValue:usdtEntry.amount});}}
+            var marketMap={}; try{if(typeof ex.loadMarkets==='function')marketMap=await ex.loadMarkets();else marketMap=ex.markets||{};}catch(e){console.warn('Market metadata unavailable:',e.message);marketMap={};}
             var tickers={}; try{if(typeof ex.fetchTickers==='function')tickers=await ex.fetchTickers();}catch(e){console.warn('Ticker snapshot unavailable:',e.message);}
-            Object.keys(balances).forEach(function(coin){var amt=Number(balances[coin]||0);if(!(amt>0)||coin==='USDT')return;var ticker=tickers[coin+'/USDT'],price=Number(ticker&&(ticker.last||ticker.close)||0);if(price>0){var v=amt*price;rows.push({symbol:coin,amount:amt,price:price,value:v,change24h:Number(ticker.percentage||0)});total+=v;}else{coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt});}});
+            normalizedBalances.entries.forEach(function(entry){
+                var coin=entry.symbol,amt=entry.amount;
+                if(coin==='USDT'||normalizedBalances.duplicates.indexOf(coin)!==-1)return;
+                if(!Number.isFinite(amt)||amt<0){coverageComplete=false;unknownAssets.push({symbol:coin,amount:null,reason:'invalid_balance'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_balance'});return;}
+                if(amt===0)return;
+                var pair=coin+'/USDT',market=marketMap[pair],ticker=tickers[pair];
+                var validation=validateSpotTicker(market,ticker,coin,'USDT');
+                if(!validation.ok){coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt,reason:validation.reason});invalidMarketDataAssets.push({symbol:coin,reason:validation.reason});return;}
+                var price=validation.price,v=amt*price;
+                if(!Number.isFinite(v)||v<=0){coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt,reason:'invalid_valuation'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_valuation'});return;}
+                var tickerTime=Number(ticker.timestamp||0);
+                if(!(tickerTime>0)&&ticker.datetime){var parsedTime=Date.parse(ticker.datetime);if(Number.isFinite(parsedTime))tickerTime=parsedTime;}
+                var ageMs=tickerTime>0?Date.now()-tickerTime:null, freshness='unverified';
+                if(ageMs!==null&&ageMs>=0&&ageMs<=CONFIG.RISK.FRESH_MS)freshness='fresh';
+                else if(ageMs!==null&&ageMs>CONFIG.RISK.FRESH_MS&&ageMs<=CONFIG.RISK.STALE_MS)freshness='aging';
+                else if(ageMs!==null&&ageMs>CONFIG.RISK.STALE_MS)freshness='stale';
+                var liquidity=assessMarketLiquidity(ticker,CONFIG.RISK),spreadPct=liquidity.spreadPct,quoteVolume=liquidity.quoteVolume,lowLiquidity=liquidity.lowLiquidity;
+                rows.push({symbol:coin,amount:amt,price:price,value:v,change24h:Number.isFinite(Number(ticker.percentage))?Number(ticker.percentage):0,priceTimestamp:tickerTime>0?tickerTime:null,priceAgeMs:ageMs,priceFreshness:freshness,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,liquidityStatus:lowLiquidity?'low':'unverified'});
+                if(lowLiquidity){lowLiquidityAssets.push({symbol:coin,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,weightValue:v});lowLiquidityWeight+=v;}
+                total+=v;
+                if(freshness==='stale'){stalePriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});stalePriceWeight+=v;}
+                else if(freshness==='aging'){agingPriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});agingPriceWeight+=v;}
+                else if(freshness==='unverified'){unverifiedPriceAssets.push({symbol:coin,weightValue:v});unverifiedPriceWeight+=v;}
+            });
             if(unknownAssets.length)sourceLabel='read-only / partial coverage';
         } catch(e){return {error:getText(lang,'error_exchange')};}
     }
     if(!(total>0))return {error:getText(lang,'no_coins')};
     rows.sort(function(a,b){return b.value-a.value;}); rows.forEach(function(r){r.weight=r.value/total*100;});
-    var btc=0,stable=0,alts=0; rows.forEach(function(r){if(r.symbol==='USDT')stable+=r.weight;else if(r.symbol==='BTC')btc+=r.weight;else alts+=r.weight;});
+    var btc=0,stable=0,alts=0,stablePegAssets=[],stablePegRisk=0;
+    var stableSymbols = new Set(['USDT','USDC','BUSD','DAI','TUSD','FDUSD','USDE','USDP','PYUSD','USDD','EURC','EURT','USD1']);
+    var usdPegSymbols = new Set(['USDC','BUSD','DAI','TUSD','FDUSD','USDE','USDP','PYUSD','USDD','USD1']);
+    rows.forEach(function(r){
+        var symbol = String(r.symbol || '').toUpperCase();
+        if (symbol === 'BTC') btc += r.weight;
+        else if (stableSymbols.has(symbol)) {
+            stable += r.weight;
+            // USDT is the quote/reference asset for CCXT */USDT prices, so its
+            // USD peg cannot be independently verified from these same prices.
+            if (usdPegSymbols.has(symbol)) {
+                var deviationPct = Math.abs(Number(r.price) - 1) * 100;
+                if (Number.isFinite(deviationPct)) {
+                    stablePegAssets.push({symbol:symbol,price:Number(r.price),deviationPct:deviationPct,weight:r.weight});
+                    if (deviationPct >= 0.5) stablePegRisk += Math.min(15, deviationPct * r.weight / 100 * 1.5);
+                }
+            }
+        } else alts += r.weight;
+    });
+    stablePegRisk = Math.min(15, Math.round(stablePegRisk));
     var meaningful=rows.filter(function(r){return r.weight>=5;}),top=rows[0]?rows[0].weight:0,mode=await getData('mode_'+chatId)||'beginner';
     var targets=mode==='pro'?{BTC:40,USDT:20,ALTS:40}:{BTC:50,USDT:20,ALTS:30};
     // Deterministic, auditable Risk Score. Every point shown to the user comes from a named factor.
-    var riskModel=calculateRiskBreakdown({top:top,weights:rows.map(function(x){return x.weight;}),stable:stable,alts:alts,meaningful:meaningful.length,coverageComplete:coverageComplete,targets:targets});
+    var freshnessExposure=total>0?(stalePriceWeight+agingPriceWeight*0.5+unverifiedPriceWeight*0.75)/total*100:0;
+    var priceFreshnessRisk=Math.min(15,Math.ceil(freshnessExposure/100*15));
+    var liquidityExposure=total>0?lowLiquidityWeight/total*100:0;
+    var marketLiquidityRisk=Math.min(15,Math.ceil(liquidityExposure/100*15));
+    var riskModel=calculateRiskBreakdown({top:top,weights:rows.map(function(x){return x.weight;}),stable:stable,alts:alts,meaningful:meaningful.length,coverageComplete:coverageComplete,targets:targets,stablePegRisk:stablePegRisk,priceFreshnessRisk:priceFreshnessRisk,marketLiquidityRisk:marketLiquidityRisk});
     var score=riskModel.score,drivers=riskModel.drivers;
     var riskBreakdown=riskModel.breakdown;
     var rec=[];
     if(!coverageComplete)rec.push(lang==='ru'?'Есть активы без подтверждённой цены: риск и стоимость могут быть занижены.':'Some assets have no confirmed price: value and risk may be understated.');
+    if(stalePriceAssets.length)rec.push(lang==='ru'?'Есть устаревшие котировки (старше '+Math.round(CONFIG.RISK.STALE_MS/60000)+' мин.): проверь оценку этих активов.':'Some quotes are stale (older than '+Math.round(CONFIG.RISK.STALE_MS/60000)+' min); verify these asset valuations.');
+    if(agingPriceAssets.length)rec.push(lang==='ru'?'Часть котировок старше '+Math.round(CONFIG.RISK.FRESH_MS/60000)+' мин.: проверь их перед принятием решений.':'Some quotes are older than '+Math.round(CONFIG.RISK.FRESH_MS/60000)+' min; verify them before making decisions.');
+    if(unverifiedPriceAssets.length)rec.push(lang==='ru'?'Биржа не вернула время обновления части котировок: их актуальность не подтверждена.':'The exchange did not provide timestamps for some quotes; their freshness could not be verified.');
+    if(lowLiquidityAssets.length)rec.push(lang==='ru'?'Обнаружены рынки с низким объёмом или широким спредом: оценка выхода из позиции может быть неточной.':'Some markets show low quote volume or wide spreads; estimated exit liquidity may be unreliable.');
     if(stable<targets.USDT)rec.push(lang==='ru'?'Резерв ликвидности ниже целевых '+targets.USDT+'%.':'Liquidity reserve is below the '+targets.USDT+'% target.');
+    if(stablePegRisk>0)rec.push(lang==='ru'?'Обнаружено отклонение USD-стейблкоина от $1. Проверь ликвидность, сеть и источник цены.':'A USD stablecoin deviates from $1. Verify liquidity, chain and price source.');
     if(top>CONFIG.RISK.MAX_SINGLE_POSITION)rec.push(lang==='ru'?'Крупнейшая позиция выше 50% — главный кандидат на снижение концентрации.':'The largest position is above 50% — the main concentration candidate.');
     if(alts>targets.ALTS)rec.push(lang==='ru'?'Доля альткоинов выше профиля '+targets.ALTS+'%.':'Altcoin exposure is above your '+targets.ALTS+'% profile target.');
     if(meaningful.length<CONFIG.RISK.MIN_MEANINGFUL_POSITIONS)rec.push(lang==='ru'?'Проверь, оправдана ли текущая концентрация твоей целью и горизонтом.':'Check whether current concentration fits your goal and horizon.');
     if(!rec.length)rec.push(lang==='ru'?'Критичных перекосов по текущим проверенным данным не найдено.':'No critical imbalance was found in the currently verified data.');
     var pricedAssets=rows.length, allPositiveAssets=pricedAssets+unknownAssets.length;
     var coveragePct=allPositiveAssets?Math.round((pricedAssets/allPositiveAssets)*100):0;
-    var confidencePct=coveragePct;
-    var dataStatus=coveragePct===100?'FRESH':(coveragePct>0?'PARTIAL':'UNKNOWN');
-    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':'medium',btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
+    var confidencePct=coverageComplete ? Math.max(0,100-priceFreshnessRisk*4) : 0;
+    var confidence=coverageComplete?(confidencePct>=80?'high':confidencePct>=50?'medium':'low'):(pricedAssets>0?'low':'unknown');
+    var dataStatus=coveragePct===100?'COMPLETE':(coveragePct>0?'PARTIAL':'UNKNOWN');
+    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete&&priceFreshnessRisk===0?'complete':'partial',confidence:confidence,btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,stablePegRisk:stablePegRisk,stablePegAssets:stablePegAssets,priceFreshnessRisk:priceFreshnessRisk,marketLiquidityRisk:marketLiquidityRisk,marketLiquidity:{assets:lowLiquidityAssets,weightedExposurePct:Math.round(liquidityExposure*100)/100},invalidMarketDataAssets:invalidMarketDataAssets,priceFreshness:{fresh:rows.filter(function(x){return x.priceFreshness==='fresh';}).length,simulated:rows.filter(function(x){return x.priceFreshness==='simulated';}).length,aging:agingPriceAssets,stale:stalePriceAssets,unverified:unverifiedPriceAssets,weightedExposurePct:Math.round(freshnessExposure*100)/100},assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
     a.insight=await generateVerifiedInsight(a,lang);
     var previousSnapshot=await savePortfolioSnapshot(chatId,a); if(wallet.type!=='demo') await collectTradeSnapshot(chatId); await setData('analysis_'+chatId,JSON.stringify(a),24*60*60); await addHistory(chatId,getText(lang,'history_analyze'),'Risk '+score+'/100; value ≈ $'+total.toFixed(2));
     return {success:true,analysis:a,remaining:limit.remaining};
@@ -1704,7 +1952,7 @@ function formatPortfolioAnalysis(r,lang){
     var rt=lang==='ru'?({critical:'Критический',high:'Высокий',medium:'Средний',low:'Низкий'}[a.riskLevel]||'Неизвестен'):({critical:'Critical',high:'High',medium:'Medium',low:'Unknown'}[a.riskLevel]||'Unknown');
     var beginner=a.mode!=='pro', ru=lang==='ru';
     var t=ru?'🛡️ *VOID NODE — РИСК-ПРОВЕРКА*':'🛡️ *VOID NODE — RISK CHECK*';
-    t+='\n──────\n\n💰 '+(ru?'Стоимость портфеля':'Known value')+': $'+a.totalUSDT.toFixed(2)+'\n🛡️ '+(ru?'Риск':'Risk')+': '+em+' '+rt+' ('+a.riskScore+'/100)\n🎯 '+(ru?'Режим':'Mode')+': '+(beginner?(ru?'🔰 Новичок':'🔰 Beginner'):(ru?'🚀 Опытный':'🚀 Experienced'))+'\n🔎 '+(ru?'Надёжность данных':'Confidence')+': '+(a.confidence==='high'?'High':'Medium')+'\n📡 '+(ru?'Полнота данных':'Coverage')+': '+(a.coverageComplete?(ru?'полное':'complete'):(ru?'частичное':'partial'))+'\n\n';
+    t+='\n──────\n\n💰 '+(ru?'Стоимость портфеля':'Known value')+': $'+a.totalUSDT.toFixed(2)+'\n🛡️ '+(ru?'Риск':'Risk')+': '+em+' '+rt+' ('+a.riskScore+'/100)\n🎯 '+(ru?'Режим':'Mode')+': '+(beginner?(ru?'🔰 Новичок':'🔰 Beginner'):(ru?'🚀 Опытный':'🚀 Experienced'))+'\n🔎 '+(ru?'Уровень уверенности':'Confidence level')+': '+(a.confidence==='high'?'High':(a.confidence==='low'?'Low':'Unknown'))+'\n📡 '+(ru?'Полнота данных':'Coverage')+': '+(a.coverageComplete?(ru?'полное':'complete'):(ru?'частичное':'partial'))+'\n\n';
     t+='📐 '+(ru?'Распределение портфеля':'Allocation')+':\n• BTC: '+a.btcPercent.toFixed(1)+'%\n• Альткоины: '+a.altPercent.toFixed(1)+'%\n• Стейблкоины: '+a.usdtPercent.toFixed(1)+'%\n\n';
     if(beginner){
         t+='🧭 *'+(ru?'Что это значит':'What this means')+'*\n';
@@ -1730,7 +1978,7 @@ function formatPortfolioAnalysis(r,lang){
     t+='• '+(ru?'Итого':'Total')+': *'+a.riskScore+'/100*\n';
     if(topFactor&&topFactor.points>0)t+='🎯 '+(ru?'Главная причина: ':'Main reason: ')+(ru?topFactor.labelRu:topFactor.labelEn)+'.\n';
     if(a.topPosition&&a.topPosition.weight>0){var impact=(a.topPosition.weight*0.30);t+='📉 '+(ru?'При падении крупнейшей позиции на 30% вклад в снижение портфеля был бы около ':'A 30% drop in the largest position would reduce the portfolio by about ')+impact.toFixed(1)+'%.\n';}
-    t+='📡 '+(ru?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(ru?'полноты':'complete')+', '+Number(a.confidencePct||0)+'% '+(ru?'надёжности':'confidence')+', '+String(a.dataStatus||'UNKNOWN')+'\n';
+    t+='📡 '+(ru?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(ru?'активов по количеству':'assets by count')+', '+(ru?'уверенность: ':'confidence: ')+(a.confidence||'unknown')+', '+String(a.dataStatus||'UNKNOWN')+'\n';
 
 t+='\n🔎 *'+(ru?'Крупнейшие позиции':'Largest positions')+'*\n';
     a.assets.slice(0,5).forEach(function(x){t+='• '+x.symbol+': '+x.weight.toFixed(1)+'% ($'+x.value.toFixed(2)+')\n';});
@@ -1788,7 +2036,11 @@ async function handlePlanSelection(chatId, planId, lang, messageId) {
             await sendUpdatedMessage(chatId, getText(lang, 'plans_trial_used'), null, 'Markdown', messageId);
             return;
         }
-        await activateTrial(chatId);
+        var trialActivated = await activateTrial(chatId);
+        if (!trialActivated && userPlan.plan !== 'TRIAL') {
+            await sendUpdatedMessage(chatId, getText(lang, 'plans_trial_used'), null, 'Markdown', messageId);
+            return;
+        }
         await sendUpdatedMessage(chatId, getText(lang, 'plans_trial_success'), null, 'Markdown', messageId);
         await showMainMenu(chatId);
         return;
@@ -1837,13 +2089,13 @@ async function handlePlanSelection(chatId, planId, lang, messageId) {
 async function checkContractAdvanced(address) {
     var result = {
         address: address,
-        isVerified: false,
+        isVerified: null,
         isHoneypot: null,
         canSell: null,
         canBuy: null,
-        ownershipRenounced: false,
-        liquidityLocked: false,
-        riskLevel: 'Низкий',
+        ownershipRenounced: null,
+        liquidityLocked: null,
+        riskLevel: '🟡 НЕПОЛНАЯ ПРОВЕРКА',
         riskScore: 0,
         details: [],
         warnings: [],
@@ -1853,18 +2105,24 @@ async function checkContractAdvanced(address) {
     try {
         if (ETHERSCAN_API_KEY) {
             var url = 'https://api.etherscan.io/api?module=contract&action=getabi&address=' + address + '&apikey=' + ETHERSCAN_API_KEY;
-            var resp = await fetch(url);
+            var resp = await fetchWithTimeout(url, {}, 10000, 'External API request');
             var data = await resp.json();
             
-            if (data.status === '1' && data.result) {
-                result.isVerified = true;
+            result.isVerified = classifyEtherscanVerification(data);
+            if (result.isVerified === true) {
                 result.details.push('✅ Контракт верифицирован на Etherscan');
                 result.riskScore -= 20;
-            } else {
+            } else if (result.isVerified === false) {
                 result.warnings.push('⚠️ Контракт НЕ верифицирован на Etherscan');
                 result.riskScore += 30;
-                result.details.push('❌ Контракт не верифицирован — высокий риск');
+                result.details.push('❌ Контракт не верифицирован — дополнительный риск');
+            } else {
+                result.warnings.push('⚠️ Статус верификации Etherscan неизвестен: ответ API не позволяет сделать вывод.');
+                result.details.push('ℹ️ Верификация контракта: UNKNOWN');
             }
+        } else {
+            result.warnings.push('⚠️ Etherscan API key не настроен: статус верификации неизвестен.');
+            result.details.push('ℹ️ Верификация контракта: UNKNOWN');
         }
 
         // Do not infer honeypots from hexadecimal address spelling. That creates false positives.
@@ -1880,7 +2138,7 @@ async function checkContractAdvanced(address) {
         if (ETHERSCAN_API_KEY) {
             try {
                 var txUrl = 'https://api.etherscan.io/api?module=account&action=txlist&address=' + address + '&page=1&offset=5&sort=desc&apikey=' + ETHERSCAN_API_KEY;
-                var txResp = await fetch(txUrl);
+                var txResp = await fetchWithTimeout(txUrl, {}, 10000, 'Etherscan transaction request');
                 var txData = await txResp.json();
                 
                 if (txData.status === '1' && txData.result && txData.result.length < 3) {
@@ -1893,7 +2151,7 @@ async function checkContractAdvanced(address) {
 
         try {
             var dexUrl = 'https://api.dexscreener.com/latest/dex/search?q=' + address;
-            var dexResp = await fetch(dexUrl);
+            var dexResp = await fetchWithTimeout(dexUrl, {}, 10000, 'DexScreener request');
             var dexData = await dexResp.json();
             
             if (dexData.pairs && dexData.pairs.length > 0) {
@@ -1933,8 +2191,9 @@ async function checkContractAdvanced(address) {
             result.riskLevel = '🟡 СРЕДНИЙ';
             result.recommendations.push('📊 Рекомендуется дополнительная проверка');
         } else {
-            result.riskLevel = '🟢 НИЗКИЙ';
-            result.recommendations.push('🟢 По доступным проверкам критичных признаков не найдено; это не гарантия безопасности.');
+            result.riskLevel = '🟡 НЕПОЛНАЯ ПРОВЕРКА';
+            result.recommendations.push('⚠️ Недостаточно данных для низкого уровня риска: honeypot не проверен симуляцией покупки и продажи.');
+            result.recommendations.push('🔎 Не считайте этот результат подтверждением безопасности контракта.');
         }
 
         if (result.isVerified) {
@@ -1944,20 +2203,7 @@ async function checkContractAdvanced(address) {
         return result;
     } catch (error) {
         console.error('Advanced contract check error:', error);
-        return {
-            address: address,
-            isVerified: false,
-            isHoneypot: false,
-            canSell: true,
-            canBuy: true,
-            ownershipRenounced: false,
-            liquidityLocked: false,
-            riskLevel: '🔴 ОШИБКА',
-            riskScore: 50,
-            details: ['❌ Ошибка проверки: ' + error.message],
-            warnings: ['⚠️ Не удалось провести полную проверку'],
-            recommendations: ['🔍 Проверьте контракт вручную на Etherscan']
-        };
+        return createContractCheckFailure(address);
     }
 }
 
@@ -1981,7 +2227,7 @@ async function checkWalletAdvanced(address) {
     try {
         if (ETHERSCAN_API_KEY) {
             var balUrl = 'https://api.etherscan.io/api?module=account&action=balance&address=' + address + '&tag=latest&apikey=' + ETHERSCAN_API_KEY;
-            var balResp = await fetch(balUrl);
+            var balResp = await fetchWithTimeout(balUrl, {}, 10000, 'Etherscan balance request');
             var balData = await balResp.json();
             
             if (balData.status === '1') {
@@ -1992,7 +2238,7 @@ async function checkWalletAdvanced(address) {
             }
 
             var tokenUrl = 'https://api.etherscan.io/api?module=account&action=tokentx&address=' + address + '&page=1&offset=100&sort=desc&apikey=' + ETHERSCAN_API_KEY;
-            var tokenResp = await fetch(tokenUrl);
+            var tokenResp = await fetchWithTimeout(tokenUrl, {}, 10000, 'Etherscan token request');
             var tokenData = await tokenResp.json();
             
             if (tokenData.status === '1') {
@@ -2013,7 +2259,7 @@ async function checkWalletAdvanced(address) {
             }
 
             var txUrl = 'https://api.etherscan.io/api?module=account&action=txlist&address=' + address + '&page=1&offset=10&sort=desc&apikey=' + ETHERSCAN_API_KEY;
-            var txResp = await fetch(txUrl);
+            var txResp = await fetchWithTimeout(txUrl, {}, 10000, 'Etherscan transaction request');
             var txData = await txResp.json();
             
             if (txData.status === '1') {
@@ -2027,7 +2273,7 @@ async function checkWalletAdvanced(address) {
             }
 
             var codeUrl = 'https://api.etherscan.io/api?module=proxy&action=eth_getCode&address=' + address + '&tag=latest&apikey=' + ETHERSCAN_API_KEY;
-            var codeResp = await fetch(codeUrl);
+            var codeResp = await fetchWithTimeout(codeUrl, {}, 10000, 'Etherscan contract code request');
             var codeData = await codeResp.json();
             
             if (codeData.result && codeData.result !== '0x') {
@@ -2383,15 +2629,11 @@ async function showMainMenu(chatId) {
         var userName = 'Друг';
         try {
             var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
-            var controller = new AbortController();
-            var timeoutId = setTimeout(() => controller.abort(), 3000);
-            var response = await fetch(url, {
+            var response = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId }),
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
+                body: JSON.stringify({ chat_id: chatId })
+            }, 3000, 'Telegram getChat');
             var data = await response.json();
             if (data.ok && data.result) {
                 userName = data.result.username || data.result.first_name || 'Друг';
@@ -2468,7 +2710,7 @@ async function showMarketPulse(chatId) {
     try {
         var url='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false';
         if(COINGECKO_API_KEY) url+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
-        var r=await withTimeout(fetch(url),10000,'CoinGecko market pulse');
+        var r=await fetchWithTimeout(url, {}, 10000, 'CoinGecko market pulse');
         if(!r.ok) throw new Error('market api '+r.status);
         var data=await r.json();
         if(!Array.isArray(data)) throw new Error('market api returned invalid data');
@@ -2586,7 +2828,7 @@ async function showProtectionDashboard(chatId){
     t+=(wallet?(wallet.type==='demo'?'🧪 Демо-режим':'👁️ Read-only подключён'):'⚪ Кошелёк не подключён')+'\n';
     if(a)t+=em+' Risk Score: *'+a.riskScore+'/100*\n';
     t+=(a?(fresh?'🟢 ':'🟡 ')+(lang==='ru'?'Анализ':'Analysis')+': '+age+' мин. назад':'⚪ '+(lang==='ru'?'Анализ ещё не создан':'No analysis yet'))+'\n';
-    if(a)t+='🔎 '+(lang==='ru'?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(lang==='ru'?'полноты':'complete')+' | '+Number(a.confidencePct||0)+'% '+(lang==='ru'?'надёжности':'confidence')+' | '+String(a.dataStatus||'UNKNOWN')+'\n';
+    if(a)t+='🔎 '+(lang==='ru'?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(lang==='ru'?'активов по количеству':'assets by count')+' | '+(lang==='ru'?'уверенность: ':'confidence: ')+(a.confidence||'unknown')+' | '+String(a.dataStatus||'UNKNOWN')+'\n';
     t+='🔔 '+(lang==='ru'?'Активных оповещений: ':'Active alerts: ')+alerts.length+'\n\n';
     if(fixes.length){
         t+=(lang==='ru'?'🚨 *ЧТО ТРЕБУЕТ ВНИМАНИЯ*':'🚨 *WHAT NEEDS ATTENTION*')+'\n';
@@ -2817,11 +3059,9 @@ async function handleTrendClick(chatId, data, lang, messageId) {
         var dataObj = await getCachedCoinGecko(coinId);
         if (!dataObj) {
             var url = 'https://api.coingecko.com/api/v3/coins/' + coinId + '?x_cg_demo_api_key=' + COINGECKO_API_KEY;
-            var response = await fetch(url, {
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
+            var response = await fetchWithTimeout(url, {
+                headers: { 'Accept': 'application/json' }
+            }, 10000, 'CoinGecko coin request');
             if (!response.ok) {
                 await sendUpdatedMessage(chatId, '❌ Data for ' + coin + ' temporarily unavailable.', null, 'Markdown', messageId);
                 return;
@@ -2976,7 +3216,7 @@ async function handleContractSearch(chatId, address, lang, messageId) {
     await sendTyping(chatId);
     try {
         var dexUrl = 'https://api.dexscreener.com/latest/dex/search?q=' + address;
-        var response = await fetch(dexUrl);
+        var response = await fetchWithTimeout(dexUrl, {}, 10000, 'DexScreener request');
         var data = await response.json();
         var message = '📄 CONTRACT SEARCH RESULT\n──────\n\n';
         message += '📌 Address: ' + address.slice(0, 10) + '...' + address.slice(-6) + '\n\n';
@@ -3127,7 +3367,7 @@ async function handleContractCheck(chatId, address, lang, messageId) {
         var message = '🔍 *ОТЧЕТ ПО КОНТРАКТУ*\n──────\n\n';
         message += '📌 *Адрес:* `' + address + '`\n\n';
         message += '📊 *Уровень риска:* ' + result.riskLevel + '\n';
-        message += '📊 *Оценка риска:* ' + result.riskScore + '/100\n\n';
+        message += '📊 *Оценка риска:* ' + (result.riskScore === null ? 'Не рассчитана' : result.riskScore + '/100') + '\n\n';
         message += '📋 *ДЕТАЛИ ПРОВЕРКИ*\n──────\n';
         for (var i = 0; i < result.details.length; i++) {
             message += result.details[i] + '\n';
@@ -3147,7 +3387,7 @@ async function handleContractCheck(chatId, address, lang, messageId) {
             message += result.recommendations[i] + '\n';
         }
         message += '\n';
-        message += '✅ *Верифицирован:* ' + (result.isVerified ? 'Да' : 'Нет') + '\n';
+        message += '✅ *Верифицирован:* ' + (result.isVerified === true ? 'Да' : (result.isVerified === false ? 'Нет' : 'Неизвестно')) + '\n';
         message += '🚫 *Honeypot:* ' + (result.isHoneypot === true ? 'Обнаружен!' : (result.isHoneypot === false ? 'Не обнаружен' : 'Не определено — недостаточно данных')) + '\n';
         message += '\n──────\n';
         message += '🛡️ *Void Node — защита от скамов*';
@@ -3202,7 +3442,7 @@ async function handleWalletCheck(chatId, address, lang, messageId) {
         message += '📊 *Транзакций:* ' + result.totalTransactions + '\n';
         message += '📄 *Тип:* ' + (result.isContract ? 'Контракт' : 'EOA-кошелек') + '\n\n';
         message += '📊 *Уровень риска:* ' + result.riskLevel + '\n';
-        message += '📊 *Оценка риска:* ' + result.riskScore + '/100\n\n';
+        message += '📊 *Оценка риска:* ' + (result.riskScore === null ? 'Не рассчитана' : result.riskScore + '/100') + '\n\n';
         
         if (result.tokens.length > 0) {
             message += '🪙 *ТОКЕНЫ (первые 10)*\n──────\n';
@@ -3256,7 +3496,7 @@ async function handleDEXCheck(chatId, address, lang, messageId) {
     
     try {
         var dexUrl = 'https://api.dexscreener.com/latest/dex/search?q=' + address;
-        var response = await fetch(dexUrl);
+        var response = await fetchWithTimeout(dexUrl, {}, 10000, 'DexScreener request');
         var data = await response.json();
         
         var message = '🔍 *DEX ПРОВЕРКА*\n──────\n\n';
@@ -3343,16 +3583,27 @@ async function handleDEXCheck(chatId, address, lang, messageId) {
 async function handleUrlCheck(chatId, url, lang, messageId) {
     await sendTyping(chatId);
     var result = await checkUrl(url);
-    var message = result.safe ?
-        getText(lang, 'scan_safe') + '\n\n' + getText(lang, 'scan_result_safe', 'Link') :
-        getText(lang, 'scan_danger') + '\n\n' + getText(lang, 'scan_result_danger', ['Link', result.reason]);
+    var message;
+    if (result.status === 'SAFE') {
+        message = getText(lang, 'scan_safe') + '\n\n' + (lang === 'ru'
+            ? 'Домен совпадает с локальным списком доверенных HTTPS-доменов. Это не гарантирует безопасность содержимого страницы.'
+            : 'The host matches the local trusted HTTPS domain list. This does not guarantee the page content is safe.');
+    } else if (result.status === 'SUSPICIOUS') {
+        message = getText(lang, 'scan_danger') + '\n\n' + getText(lang, 'scan_result_danger', ['Link', result.reason]);
+    } else {
+        message = (lang === 'ru'
+            ? '⚪ *РЕЗУЛЬТАТ НЕОПРЕДЕЛЁН*\n\nДомен не найден в локальном списке доверенных или заблокированных адресов. Это не означает, что ссылка безопасна. Не вводи пароли, seed-фразы или платёжные данные, пока не проверишь домен независимо.'
+            : '⚪ *RESULT UNKNOWN*\n\nThe domain is not in the local trusted or blocked lists. This does not mean the link is safe. Do not enter passwords, seed phrases, or payment details until you verify the domain independently.')
+            + '\n\n' + result.reason;
+    }
     var keyboard = {
         inline_keyboard: [
             [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
-    await sendUpdatedMessage(chatId, message, result.safe ? keyboard : buildSecurityFixKeyboard('url',result,lang), 'Markdown', messageId);
+    var resultKeyboard = result.status === 'SUSPICIOUS' ? buildSecurityFixKeyboard('url', result, lang) : keyboard;
+    await sendUpdatedMessage(chatId, message, resultKeyboard, 'Markdown', messageId);
     await addHistory(chatId, getText(lang, 'history_antiscam'), 'Link: ' + url.slice(0, 30) + '...');
 }
 
@@ -3394,24 +3645,12 @@ async function handleImpersonationCheck(chatId, update, lang, messageId) {
 }
 
 async function checkUrl(url) {
-    try {
-        var domain = new URL(url).hostname;
-        var issues = [];
-        var blacklisted = await getData('domain_blacklist_' + domain);
-        if (blacklisted) return { safe: false, reason: '🚫 Domain ' + domain + ' is blacklisted.' };
-        var knownDomains = ['binance.com', 'bybit.com', 'okx.com', 'metamask.io', 'trustwallet.com'];
-        for (var i = 0; i < knownDomains.length; i++) {
-            var known = knownDomains[i];
-            var base = known.split('.')[0];
-            if (domain.includes(base) && !domain.endsWith(known)) {
-                issues.push('🚫 Suspicious fake of ' + known + '.');
-            }
-        }
-        if (issues.length === 0) return { safe: true, reason: '✅ Link is safe.' };
-        return { safe: false, reason: issues.join('\n') };
-    } catch (error) {
-        return { safe: false, reason: '❌ Не удалось полностью проверить ссылку.' };
-    }
+    var parsed;
+    try { parsed = new URL(String(url)); }
+    catch (error) { return classifyUrlSafety(url); }
+    var domain = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    var blacklisted = await getData('domain_blacklist_' + domain);
+    return inspectUrlRedirects(url, { blacklisted: !!blacklisted });
 }
 
 function checkFile(fileName) {
@@ -3463,68 +3702,31 @@ class ReferralSystem {
             code = this.generateReferralCode(chatId);
             await this.kv.put(key, code);
         }
+        // Repair the reverse lookup on every access so existing codes remain resolvable.
+        await this.kv.put('ref_code_to_user_' + code, String(chatId));
         return code;
     }
 
     async getReferrerByCode(code) {
-        const key = 'ref_code_to_user_' + code;
+        const key = 'ref_code_to_user_' + String(code || '').toUpperCase();
         const chatId = await this.kv.get(key);
-        return chatId ? parseInt(chatId) : null;
+        const parsed = Number(chatId);
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
     }
 
     async registerReferralClick(refereeId, referrerCode) {
+        const referee = Number(refereeId);
+        if (!Number.isSafeInteger(referee) || referee <= 0) return null;
         const referrerId = await this.getReferrerByCode(referrerCode);
-        if (!referrerId || referrerId === refereeId) return null;
-
-        const usedKey = 'ref_used_' + refereeId;
-        const used = await this.kv.get(usedKey);
-        if (used) return null;
-
-        const referralKey = 'ref_referrer_' + refereeId;
-        await this.kv.put(referralKey, referrerId.toString());
-        await this.kv.put(usedKey, 'true');
-        
-        const listKey = 'ref_invited_' + referrerId;
-        let invited = await this.kv.get(listKey);
-        invited = invited ? JSON.parse(invited) : [];
-        invited.push({ refereeId, date: Date.now() });
-        await this.kv.put(listKey, JSON.stringify(invited));
-
-        return referrerId;
+        if (!referrerId || referrerId === referee) return null;
+        const registered = await this.kv.registerReferral(referee, referrerId);
+        return registered ? referrerId : null;
     }
 
-    async processPlanActivation(refereeId, planId) {
-        const referralKey = 'ref_referrer_' + refereeId;
-        const referrerId = await this.kv.get(referralKey);
-        if (!referrerId) return null;
-
+    async processPlanActivation(refereeId, planId, invoiceId) {
         const bonusDays = this.rewards[planId] || 0;
-        if (bonusDays === 0) return null;
-
-        const planKey = 'plan_' + referrerId;
-        let planData = await this.kv.get(planKey);
-        planData = planData ? JSON.parse(planData) : null;
-
-        if (!planData) return null;
-
-        const newExpires = new Date(planData.expires);
-        newExpires.setDate(newExpires.getDate() + bonusDays);
-        planData.expires = newExpires.getTime();
-
-        await this.kv.put(planKey, JSON.stringify(planData));
-        
-        const bonusKey = 'ref_bonus_' + referrerId;
-        let bonuses = await this.kv.get(bonusKey);
-        bonuses = bonuses ? JSON.parse(bonuses) : [];
-        bonuses.push({
-            from: refereeId,
-            plan: planId,
-            days: bonusDays,
-            date: Date.now()
-        });
-        await this.kv.put(bonusKey, JSON.stringify(bonuses));
-
-        return { referrerId, bonusDays, newExpires: planData.expires };
+        if (!bonusDays || !invoiceId) return null;
+        return this.kv.activateReferralBonus(String(invoiceId), refereeId, planId, bonusDays);
     }
 
     async getReferralStats(chatId) {
@@ -3750,7 +3952,7 @@ class NewsManager {
                     if (Date.now() - parsed.timestamp < 300000) return parsed.articles;
                 }
                 var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=3&apiKey=' + NEWS_API_KEY;
-                var response = await fetch(url);
+                var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
                 var data = await response.json();
                 var articles = [];
                 if (data.status === 'ok' && data.articles) {
@@ -3851,7 +4053,7 @@ function buildDeterministicInsight(a, lang) {
     var why=top ? (ru?top.labelRu:top.labelEn) : (ru?'Базовые факторы риска':'Baseline risk factors');
     var action;
     if(!a) action=ru?'Обнови анализ, чтобы получить проверяемый вывод.':'Refresh the analysis to get a verifiable conclusion.';
-    else if(a.dataStatus!=='FRESH' || Number(a.coveragePct||0)<100) action=ru?'Сначала обнови данные и проверь активы без оценки.':'Refresh the data and review any unpriced assets first.';
+    else if(a.dataStatus!=='COMPLETE' || Number(a.coveragePct||0)<100) action=ru?'Сначала обнови данные и проверь активы без оценки.':'Refresh the data and review any unpriced assets first.';
     else if(top && top.key==='concentration') action=ru?'Сравни долю крупнейшей позиции с целевой и после ручного изменения снова запусти анализ.':'Compare the largest position with its target, then rerun the analysis after any manual change.';
     else if(top && top.key==='reserve') action=ru?'Проверь, соответствует ли резерв твоей цели и горизонту.':'Check whether the liquid reserve matches your objective and horizon.';
     else action=ru?'Не действуй только из-за цифры. Посмотри, изменился ли сам фактор риска, и проверь его повторным анализом.':'Do not act on the number alone. Check whether the underlying risk factor changed, then verify with a fresh analysis.';
@@ -3865,7 +4067,7 @@ async function generateVerifiedInsight(a, lang) {
         var facts={
             riskScore:Number(a.riskScore||0), riskLevel:String(a.riskLevel||'unknown'), totalUSDT:Number(a.totalUSDT||0),
             btcPercent:Number(a.btcPercent||0), altPercent:Number(a.altPercent||0), stablePercent:Number(a.usdtPercent||0),
-            coveragePct:Number(a.coveragePct||0), confidencePct:Number(a.confidencePct||0), dataStatus:String(a.dataStatus||'UNKNOWN'),
+            coveragePct:Number(a.coveragePct||0), confidence:String(a.confidence||'unknown'), dataStatus:String(a.dataStatus||'UNKNOWN'),
             topPosition:a.topPosition?{symbol:String(a.topPosition.symbol||''),weight:Number(a.topPosition.weight||0)}:null,
             riskBreakdown:(a.riskBreakdown||[]).map(function(f){return {key:f.key,label:lang==='ru'?f.labelRu:f.labelEn,points:Number(f.points||0),detail:riskFactorDetail(f,a,lang)};}).filter(function(f){return f.points>0;}),
             recommendations:(a.recommendations||[]).slice(0,3)
@@ -3876,7 +4078,7 @@ async function generateVerifiedInsight(a, lang) {
         var user=lang==='ru'
             ? 'Верни JSON без markdown строго с тремя строковыми полями: conclusion, why, action. conclusion — 1-2 предложения о сути; why — главная причина с фактом/числом; action — безопасный следующий шаг без исполнения сделок. Факты: '+JSON.stringify(facts)
             : 'Return strict JSON without markdown with exactly three string fields: conclusion, why, action. conclusion = 1-2 sentences with the main takeaway; why = main reason with facts/numbers; action = safe next step without executing trades. Facts: '+JSON.stringify(facts);
-        var response=await withTimeout(fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+OPENROUTER_API_KEY,'HTTP-Referer':'https://t.me/'+BOT_USERNAME,'X-Title':'Void Node Verified Explanation'},body:JSON.stringify({model:CURRENT_AI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:260,temperature:0.1})}),7000,'AI narrative');
+        var response=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+OPENROUTER_API_KEY,'HTTP-Referer':'https://t.me/'+BOT_USERNAME,'X-Title':'Void Node Verified Explanation'},body:JSON.stringify({model:CURRENT_AI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:260,temperature:0.1})},7000,'AI narrative');
         if(!response.ok) throw new Error('AI narrative HTTP '+response.status);
         var data=await response.json(), raw=data&&data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;
         if(!raw) throw new Error('Empty AI narrative');
@@ -4128,15 +4330,11 @@ class AIContext {
             var name = 'друг';
             try {
                 var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/getChat';
-                var controller = new AbortController();
-                var timeoutId = setTimeout(() => controller.abort(), 3000);
-                var response = await fetch(url, {
+                var response = await fetchWithTimeout(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chat_id: chatId }),
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
+                    body: JSON.stringify({ chat_id: chatId })
+                }, 3000, 'Telegram getChat');
                 var data = await response.json();
                 if (data.ok && data.result) {
                     name = data.result.username || data.result.first_name || 'друг';
@@ -4229,7 +4427,7 @@ class AIContext {
                 try {
                     var coinUrl='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids='+coinIds[coin]+'&price_change_percentage=24h&sparkline=false';
                     if (COINGECKO_API_KEY) coinUrl+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
-                    var coinFetch=await withTimeout(fetch(coinUrl),10000,'CoinGecko '+coin+' quote');
+                    var coinFetch=await fetchWithTimeout(coinUrl, {}, 10000, 'CoinGecko '+coin+' quote');
                     if (!coinFetch.ok) throw new Error('CoinGecko HTTP '+coinFetch.status);
                     var coinRows=await coinFetch.json();
                     var quote=Array.isArray(coinRows)?coinRows[0]:null;
@@ -4276,11 +4474,7 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var controller = new AbortController();
-                var timeoutId = setTimeout(function() { controller.abort(); }, 25000);
-                var response;
-                try {
-                    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                var response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4296,12 +4490,8 @@ class AIContext {
                         ],
                         max_tokens: 1000,
                         temperature: 0.2
-                    }),
-                    signal: controller.signal
-                    });
-                } finally {
-                    clearTimeout(timeoutId);
-                }
+                    })
+                }, 25000, 'OpenRouter chat completion');
 
                 var rawBody = await response.text();
                 var data = null;
@@ -4478,6 +4668,47 @@ console.log('🤖 AI Advisor initialized with OpenRouter support');
 console.log('📡 OpenRouter key: ' + (HAS_OPENROUTER ? '✅ Found' : '❌ Not found (using fallback mode)'));
 console.log('🧠 Current model: ' + CURRENT_AI_MODEL);
 
+function scheduleDisconnectFinalization(chatId, pendingRaw, expectedUserRaw, delayMs) {
+    var timer = setTimeout(async function() {
+        try {
+            var completed = await VOID_KV.completeDisconnect(chatId, pendingRaw, expectedUserRaw);
+            if (completed) console.log('🔌 Exchange disconnected after grace period for ' + chatId);
+        } catch (e) {
+            console.warn('Delayed disconnect will retry after storage recovery.');
+            scheduleDisconnectFinalization(chatId, pendingRaw, expectedUserRaw, 30000);
+        }
+    }, Math.max(0, Number(delayMs) || 0));
+    if (timer && typeof timer.unref === 'function') timer.unref();
+}
+
+async function recoverPendingDisconnects() {
+    try {
+        // Process each SCAN page immediately instead of retaining every pending key in memory.
+        await VOID_KV.forEachKey('pending_disconnect_', async function(keys) {
+            for (var i = 0; i < keys.length; i++) {
+                var key = keys[i];
+                var chatId = Number(String(key).slice('pending_disconnect_'.length));
+                if (!Number.isSafeInteger(chatId)) continue;
+                var pendingRaw = await getData(key);
+                if (!pendingRaw) continue;
+                var pending;
+                try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
+                if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
+                    // Delete only the exact malformed value we inspected; a newer pending request may have replaced it.
+                    await VOID_KV.deletePendingDisconnectIfMatches(chatId, pendingRaw);
+                    continue;
+                }
+                var remaining = 10000 - (Date.now() - Number(pending.scheduledAt));
+                scheduleDisconnectFinalization(chatId, pendingRaw, pending.userRecord, remaining);
+            }
+        });
+    } catch (error) {
+        console.warn('Pending exchange disconnect recovery will retry after storage recovery.');
+        var retryTimer = setTimeout(recoverPendingDisconnects, 30000);
+        if (retryTimer && typeof retryTimer.unref === 'function') retryTimer.unref();
+    }
+}
+
 async function scheduleDisconnect(chatId) {
     var raw = await getData('user_' + chatId);
     if (!raw) {
@@ -4486,7 +4717,18 @@ async function scheduleDisconnect(chatId) {
         return;
     }
     var stored = typeof raw === 'string' ? raw : JSON.stringify(raw);
-    await setData('pending_disconnect_' + chatId, stored, 20);
+    var pendingRecord = JSON.stringify({ userRecord: stored, scheduledAt: Date.now() });
+    // Create the pending operation only if the user record has not changed since it was read.
+    // This prevents a concurrent reconnect from leaving a stale pending request behind.
+    var scheduled = await VOID_KV.createPendingDisconnectIfUserMatches(chatId, stored, pendingRecord);
+    if (!scheduled) {
+        await sendMessage(chatId, 'ℹ️ Подключение изменилось параллельно. Повтори отключение.');
+        return;
+    }
+    // The pending operation has no TTL: it remains recoverable after storage outages or restarts.
+    // Start the finalization timer immediately after persisting the pending record.
+    // Telegram delivery failures must not leave credentials pending indefinitely.
+    scheduleDisconnectFinalization(chatId, pendingRecord, stored, 10000);
     var lang = await getData('lang_' + chatId) || 'ru';
     await sendMessage(chatId, getText(lang, 'connect_undo'), {
         inline_keyboard: [
@@ -4494,28 +4736,30 @@ async function scheduleDisconnect(chatId) {
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     });
-    setTimeout(async function() {
-        try {
-            var pending = await getData('pending_disconnect_' + chatId);
-            if (pending) {
-                await deleteData('user_' + chatId);
-                await deleteData('pending_disconnect_' + chatId);
-                console.log('🔌 Exchange disconnected after grace period for ' + chatId);
-            }
-        } catch (e) {
-            console.error('Delayed disconnect error:', e.message);
-        }
-    }, 10000);
 }
 
 async function undoDisconnect(chatId) {
-    var pending = await getData('pending_disconnect_' + chatId);
-    if (!pending) {
+    var pendingRaw = await getData('pending_disconnect_' + chatId);
+    if (!pendingRaw) {
         await sendMessage(chatId, 'ℹ️ ' + ((await getData('lang_' + chatId) || 'ru') === 'ru' ? 'Окно отмены уже истекло.' : 'The undo window has expired.'));
         return;
     }
-    await setData('user_' + chatId, typeof pending === 'string' ? pending : JSON.stringify(pending));
-    await deleteData('pending_disconnect_' + chatId);
+    var pending;
+    try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
+    if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
+        await sendMessage(chatId, '⚠️ Не удалось безопасно восстановить подключение. Подключи биржу заново.');
+        return;
+    }
+    if (Date.now() - Number(pending.scheduledAt) >= 10000) {
+        try { await VOID_KV.completeDisconnect(chatId, pendingRaw, pending.userRecord); } catch (e) {}
+        await sendMessage(chatId, 'ℹ️ Окно отмены уже истекло.');
+        return;
+    }
+    var restored = await VOID_KV.restoreDisconnect(chatId, pendingRaw, pending.userRecord);
+    if (!restored) {
+        await sendMessage(chatId, 'ℹ️ Окно отмены уже истекло или подключение было изменено.');
+        return;
+    }
     var lang = await getData('lang_' + chatId) || 'ru';
     await sendMessage(chatId, getText(lang, 'connect_undo_success'));
     await showMainMenu(chatId);
@@ -4532,7 +4776,7 @@ async function handleCallback(update) {
     if (callback.from.id !== chatId && callback.message.chat.type === 'private') return;
     var data = String(callback.data || '').slice(0, 128);
     var lang = await getData('lang_' + chatId) || 'ru';
-    var sensitiveCallback = /^(panic_convert|action_disconnect|undo_disconnect|plan_|menu_connect|settings_|lang_|mode_)/.test(data);
+    var sensitiveCallback = /^(panic_convert|action_disconnect|undo_disconnect|plan_|menu_connect|wallet_real_read|exchange_|settings_|lang_|mode_|onboard_connect|wizard_exchange_|wizard_send_keys)/.test(data);
     if (sensitiveCallback && callback.message.chat.type !== 'private') { await answerCallback(callback.id); await sendMessage(chatId, '🔒 Эта функция доступна только в личном чате с Void Node.'); return; }
 
     await answerCallback(callback.id);
@@ -4772,7 +5016,7 @@ async function handleCallback(update) {
         return;
 
     } catch (error) {
-        console.error('Callback error:', error);
+        console.error('Callback error:', error.message);
         var errorKeyboard = {
             inline_keyboard: [
                 [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'back_to_menu' }],
@@ -4780,6 +5024,7 @@ async function handleCallback(update) {
             ]
         };
         await sendMessage(chatId, '❌ ' + (lang === 'ru' ? 'Операция не выполнена. Подробности записаны в журнал.' : 'Operation failed. Details were logged.'), errorKeyboard);
+        throw error;
     }
 }
 
@@ -4808,9 +5053,20 @@ async function handleMessage(update) {
     console.log('💬 Message received from ' + chatId + ' (length=' + String(text).length + ')');
     try { lang = await getData('lang_' + chatId) || 'ru'; } catch (e) { console.error('Initial lang read failed:', e.message); }
     try { state = await getData('state_' + chatId) || 'idle'; } catch (e) { console.error('Initial state read failed:', e.message); }
+    if (update.message.chat.type !== 'private' && state === 'waiting_for_keys') {
+        var groupCredentialMessageDeleted = await deleteUserMessage(chatId, messageId);
+        await setState(chatId, 'idle');
+        await deleteData('connect_exchange_' + chatId);
+        if (groupCredentialMessageDeleted) {
+            await sendMessage(chatId, '🔒 Подключение биржи доступно только в личном чате. Сообщение с потенциальными ключами удалено.');
+        } else {
+            await sendMessage(chatId, '🚨 ВНИМАНИЕ: не удалось удалить сообщение с потенциальными API-ключами. Удали его вручную и немедленно отзови эти ключи на бирже. Подключение не выполнено.');
+        }
+        return;
+    }
     try {
         var cleanText = sanitizeInput(text);
-        console.log('🧭 Message stage: sanitized text=' + JSON.stringify(cleanText));
+        console.log('🧭 Message stage: input sanitized (length=' + String(cleanText.length) + ')');
         var isForwarded = update.message.forward_from || update.message.forward_from_chat || update.message.forward_date;
 
         // GLOBAL COMMANDS: never allow an active state or AI mode to trap the user.
@@ -4874,6 +5130,77 @@ async function handleMessage(update) {
             return;
         }
 
+        if (state === 'waiting_for_keys') {
+            if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
+                await setState(chatId, 'idle');
+                await deleteData('connect_exchange_' + chatId);
+                await sendMessage(chatId, getText(lang, 'connect_cancel'));
+                await showMainMenu(chatId);
+                return;
+            }
+            // Every non-cancel message in this state may contain credentials; require confirmed deletion.
+            var credentialMessageDeleted = await deleteUserMessage(chatId, messageId);
+            if (!credentialMessageDeleted) {
+                await setState(chatId, 'idle');
+                await deleteData('connect_exchange_' + chatId);
+                await sendMessage(chatId, '🔒 Не удалось подтвердить удаление сообщения. Ключи не сохранены. Удали исходное сообщение вручную и проверь права бота на удаление сообщений.');
+                return;
+            }
+            var parts = cleanText.split(':');
+            if (parts.length === 2) {
+                var apiKey = parts[0].trim();
+                var secretKey = parts[1].trim();
+                if (apiKey.length < 8 || apiKey.length > 256 || secretKey.length < 8 || secretKey.length > 512) {
+                    await setState(chatId, 'idle');
+                    await sendMessage(chatId, '❌ Неверный формат ключей. Создай новый ключ и попробуй снова.');
+                    return;
+                }
+                await sendTyping(chatId);
+                await sendMessage(chatId, '🔍 Проверяю ключи без сохранения...');
+                var selectedExchange = await getData('connect_exchange_'+chatId) || 'binance';
+                var exchange;
+                try {
+                    exchange = await connectExchange(selectedExchange, apiKey, secretKey, chatId);
+                } catch (exchangeError) {
+                    console.warn('Exchange credential validation failed for ' + selectedExchange + '. Details suppressed.');
+                    await setState(chatId, 'idle');
+                    await deleteData('connect_exchange_' + chatId);
+                    await sendMessage(chatId, '❌ Не удалось проверить ключи. Они не сохранены. Проверь API key, secret и права Read-only на бирже, затем попробуй снова.');
+                    return;
+                }
+                var encryptedApiKey = encrypt(apiKey);
+                var encryptedSecretKey = encrypt(secretKey);
+                if (!encryptedApiKey || !encryptedSecretKey) throw new Error('Credential encryption failed');
+                // Replace credentials and clear any pending disconnect in one Redis transaction.
+                // This prevents a concurrent disconnect request from being stranded between DEL and SET.
+                var newUserRecord = JSON.stringify({
+                    apiKey: encryptedApiKey,
+                    secretKey: encryptedSecretKey,
+                    exchangeId: selectedExchange,
+                    connectedAt: Date.now(),
+                    permissionModel: 'read'
+                });
+                await VOID_KV.replaceUserAndClearPending(chatId, newUserRecord);
+                await setData('active_wallet_' + chatId, 'real');
+                await deleteData('connect_permission_' + chatId);
+                await deleteData('connect_exchange_' + chatId);
+                await setState(chatId, 'idle');
+                await sendMessage(chatId, getText(lang, 'connect_success', selectedExchange));
+                if (!(await getData('first_briefing_sent_' + chatId))) await showFirstBriefing(chatId,lang); else await showMainMenu(chatId);
+            } else {
+                var errorKeyboard = {
+                    inline_keyboard: [
+                        [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'menu_connect' }],
+                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'help_q1' }],
+                        [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
+                    ]
+                };
+                await sendMessage(chatId, getText(lang, 'invalid_format'), errorKeyboard);
+            }
+            return;
+        }
+
+
         var aiChatMode = await getData('ai_chat_mode_' + chatId);
         if (aiChatMode === 'true') {
             var aiModeSetAt = await getData('ai_chat_mode_set_at_' + chatId);
@@ -4902,58 +5229,6 @@ async function handleMessage(update) {
             if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') { await setState(chatId,'idle'); await showSettingsMenu(chatId); return; }
             if (await setTimezone(chatId,cleanText)) { await sendMessage(chatId,lang==='ru'?'✅ Часовой пояс сохранён: '+cleanText+'\nЕжедневный briefing будет приходить в 08:00.':'✅ Timezone saved: '+cleanText+'\nDaily briefing will arrive at 08:00.'); await showNotificationSettings(chatId); }
             else await sendMessage(chatId,lang==='ru'?'❌ Неизвестный timezone. Пример: Europe/Amsterdam':'❌ Unknown timezone. Example: Europe/Amsterdam',getCancelKeyboard(lang));
-            return;
-        }
-
-        if (state === 'waiting_for_keys') {
-            if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
-                await setState(chatId, 'idle');
-                await deleteData('connect_exchange_' + chatId);
-                await sendMessage(chatId, getText(lang, 'connect_cancel'));
-                await showMainMenu(chatId);
-                return;
-            }
-            var parts = cleanText.split(':');
-            if (parts.length === 2) {
-                var apiKey = parts[0].trim();
-                var secretKey = parts[1].trim();
-                // Delete the credential-bearing Telegram message as early as possible.
-                await deleteUserMessage(chatId, messageId);
-                if (apiKey.length < 8 || apiKey.length > 256 || secretKey.length < 8 || secretKey.length > 512) {
-                    await setState(chatId, 'idle');
-                    await sendMessage(chatId, '❌ Неверный формат ключей. Создай новый ключ и попробуй снова.');
-                    return;
-                }
-                await sendTyping(chatId);
-                await sendMessage(chatId, '🔍 Проверяю ключи без сохранения...');
-                var selectedExchange = await getData('connect_exchange_'+chatId) || 'binance';
-                var exchange = await connectExchange(selectedExchange, apiKey, secretKey, chatId);
-                var encryptedApiKey = encrypt(apiKey);
-                var encryptedSecretKey = encrypt(secretKey);
-                if (!encryptedApiKey || !encryptedSecretKey) throw new Error('Credential encryption failed');
-                await setData('user_' + chatId, JSON.stringify({
-                    apiKey: encryptedApiKey,
-                    secretKey: encryptedSecretKey,
-                    exchangeId: selectedExchange,
-                    connectedAt: Date.now(),
-                    permissionModel: 'read'
-                }));
-                await setData('active_wallet_' + chatId, 'real');
-                await deleteData('connect_permission_' + chatId);
-                await deleteData('connect_exchange_' + chatId);
-                await setState(chatId, 'idle');
-                await sendMessage(chatId, getText(lang, 'connect_success', selectedExchange));
-                if (!(await getData('first_briefing_sent_' + chatId))) await showFirstBriefing(chatId,lang); else await showMainMenu(chatId);
-            } else {
-                var errorKeyboard = {
-                    inline_keyboard: [
-                        [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'menu_connect' }],
-                        [{ text: '📖 ' + (lang === 'ru' ? 'Инструкция' : 'Help'), callback_data: 'help_q1' }],
-                        [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
-                    ]
-                };
-                await sendMessage(chatId, getText(lang, 'invalid_format'), errorKeyboard);
-            }
             return;
         }
 
@@ -5105,7 +5380,7 @@ async function handleMessage(update) {
         await sendMessage(chatId, getText(lang, 'default_response', cleanText));
 
     } catch (error) {
-        console.error('Message error:', error);
+        console.error('Message error:', error.message);
         var errorKeyboard = {
             inline_keyboard: [
                 [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'back_to_menu' }],
@@ -5113,6 +5388,7 @@ async function handleMessage(update) {
             ]
         };
         await sendMessage(chatId, getText(lang, 'error_general', error.message), errorKeyboard);
+        throw error;
     }
 }
 
@@ -5237,7 +5513,7 @@ async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
             }
         }
         var url = 'https://newsapi.org/v2/everything?q=' + coin + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=5&apiKey=' + NEWS_API_KEY;
-        var response = await fetch(url);
+        var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
         var data = await response.json();
         if (data.status !== 'ok' || !data.articles || data.articles.length === 0) {
             await sendUpdatedMessage(chatId, getText(lang, 'news_empty'), null, 'Markdown', messageId);
@@ -5319,7 +5595,7 @@ async function handleCalendarCommand(chatId, lang, messageId) {
         var from = today.toISOString().split('T')[0];
         var to = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
         var url = 'https://finnhub.io/api/v1/calendar/economic?from=' + from + '&to=' + to + '&token=' + FINNHUB_API_KEY;
-        var response = await fetch(url);
+        var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
         var data = await response.json();
         var events = [];
         if (data.economicCalendar && data.economicCalendar.length > 0) {
@@ -5371,8 +5647,19 @@ async function autoCheckLinks(chatId, text, lang, messageId) {
         var url = urls[i];
         try {
             var result = await checkUrl(url);
-            if (!result.safe) {
-                var message = '🚨 SUSPICIOUS LINK!\n\n🔗 ' + url + '\n\n⚠️ ' + result.reason + '\n\n🛡️ Never enter passwords or seed phrases!';
+            var alertLevel = getUrlAlertLevel(result);
+            if (alertLevel !== 'SAFE') {
+                var alertTitle = alertLevel === 'SUSPICIOUS'
+                    ? (lang === 'ru' ? '🚨 ПОДОЗРИТЕЛЬНАЯ ССЫЛКА!' : '🚨 SUSPICIOUS LINK!')
+                    : (lang === 'ru' ? '⚪ ССЫЛКА НЕ ПРОВЕРЕНА!' : '⚪ UNVERIFIED LINK!');
+                var alertAdvice = lang === 'ru'
+                    ? (alertLevel === 'SUSPICIOUS'
+                        ? 'Не открывай ссылку и не вводи пароли или seed-фразы.'
+                        : 'Статус домена неизвестен. Не вводи пароли, seed-фразы или платёжные данные, пока не проверишь его независимо.')
+                    : (alertLevel === 'SUSPICIOUS'
+                        ? 'Do not open the link or enter passwords or seed phrases.'
+                        : 'The domain status is unknown. Do not enter passwords, seed phrases, or payment details until you verify it independently.');
+                var message = alertTitle + '\n\n🔗 ' + url + '\n\n⚠️ ' + result.reason + '\n\n🛡️ ' + alertAdvice;
                 var keyboard = {
                     inline_keyboard: [
                         [{ text: '🛡️ Check other', callback_data: 'menu_security' }],
@@ -5396,7 +5683,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
     var message = '📄 *АВТОМАТИЧЕСКАЯ ПРОВЕРКА КОНТРАКТА*\n──────\n\n';
     message += '📌 *Адрес:* `' + address + '`\n\n';
     message += '📊 *Уровень риска:* ' + result.riskLevel + '\n';
-    message += '📊 *Оценка риска:* ' + result.riskScore + '/100\n\n';
+    message += '📊 *Оценка риска:* ' + (result.riskScore === null ? 'Не рассчитана' : result.riskScore + '/100') + '\n\n';
     if (result.warnings.length > 0) {
         message += '⚠️ *Предупреждения:*\n';
         for (var i = 0; i < result.warnings.length; i++) {
@@ -5515,7 +5802,7 @@ async function checkAlerts() {
                     var cacheRaw = await getData(cacheKey), events = [];
                     if (cacheRaw) { try { events = JSON.parse(cacheRaw); } catch(e) { events = []; } }
                     if (!Array.isArray(events) || events.length === 0) {
-                        var response = await fetch('https://finnhub.io/api/v1/calendar/economic?from=' + from + '&to=' + to + '&token=' + FINNHUB_API_KEY);
+                        var response = await fetchWithTimeout('https://finnhub.io/api/v1/calendar/economic?from=' + from + '&to=' + to + '&token=' + FINNHUB_API_KEY, {}, 10000, 'Finnhub economic calendar');
                         var data = await response.json();
                         events = Array.isArray(data.economicCalendar) ? data.economicCalendar : [];
                         await setData(cacheKey, JSON.stringify(events), 900);
@@ -5564,7 +5851,7 @@ async function buildDailyBriefing(chatId,lang,firstBriefing) {
         msg+=(delta&&delta.changes.length?'⚠️ *'+(lang==='ru'?'ЧТО ИЗМЕНИЛОСЬ':'WHAT CHANGED')+'*\n'+delta.changes.slice(0,3).map(function(x){return '• '+x;}).join('\n')+'\n\n':'🟢 '+(lang==='ru'?'Существенных изменений не обнаружено.':'No material changes detected.')+'\n\n');
     } else msg+=(lang==='ru'?'📊 Подключи биржу и выполни первый анализ.':'📊 Connect an exchange and run the first analysis.')+'\n\n';
     msg+='❤️ *'+(lang==='ru'?'Пульс рынка':'Market Pulse')+'*\n';
-    try { var r=await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false'+(COINGECKO_API_KEY?'&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY):'')); var d=await r.json(); msg+=d.slice(0,3).map(function(x){return '• '+String(x.symbol||'').toUpperCase()+' '+(Number(x.price_change_percentage_24h)>=0?'+':'')+Number(x.price_change_percentage_24h||0).toFixed(1)+'%';}).join(' · ')+'\n\n'; } catch(e){msg+=(lang==='ru'?'данные рынка временно недоступны':'market data temporarily unavailable')+'\n\n';}
+    try { var r=await fetchWithTimeout('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false'+(COINGECKO_API_KEY?'&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY):''), {}, 10000, 'CoinGecko daily briefing'); var d=await r.json(); msg+=d.slice(0,3).map(function(x){return '• '+String(x.symbol||'').toUpperCase()+' '+(Number(x.price_change_percentage_24h)>=0?'+':'')+Number(x.price_change_percentage_24h||0).toFixed(1)+'%';}).join(' · ')+'\n\n'; } catch(e){msg+=(lang==='ru'?'данные рынка временно недоступны':'market data temporarily unavailable')+'\n\n';}
     if(news&&!news.error&&news.articles&&news.articles.length){msg+='📰 *'+(lang==='ru'?'ВАЖНОЕ ИЗ НОВОСТЕЙ':'IMPORTANT NEWS')+'*\n';news.articles.slice(0,2).forEach(function(a){msg+='• '+String(a.title||'News').replace(/[\r\n]+/g,' ').slice(0,110)+'\n';});msg+='\n';}
     msg+='🤖 *AI*\n'+(analysis?(lang==='ru'?'Главное сегодня — смотреть на изменение риска, а не на отдельную красную свечу.':'Today, focus on the change in portfolio risk rather than a single red candle.'):(lang==='ru'?'AI подключится после первого анализа.':'AI context will improve after the first analysis.'))+'\n\n';
     msg+='❄️ *'+(lang==='ru'?'ДЕНЬ БЕЗ ПАНИКИ':'NO-PANIC DAY')+'*\n'+(analysis&&(!delta||Math.abs(delta.deltaRisk)<10)?(lang==='ru'?'Критического ухудшения не видно. Срочных действий не требуется.':'No critical deterioration is visible. No urgent action is required.'):(lang==='ru'?'Ситуация требует внимания, но решение лучше принимать после проверки причин.':'The situation deserves attention, but review the causes before acting.')); if(firstBriefing){msg+='\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n'+(lang==='ru'?'👋 *Вот как будет выглядеть твоё утро*\n\nКаждый день в 08:00 Void Node присылает такую сводку.\n\n🎯 *Зачем это каждый день*\n\nОдин анализ — это диагноз.\n\nРезультат — в контроле.\n\nЯ смотрю портфель каждое утро, ловлю движения в моменте и раз в месяц показываю прогресс.\n\nЭто и есть работа тренера.':'👋 *This is what your morning will look like*\n\nEvery day at 08:00 Void Node sends this briefing.\n\n🎯 *Why every day*\n\nOne analysis is a diagnosis.\n\nResults come from control.\n\nI look at the portfolio every morning, watch changes in context and show progress once a month.\n\nThat is the work of a coach.')+'\n\n'+(lang==='ru'?'Сейчас у тебя Trial — 3 анализа портфеля за всё время.':'You are on Trial — 3 portfolio analyses for life.');}
@@ -5641,64 +5928,127 @@ function verifyCryptoSignature(req) {
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
+async function processPendingPaymentEffects(invoiceId, isLeaseHealthy) {
+    function assertLease() {
+        if (typeof isLeaseHealthy === 'function' && !isLeaseHealthy()) throw new Error('Payment processing lease lost');
+    }
+    var pendingKey = 'payment_effects_pending_' + invoiceId;
+    var raw = await getData(pendingKey);
+    if (!raw) return false;
+    var effects = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    var chatId = parsePaymentChatId(effects && effects.chatId);
+    var planId = String(effects && effects.planId || '');
+    if (chatId === null || !PLANS[planId]) throw new Error('Invalid pending payment effects');
+    var ttl = 180 * 24 * 60 * 60;
+    async function isDone(stage) {
+        return Boolean(await getData('payment_effect_' + stage + '_' + invoiceId));
+    }
+    async function markDone(stage) {
+        await setData('payment_effect_' + stage + '_' + invoiceId, '1', ttl);
+    }
+
+    if (!await isDone('referral')) {
+        assertLease();
+        var bonusResult = await REFERRAL.processPlanActivation(chatId, planId, invoiceId);
+        if (bonusResult) {
+            var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
+            var bonusMessage = '🎁 ' + (referrerLang === 'ru'
+                ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
+                : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
+            var referrerNotice = await sendMessage(bonusResult.referrerId, bonusMessage);
+            assertLease();
+            if (!referrerNotice || referrerNotice.ok !== true) throw new Error('Referral bonus notification failed');
+        }
+        assertLease();
+        await markDone('referral');
+    }
+
+    var lang = await getData('lang_' + chatId) || 'ru';
+    var plan = PLANS[planId];
+    if (!await isDone('user_notice')) {
+        assertLease();
+        var paymentNotice = await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
+        assertLease();
+        if (!paymentNotice || paymentNotice.ok !== true) throw new Error('Payment activation notification failed');
+        await markDone('user_notice');
+    }
+    if (!await isDone('menu')) {
+        assertLease();
+        await showMainMenu(chatId);
+        assertLease();
+        await markDone('menu');
+    }
+    if (!await isDone('history')) {
+        assertLease();
+        await addHistory(chatId, '💳 Payment', plan.name + ' activated');
+        assertLease();
+        await markDone('history');
+    }
+    await deleteData(pendingKey);
+    return true;
+}
+
 async function handleCryptoWebhook(request) {
     try {
         if (!verifyCryptoSignature(request)) return { status: 401, error: 'Unauthorized' };
         var update = request.body;
         if (!update || update.update_type !== 'invoice_paid') return { status: 200 };
-        if (update.request_date) {
-            var requestAge = Math.abs(Date.now() - new Date(update.request_date).getTime());
-            if (!isFinite(requestAge) || requestAge > 72 * 60 * 60 * 1000) return { status: 400, error: 'Stale webhook' };
+        if (!isFreshWebhookDate(update.request_date)) return { status: 400, error: 'Invalid or stale webhook date' };
+        var invoice = parseCryptoWebhookPayload(update.payload);
+        if (!invoice) return { status: 400, error: 'Invalid invoice payload' };
+        var invoiceId = parseCryptoInvoiceId(invoice.invoice_id || invoice.id);
+        if (!invoiceId) return { status: 400, error: 'Invalid invoice id' };
+
+        // Serialize concurrent deliveries for this invoice; fail closed if Redis is unavailable.
+        var paymentLockKey = 'payment_processing_' + invoiceId;
+        var paymentLockToken = await VOID_KV.acquireLock(paymentLockKey, 300);
+        if (!paymentLockToken) return { status: 503, error: 'Payment processing busy or storage unavailable' };
+        var paymentLease = startLeaseHeartbeat(
+            function() { return VOID_KV.renewLock(paymentLockKey, paymentLockToken, 300); },
+            100000
+        );
+        try {
+            var processedKey = 'payment_processed_' + invoiceId;
+            if (await getData(processedKey)) {
+                if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
+                await processPendingPaymentEffects(invoiceId, function() { return paymentLease.isHealthy(); });
+                return { status: 200, duplicate: true };
+            }
+
+            var paymentRecord = await getData('payment_' + invoiceId);
+            if (!paymentRecord) return { status: 400, error: 'Unknown invoice' };
+            paymentRecord = typeof paymentRecord === 'string' ? JSON.parse(paymentRecord) : paymentRecord;
+
+            var invoiceError = validateCryptoPaidInvoice(invoice, paymentRecord, invoiceId);
+            if (invoiceError) return { status: 400, error: invoiceError };
+
+            var chatId = parsePaymentChatId(paymentRecord.chatId);
+            var planId = String(paymentRecord.planId || '');
+            if (chatId === null || !PLANS[planId]) return { status: 400, error: 'Invalid payment metadata' };
+
+            if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
+            var activatedAt = Date.now();
+            var paidRecord = { ...paymentRecord, status: 'paid', paidAt: activatedAt };
+            var planRecord = {
+                planId: planId,
+                activatedAt: activatedAt,
+                durationMs: PLANS[planId].duration * 24 * 60 * 60 * 1000
+            };
+            var effectsRecord = { chatId: String(chatId), planId: planId, invoiceId: invoiceId, createdAt: activatedAt };
+            var activated = await VOID_KV.activatePaidInvoice(invoiceId, chatId, planId, planRecord, paidRecord, effectsRecord);
+            if (!activated) {
+                if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
+                await processPendingPaymentEffects(invoiceId, function() { return paymentLease.isHealthy(); });
+                return { status: 200, duplicate: true };
+            }
+            await invalidatePlanCache(chatId);
+            if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
+            await processPendingPaymentEffects(invoiceId, function() { return paymentLease.isHealthy(); });
+            return { status: 200 };
+        } finally {
+            paymentLease.stop();
+            await VOID_KV.releaseLock(paymentLockKey, paymentLockToken);
         }
-        var payload = update.payload;
-        if (typeof payload === 'string') {
-            try { payload = JSON.parse(payload); }
-            catch (e) { console.error('CryptoBot payload JSON parse error:', e.message); return { status: 400, error: 'Invalid invoice payload' }; }
-        }
-        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { status: 400, error: 'Invalid invoice payload' };
-        var invoice = payload;
-        var invoiceId = String(invoice.invoice_id || invoice.id || '');
-        if (!invoiceId) return { status: 400, error: 'Missing invoice id' };
-
-        // Idempotency: the same paid invoice must activate a plan only once.
-        var processedKey = 'payment_processed_' + invoiceId;
-        if (await getData(processedKey)) return { status: 200, duplicate: true };
-
-        var paymentRecord = await getData('payment_' + invoiceId);
-        if (!paymentRecord) return { status: 400, error: 'Unknown invoice' };
-        paymentRecord = typeof paymentRecord === 'string' ? JSON.parse(paymentRecord) : paymentRecord;
-        if (paymentRecord.status === 'paid') return { status: 200, duplicate: true };
-
-        if (String(invoice.status || 'paid') !== 'paid') return { status: 400, error: 'Invoice is not paid' };
-        if (String(invoice.asset || '').toUpperCase() !== String(paymentRecord.asset).toUpperCase()) return { status: 400, error: 'Asset mismatch' };
-        if (String(invoice.amount) !== String(paymentRecord.amount)) return { status: 400, error: 'Amount mismatch' };
-
-        var chatId = parseInt(paymentRecord.chatId, 10);
-        var planId = String(paymentRecord.planId || '');
-        if (!Number.isSafeInteger(chatId) || !PLANS[planId]) return { status: 400, error: 'Invalid payment metadata' };
-
-        // Mark before side effects; retries will not double-credit.
-        await setData(processedKey, JSON.stringify({ processedAt: Date.now(), chatId: chatId, planId: planId }), 180 * 24 * 60 * 60);
-        await setData('payment_' + invoiceId, JSON.stringify({ ...paymentRecord, status: 'paid', paidAt: Date.now() }), 180 * 24 * 60 * 60);
-
-        var lang = await getData('lang_' + chatId) || 'ru';
-        var plan = await activatePlan(chatId, planId);
-        if (plan) {
-            try {
-                var bonusResult = await REFERRAL.processPlanActivation(chatId, planId);
-                if (bonusResult) {
-                    var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
-                    var bonusMessage = '🎁 ' + (referrerLang === 'ru'
-                        ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
-                        : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
-                    await sendMessage(bonusResult.referrerId, bonusMessage);
-                }
-            } catch (e) { console.error('Referral bonus error:', e.message); }
-            await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
-            await showMainMenu(chatId);
-            await addHistory(chatId, '💳 Payment', plan.name + ' activated');
-        }
-        return { status: 200 };
     } catch (error) {
         console.error('Webhook error:', error.message);
         return { status: 500, error: 'Webhook processing failed' };
@@ -5738,14 +6088,22 @@ async function checkMonthlyDNA(){
 function runTaskWithRecovery(task, name, interval) {
     var run = async function() {
         var lock = null;
+        var lease = null;
+        var lockKey = 'worker_lock_' + name;
+        var lockTtl = Math.max(60, Math.ceil(interval / 1000) + 30);
         try {
-            lock = await VOID_KV.acquireLock('worker_lock_' + name, Math.max(60, Math.ceil(interval / 1000) + 30));
+            lock = await VOID_KV.acquireLock(lockKey, lockTtl);
             if (!lock) return;
+            lease = startLeaseHeartbeat(
+                function() { return VOID_KV.renewLock(lockKey, lock, lockTtl); },
+                Math.max(5000, Math.floor(lockTtl * 1000 / 3))
+            );
             await task();
         } catch (error) {
             console.error('❌ ' + name + ' error:', error.message);
         } finally {
-            if (lock) await VOID_KV.releaseLock('worker_lock_' + name, lock);
+            if (lease) lease.stop();
+            if (lock) await VOID_KV.releaseLock(lockKey, lock);
             setTimeout(run, interval);
         }
     };
@@ -5782,25 +6140,40 @@ app.get('/health', function(req, res) {
 });
 
 app.post('/webhook', async function(req, res) {
-    // Telegram webhook intentionally has no mandatory secret-token gate.
-    // This matches the original deployment contract and avoids 401 loops.
+    var receivedSecret = req.get('X-Telegram-Bot-Api-Secret-Token');
+    var expectedSecret = Buffer.from(TELEGRAM_WEBHOOK_SECRET, 'utf8');
+    var providedSecret = Buffer.from(String(receivedSecret || ''), 'utf8');
+    if (providedSecret.length !== expectedSecret.length || !crypto.timingSafeEqual(providedSecret, expectedSecret)) {
+        return res.sendStatus(401);
+    }
     console.log('📩 Webhook called!');
+    var update = req.body;
+    if (!update || !isValidTelegramUpdateId(update.update_id)) return res.sendStatus(400);
+    var updateId = String(update.update_id);
+    var doneKey = 'telegram_update_done_' + updateId;
+    var lockKey = 'telegram_update_processing_' + updateId;
+    var lockToken = await VOID_KV.acquireLock(lockKey, 300);
+    if (!lockToken) return res.sendStatus(503);
+    var updateLease = startLeaseHeartbeat(
+        function() { return VOID_KV.renewLock(lockKey, lockToken, 300); },
+        100000
+    );
     try {
-        var update = req.body;
-        if (update && update.update_id !== undefined) {
-            var updateKey = 'last_update_' + String(update.update_id);
-            if (await getData(updateKey)) return res.sendStatus(200);
-            await setData(updateKey, '1', 86400);
-        }
+        if (await getData(doneKey)) return res.sendStatus(200);
         if (update.callback_query) {
             await handleCallback(update);
         } else if (update.message) {
             await handleMessage(update);
         }
-        res.sendStatus(200);
+        if (!updateLease.isHealthy()) return res.sendStatus(503);
+        await setData(doneKey, '1', 7 * 24 * 60 * 60);
+        return res.sendStatus(200);
     } catch (error) {
-        console.error('Webhook error:', error);
-        res.sendStatus(500);
+        console.error('Webhook processing failed:', error.message);
+        return res.sendStatus(500);
+    } finally {
+        updateLease.stop();
+        await VOID_KV.releaseLock(lockKey, lockToken);
     }
 });
 
@@ -5819,11 +6192,11 @@ async function configureTelegramWebhook() {
     var baseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://voidnode.onrender.com';
     var webhookUrl = String(baseUrl).replace(/\/$/, '') + '/webhook';
     try {
-        var response = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/setWebhook', {
+        var response = await fetchWithTimeout('https://api.telegram.org/bot' + BOT_TOKEN + '/setWebhook', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message', 'callback_query'] })
-        });
+            body: JSON.stringify({ url: webhookUrl, secret_token: TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['message', 'callback_query'] })
+        }, 10000, 'Telegram setWebhook');
         var data = await response.json();
         console.log('📡 Telegram webhook configured:', JSON.stringify(data), 'URL=' + webhookUrl);
     } catch (error) {
@@ -5834,6 +6207,9 @@ async function configureTelegramWebhook() {
 app.listen(PORT, '0.0.0.0', function() {
     console.log('✅ Bot started on port ' + PORT);
     console.log('📡 Webhook URL: /webhook');
+    recoverPendingDisconnects().catch(function() {
+        console.warn('Pending exchange disconnect recovery could not be completed.');
+    });
     configureTelegramWebhook();
 });
 
