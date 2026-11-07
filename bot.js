@@ -5535,7 +5535,7 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
 async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
     var isRu = lang === 'ru';
     try {
-        var cacheKey = 'news_single_' + coin + '_' + (isRu ? 'ru' : 'en');
+        var cacheKey = 'news_single_v2_' + coin + '_' + (isRu ? 'ru' : 'en');
         var cached = await getData(cacheKey);
         if (cached) {
             var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
@@ -5547,12 +5547,13 @@ async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
         var url = 'https://newsapi.org/v2/everything?q=' + coin + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=5&apiKey=' + NEWS_API_KEY;
         var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
         var data = await response.json();
-        if (data.status !== 'ok' || !data.articles || data.articles.length === 0) {
+        var relevantArticles = data.status === 'ok' ? filterRelevantCryptoNews(data.articles) : [];
+        if (!relevantArticles.length) {
             await sendUpdatedMessage(chatId, getText(lang, 'news_empty'), null, 'Markdown', messageId);
             return;
         }
-        await setData(cacheKey, JSON.stringify({ articles: data.articles, timestamp: Date.now() }), 300);
-        await sendNewsReport(chatId, data.articles, coin, lang, messageId);
+        await setData(cacheKey, JSON.stringify({ articles: relevantArticles, timestamp: Date.now() }), 300);
+        await sendNewsReport(chatId, relevantArticles, coin, lang, messageId);
     } catch (error) {
         console.error('News error:', error);
         await sendUpdatedMessage(chatId, '❌ Error getting news. Please try again later.', null, 'Markdown', messageId);
