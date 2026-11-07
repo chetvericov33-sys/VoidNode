@@ -18,6 +18,8 @@ assert.strictEqual(isFreshWebhookDate('2026-11-07T12:04:59Z', now), true);
 assert.strictEqual(isFreshWebhookDate('2026-11-07T12:05:01Z', now), false);
 assert.strictEqual(isFreshWebhookDate('not-a-date', now), false);
 assert.strictEqual(isFreshWebhookDate(undefined, now), true);
+assert.strictEqual(isFreshWebhookDate(123, now), false);
+assert.strictEqual(parseCryptoInvoiceId(Number.MAX_SAFE_INTEGER + 1), null);
 
 assert.strictEqual(parseCryptoInvoiceId(12345), '12345');
 assert.strictEqual(parseCryptoInvoiceId('00123'), '00123');
