@@ -1,11 +1,21 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { withTimeout, BoundedTTLCache } = require('./runtime_resilience');
+const { withTimeout, fetchWithTimeout, BoundedTTLCache } = require('./runtime_resilience');
 
 async function run() {
     assert.equal(await withTimeout(Promise.resolve('ok'), 50, 'test'), 'ok');
     await assert.rejects(withTimeout(new Promise(resolve => setTimeout(resolve, 50)), 5, 'slow'), /slow timeout/);
+
+    const originalFetch = global.fetch;
+    let receivedSignal = false;
+    global.fetch = (url, options) => new Promise((resolve, reject) => {
+        receivedSignal = options.signal instanceof AbortSignal;
+        options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+    await assert.rejects(fetchWithTimeout('https://example.invalid', {}, 5, 'test fetch'), /test fetch timeout/);
+    assert.equal(receivedSignal, true);
+    global.fetch = originalFetch;
 
     const cache = new BoundedTTLCache({ maxEntries: 2, defaultTtlMs: 20 });
     cache.set('a', 0);
