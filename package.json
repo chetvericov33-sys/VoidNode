@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node bot.js",
-    "test": "node --check bot.js && node ai_intent.test.js && node ai_completion.test.js && node news_disclosure.test.js && node news_relevance.test.js && node crypto_news.test.js && node risk_engine.test.js && node market_data.test.js && node contract_check.test.js && node handler_audit.test.js && node handler_help_fix.test.js && node runtime_resilience.test.js && node disconnect_storage.test.js && node webhook_safety.test.js && node referral_storage.test.js && node url_safety.test.js && node exchange_safety_check.js",
+    "test": "node --check bot.js && node telegram_message.test.js && node ai_intent.test.js && node ai_completion.test.js && node news_disclosure.test.js && node news_relevance.test.js && node crypto_news.test.js && node risk_engine.test.js && node market_data.test.js && node contract_check.test.js && node handler_audit.test.js && node handler_help_fix.test.js && node runtime_resilience.test.js && node disconnect_storage.test.js && node webhook_safety.test.js && node referral_storage.test.js && node url_safety.test.js && node exchange_safety_check.js",
     "test:integration:redis": "node redis_integration.test.js"
   },
   "dependencies": {
