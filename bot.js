@@ -5064,7 +5064,16 @@ async function handleMessage(update) {
                 await sendTyping(chatId);
                 await sendMessage(chatId, '🔍 Проверяю ключи без сохранения...');
                 var selectedExchange = await getData('connect_exchange_'+chatId) || 'binance';
-                var exchange = await connectExchange(selectedExchange, apiKey, secretKey, chatId);
+                var exchange;
+                try {
+                    exchange = await connectExchange(selectedExchange, apiKey, secretKey, chatId);
+                } catch (exchangeError) {
+                    console.warn('Exchange credential validation failed for ' + selectedExchange + '. Details suppressed.');
+                    await setState(chatId, 'idle');
+                    await deleteData('connect_exchange_' + chatId);
+                    await sendMessage(chatId, '❌ Не удалось проверить ключи. Они не сохранены. Проверь API key, secret и права Read-only на бирже, затем попробуй снова.');
+                    return;
+                }
                 var encryptedApiKey = encrypt(apiKey);
                 var encryptedSecretKey = encrypt(secretKey);
                 if (!encryptedApiKey || !encryptedSecretKey) throw new Error('Credential encryption failed');
