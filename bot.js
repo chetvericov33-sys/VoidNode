@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
-const { withTimeout, BoundedTTLCache } = require('./runtime_resilience');
+const { withTimeout, fetchWithTimeout, BoundedTTLCache } = require('./runtime_resilience');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -1563,14 +1563,14 @@ async function createCryptoInvoice(chatId, planId, amountRub) {
         hidden_message: '✅ ' + plan.name + ' activated! Thank you! 🙏'
     };
     try {
-        var response = await fetch(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Crypto-Pay-API-Token': CRYPTOBOT_TOKEN
             },
             body: JSON.stringify(body)
-        });
+        }, 12000, 'CryptoBot create invoice');
         var data = await response.json();
         if (data.ok) {
             await setData('payment_' + data.result.invoice_id, JSON.stringify({
@@ -1970,7 +1970,7 @@ async function checkContractAdvanced(address) {
     try {
         if (ETHERSCAN_API_KEY) {
             var url = 'https://api.etherscan.io/api?module=contract&action=getabi&address=' + address + '&apikey=' + ETHERSCAN_API_KEY;
-            var resp = await fetch(url);
+            var resp = await fetchWithTimeout(url, {}, 10000, 'External API request');
             var data = await resp.json();
             
             if (data.status === '1' && data.result) {
@@ -1997,7 +1997,7 @@ async function checkContractAdvanced(address) {
         if (ETHERSCAN_API_KEY) {
             try {
                 var txUrl = 'https://api.etherscan.io/api?module=account&action=txlist&address=' + address + '&page=1&offset=5&sort=desc&apikey=' + ETHERSCAN_API_KEY;
-                var txResp = await fetch(txUrl);
+                var txResp = await fetchWithTimeout(txUrl, {}, 10000, 'Etherscan transaction request');
                 var txData = await txResp.json();
                 
                 if (txData.status === '1' && txData.result && txData.result.length < 3) {
@@ -2010,7 +2010,7 @@ async function checkContractAdvanced(address) {
 
         try {
             var dexUrl = 'https://api.dexscreener.com/latest/dex/search?q=' + address;
-            var dexResp = await fetch(dexUrl);
+            var dexResp = await fetchWithTimeout(dexUrl, {}, 10000, 'DexScreener request');
             var dexData = await dexResp.json();
             
             if (dexData.pairs && dexData.pairs.length > 0) {
@@ -2098,7 +2098,7 @@ async function checkWalletAdvanced(address) {
     try {
         if (ETHERSCAN_API_KEY) {
             var balUrl = 'https://api.etherscan.io/api?module=account&action=balance&address=' + address + '&tag=latest&apikey=' + ETHERSCAN_API_KEY;
-            var balResp = await fetch(balUrl);
+            var balResp = await fetchWithTimeout(balUrl, {}, 10000, 'Etherscan balance request');
             var balData = await balResp.json();
             
             if (balData.status === '1') {
@@ -2109,7 +2109,7 @@ async function checkWalletAdvanced(address) {
             }
 
             var tokenUrl = 'https://api.etherscan.io/api?module=account&action=tokentx&address=' + address + '&page=1&offset=100&sort=desc&apikey=' + ETHERSCAN_API_KEY;
-            var tokenResp = await fetch(tokenUrl);
+            var tokenResp = await fetchWithTimeout(tokenUrl, {}, 10000, 'Etherscan token request');
             var tokenData = await tokenResp.json();
             
             if (tokenData.status === '1') {
@@ -2130,7 +2130,7 @@ async function checkWalletAdvanced(address) {
             }
 
             var txUrl = 'https://api.etherscan.io/api?module=account&action=txlist&address=' + address + '&page=1&offset=10&sort=desc&apikey=' + ETHERSCAN_API_KEY;
-            var txResp = await fetch(txUrl);
+            var txResp = await fetchWithTimeout(txUrl, {}, 10000, 'Etherscan transaction request');
             var txData = await txResp.json();
             
             if (txData.status === '1') {
@@ -2144,7 +2144,7 @@ async function checkWalletAdvanced(address) {
             }
 
             var codeUrl = 'https://api.etherscan.io/api?module=proxy&action=eth_getCode&address=' + address + '&tag=latest&apikey=' + ETHERSCAN_API_KEY;
-            var codeResp = await fetch(codeUrl);
+            var codeResp = await fetchWithTimeout(codeUrl, {}, 10000, 'Etherscan contract code request');
             var codeData = await codeResp.json();
             
             if (codeData.result && codeData.result !== '0x') {
@@ -2934,11 +2934,9 @@ async function handleTrendClick(chatId, data, lang, messageId) {
         var dataObj = await getCachedCoinGecko(coinId);
         if (!dataObj) {
             var url = 'https://api.coingecko.com/api/v3/coins/' + coinId + '?x_cg_demo_api_key=' + COINGECKO_API_KEY;
-            var response = await fetch(url, {
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
+            var response = await fetchWithTimeout(url, {
+                headers: { 'Accept': 'application/json' }
+            }, 10000, 'CoinGecko coin request');
             if (!response.ok) {
                 await sendUpdatedMessage(chatId, '❌ Data for ' + coin + ' temporarily unavailable.', null, 'Markdown', messageId);
                 return;
@@ -3093,7 +3091,7 @@ async function handleContractSearch(chatId, address, lang, messageId) {
     await sendTyping(chatId);
     try {
         var dexUrl = 'https://api.dexscreener.com/latest/dex/search?q=' + address;
-        var response = await fetch(dexUrl);
+        var response = await fetchWithTimeout(dexUrl, {}, 10000, 'DexScreener request');
         var data = await response.json();
         var message = '📄 CONTRACT SEARCH RESULT\n──────\n\n';
         message += '📌 Address: ' + address.slice(0, 10) + '...' + address.slice(-6) + '\n\n';
@@ -3373,7 +3371,7 @@ async function handleDEXCheck(chatId, address, lang, messageId) {
     
     try {
         var dexUrl = 'https://api.dexscreener.com/latest/dex/search?q=' + address;
-        var response = await fetch(dexUrl);
+        var response = await fetchWithTimeout(dexUrl, {}, 10000, 'DexScreener request');
         var data = await response.json();
         
         var message = '🔍 *DEX ПРОВЕРКА*\n──────\n\n';
@@ -3867,7 +3865,7 @@ class NewsManager {
                     if (Date.now() - parsed.timestamp < 300000) return parsed.articles;
                 }
                 var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=3&apiKey=' + NEWS_API_KEY;
-                var response = await fetch(url);
+                var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
                 var data = await response.json();
                 var articles = [];
                 if (data.status === 'ok' && data.articles) {
@@ -5362,7 +5360,7 @@ async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
             }
         }
         var url = 'https://newsapi.org/v2/everything?q=' + coin + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=5&apiKey=' + NEWS_API_KEY;
-        var response = await fetch(url);
+        var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
         var data = await response.json();
         if (data.status !== 'ok' || !data.articles || data.articles.length === 0) {
             await sendUpdatedMessage(chatId, getText(lang, 'news_empty'), null, 'Markdown', messageId);
@@ -5444,7 +5442,7 @@ async function handleCalendarCommand(chatId, lang, messageId) {
         var from = today.toISOString().split('T')[0];
         var to = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
         var url = 'https://finnhub.io/api/v1/calendar/economic?from=' + from + '&to=' + to + '&token=' + FINNHUB_API_KEY;
-        var response = await fetch(url);
+        var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
         var data = await response.json();
         var events = [];
         if (data.economicCalendar && data.economicCalendar.length > 0) {
@@ -5640,7 +5638,7 @@ async function checkAlerts() {
                     var cacheRaw = await getData(cacheKey), events = [];
                     if (cacheRaw) { try { events = JSON.parse(cacheRaw); } catch(e) { events = []; } }
                     if (!Array.isArray(events) || events.length === 0) {
-                        var response = await fetch('https://finnhub.io/api/v1/calendar/economic?from=' + from + '&to=' + to + '&token=' + FINNHUB_API_KEY);
+                        var response = await fetchWithTimeout('https://finnhub.io/api/v1/calendar/economic?from=' + from + '&to=' + to + '&token=' + FINNHUB_API_KEY, {}, 10000, 'Finnhub economic calendar');
                         var data = await response.json();
                         events = Array.isArray(data.economicCalendar) ? data.economicCalendar : [];
                         await setData(cacheKey, JSON.stringify(events), 900);
