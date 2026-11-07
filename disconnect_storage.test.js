@@ -16,7 +16,7 @@ async function run() {
     const redis = {
         async eval(script, keys, args) {
             calls.push({ script, keys, args });
-            if (keys.length === 2) {
+            if (script.includes("redis.call('SET', KEYS[1], ARGV[1])")) {\n                values.set(keys[0], args[0]);\n                values.delete(keys[1]);\n                return 1;\n            }\n            if (keys.length === 2) {
                 assert.match(script, /GET', KEYS\[1\]\) ~= ARGV\[1\]/);
                 if (values.get(keys[0]) !== args[0]) return 0;
                 values.set(keys[1], args[1]);
@@ -54,7 +54,17 @@ async function run() {
     assert.equal(await deletePendingDisconnectIfMatches(redis, passthroughTimeout, 42, 'pending-new'), true);
     assert.equal(values.has('pending_disconnect_42'), false);
 
-    // SCAN walks every page and returns the matching keys.
+
+    // Reconnect must atomically install new credentials and clear any pending disconnect.
+    values.set('pending_disconnect_42', 'pending-during-reconnect');
+    assert.equal(await replaceUserAndClearPending(redis, passthroughTimeout, 42, 'user-v3'), true);
+    assert.equal(values.get('user_42'), 'user-v3');
+    assert.equal(values.has('pending_disconnect_42'), false);
+
+    // A delayed finalizer holding the previous user snapshot cannot delete the new credentials.
+    assert.equal(await createPendingDisconnectIfUserMatches(redis, passthroughTimeout, 42, 'user-v2', 'stale-pending'), false);
+    assert.equal(values.get('user_42'), 'user-v3');
+\n    // SCAN walks every page and returns the matching keys.
     assert.deepEqual(await scanKeysByPrefix(redis, passthroughTimeout, 'pending_disconnect_'), [
         'pending_disconnect_1',
         'pending_disconnect_2'
