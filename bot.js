@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
+const { withTimeout, BoundedTTLCache } = require('./runtime_resilience');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -145,20 +146,11 @@ var CONFIG = {
 // 1. REDIS STORAGE
 // ============================================================
 
-function withTimeout(promise, ms, label) {
-    var timeoutMs = Number(ms || 8000);
-    return Promise.race([
-        promise,
-        new Promise(function(_, reject) {
-            setTimeout(function() { reject(new Error((label || 'Operation') + ' timeout after ' + timeoutMs + 'ms')); }, timeoutMs);
-        })
-    ]);
-}
 
 class RedisStorage {
     constructor() {
         this.redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
-        this.localCache = new Map();
+        this.localCache = new BoundedTTLCache({ maxEntries: 1000, defaultTtlMs: 5 * 60 * 1000 });
         this.isRedisAvailable = true;
         this.criticalPrefixes = [
             'user_', 'plan_', 'usage_', 'panic_', 'panic_price_',
@@ -179,7 +171,7 @@ class RedisStorage {
         try {
             if (!this.isRedisAvailable) {
                 if (this.isCritical(key)) throw new Error('Critical Redis storage unavailable');
-                return this.localCache.get(key) || null;
+                return this.localCache.get(key);
             }
             var data = await withTimeout(this.redis.get(key), 8000, 'Redis GET');
             if (data !== null && data !== undefined) return data;
@@ -196,11 +188,11 @@ class RedisStorage {
         try {
             if (!this.isRedisAvailable) {
                 if (this.isCritical(key)) throw new Error('Critical Redis storage unavailable');
-                this.localCache.set(key, value); return;
+                this.localCache.set(key, value, ttl); return;
             }
-            await withTimeout(this.redis.set(key, value), 8000, 'Redis SET');
-            if (ttl) await withTimeout(this.redis.expire(key, ttl), 8000, 'Redis EXPIRE');
-            if (!this.isCritical(key)) this.localCache.set(key, value);
+            if (ttl) await withTimeout(this.redis.set(key, value, { ex: Math.max(1, Math.floor(Number(ttl))) }), 8000, 'Redis SET EX');
+            else await withTimeout(this.redis.set(key, value), 8000, 'Redis SET');
+            if (!this.isCritical(key)) this.localCache.set(key, value, ttl);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis set error:', error.message);
@@ -238,19 +230,24 @@ class RedisStorage {
     async atomicIncrementWithLimit(key, limit, ttlSeconds) {
         if (limit === Infinity) return { allowed: true, count: 0 };
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
-        var count = await withTimeout(this.redis.incr(key), 8000, 'Redis INCR');
-        if (count === 1 && ttlSeconds) await withTimeout(this.redis.expire(key, ttlSeconds), 8000, 'Redis EXPIRE');
-        if (count > limit) {
-            await withTimeout(this.redis.decr(key), 8000, 'Redis DECR');
-            return { allowed: false, count: count - 1 };
-        }
-        return { allowed: true, count: count };
+        var result = await withTimeout(this.redis.eval(
+            "local count = redis.call('INCR', KEYS[1]); " +
+            "if count == 1 and tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])); end; " +
+            "if count > tonumber(ARGV[1]) then redis.call('DECR', KEYS[1]); return {0, count - 1}; end; " +
+            "return {1, count};",
+            [key], [limit, ttlSeconds || 0]
+        ), 8000, 'Redis atomic increment');
+        return { allowed: Number(result[0]) === 1, count: Number(result[1]) };
     }
     async incrementValue(key, amount, ttlSeconds) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
         try {
-            const value = await this.redis.incrby(key, Math.round(Number(amount)));
-            if (value === Math.round(Number(amount)) && ttlSeconds) await this.redis.expire(key, ttlSeconds);
+            const value = await withTimeout(this.redis.eval(
+                "local value = redis.call('INCRBY', KEYS[1], tonumber(ARGV[1])); " +
+                "if value == tonumber(ARGV[1]) and tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])); end; " +
+                "return value;",
+                [key], [Math.round(Number(amount)), ttlSeconds || 0]
+            ), 8000, 'Redis atomic increment value');
             return Number(value);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
@@ -262,7 +259,7 @@ class RedisStorage {
         if (!this.isRedisAvailable) return null;
         var token = crypto.randomBytes(16).toString('hex');
         try {
-            var result = await this.redis.set(key, token, { nx: true, ex: ttlSeconds });
+            var result = await withTimeout(this.redis.set(key, token, { nx: true, ex: ttlSeconds }), 8000, 'Redis acquire lock');
             return result === 'OK' || result === true ? token : null;
         } catch (e) { return null; }
     }
@@ -306,7 +303,7 @@ class RedisStorage {
     async releaseLock(key, token) {
         if (!token || !this.isRedisAvailable) return;
         try {
-            await this.redis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [key], [token]);
+            await withTimeout(this.redis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [key], [token]), 8000, 'Redis release lock');
         } catch (e) {}
     }
 }
