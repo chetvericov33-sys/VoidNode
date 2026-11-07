@@ -197,7 +197,7 @@ class RedisStorage {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis set error:', error.message);
             if (this.isCritical(key)) throw new Error('Critical storage unavailable');
-            this.localCache.set(key, value);
+            this.localCache.set(key, value, ttl);
         }
     }
     async delete(key) {
