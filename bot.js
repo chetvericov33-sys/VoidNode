@@ -39,7 +39,6 @@ const DEMO_START_USDT = Number(process.env.DEMO_START_USDT || 10000);
 // INLINE SECURITY MODULES — single-file release
 // ============================================================
 const net = require('net');
-const dns = require('dns').promises;
 
 function isPrivateIp(ip) {
     if (net.isIPv4(ip)) {
@@ -62,11 +61,6 @@ function validateUrl(input) {
         if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || isPrivateIp(hostname)) return {ok:false, reason:'private-host'};
         return {ok:true, url};
     } catch { return {ok:false, reason:'syntax'}; }
-}
-async function resolveAndValidatePublicHost(hostname) {
-    const addresses = await dns.lookup(hostname, {all:true, verbatim:true});
-    if (!addresses.length || addresses.some(x => isPrivateIp(x.address))) throw new Error('Host resolves to a private/local address');
-    return addresses.map(x => x.address);
 }
 function keyFromSecret(secret) {
     if (typeof secret !== 'string' || secret.length < 32) throw new Error('ENCRYPTION_KEY must be at least 32 characters');
