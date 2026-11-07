@@ -4630,14 +4630,16 @@ console.log('📡 OpenRouter key: ' + (HAS_OPENROUTER ? '✅ Found' : '❌ Not f
 console.log('🧠 Current model: ' + CURRENT_AI_MODEL);
 
 function scheduleDisconnectFinalization(chatId, pendingRaw, expectedUserRaw, delayMs) {
-    setTimeout(async function() {
+    var timer = setTimeout(async function() {
         try {
             var completed = await VOID_KV.completeDisconnect(chatId, pendingRaw, expectedUserRaw);
             if (completed) console.log('🔌 Exchange disconnected after grace period for ' + chatId);
         } catch (e) {
-            console.error('Delayed disconnect failed safely:', e.message);
+            console.warn('Delayed disconnect will retry after storage recovery.');
+            scheduleDisconnectFinalization(chatId, pendingRaw, expectedUserRaw, 30000);
         }
     }, Math.max(0, Number(delayMs) || 0));
+    if (timer && typeof timer.unref === 'function') timer.unref();
 }
 
 async function recoverPendingDisconnects() {
@@ -4674,7 +4676,9 @@ async function scheduleDisconnect(chatId) {
     }
     var stored = typeof raw === 'string' ? raw : JSON.stringify(raw);
     var pendingRecord = JSON.stringify({ userRecord: stored, scheduledAt: Date.now() });
-    await setData('pending_disconnect_' + chatId, pendingRecord, 86400);
+    // Keep the pending operation durable until atomic completion or undo.
+    // A finite TTL could expire during a prolonged Redis outage and strand user credentials.
+    await setData('pending_disconnect_' + chatId, pendingRecord);
     // Start the finalization timer immediately after persisting the pending record.
     // Telegram delivery failures must not leave credentials pending indefinitely.
     scheduleDisconnectFinalization(chatId, pendingRecord, stored, 10000);
