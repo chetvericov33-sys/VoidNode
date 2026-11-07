@@ -224,15 +224,17 @@ class RedisStorage {
             this.localCache.delete(key);
         }
     }
-    async list(prefix) {
+    async list(prefix, strict) {
         if (prefix === undefined) prefix = '';
         try {
             if (!this.isRedisAvailable) throw new Error('Redis unavailable');
             var keys = await withTimeout(this.redis.keys(prefix + '*'), 8000, 'Redis KEYS');
+            if (!Array.isArray(keys)) throw new Error('Redis KEYS returned invalid data');
             return keys.map(function(k) { return { name: k }; });
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis list error:', error.message);
+            if (strict) throw new Error('Critical storage listing unavailable');
             return [];
         }
     }
@@ -4639,21 +4641,27 @@ function scheduleDisconnectFinalization(chatId, pendingRaw, expectedUserRaw, del
 }
 
 async function recoverPendingDisconnects() {
-    var pendingKeys = await VOID_KV.list('pending_disconnect_');
-    for (var i = 0; i < pendingKeys.length; i++) {
-        var key = pendingKeys[i].name;
-        var chatId = Number(String(key).slice('pending_disconnect_'.length));
-        if (!Number.isSafeInteger(chatId)) continue;
-        var pendingRaw = await getData(key);
-        if (!pendingRaw) continue;
-        var pending;
-        try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
-        if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
-            await deleteData(key);
-            continue;
+    try {
+        var pendingKeys = await VOID_KV.list('pending_disconnect_', true);
+        for (var i = 0; i < pendingKeys.length; i++) {
+            var key = pendingKeys[i].name;
+            var chatId = Number(String(key).slice('pending_disconnect_'.length));
+            if (!Number.isSafeInteger(chatId)) continue;
+            var pendingRaw = await getData(key);
+            if (!pendingRaw) continue;
+            var pending;
+            try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
+            if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
+                await deleteData(key);
+                continue;
+            }
+            var remaining = 10000 - (Date.now() - Number(pending.scheduledAt));
+            scheduleDisconnectFinalization(chatId, pendingRaw, pending.userRecord, remaining);
         }
-        var remaining = 10000 - (Date.now() - Number(pending.scheduledAt));
-        scheduleDisconnectFinalization(chatId, pendingRaw, pending.userRecord, remaining);
+    } catch (error) {
+        console.warn('Pending exchange disconnect recovery will retry after storage recovery.');
+        var retryTimer = setTimeout(recoverPendingDisconnects, 30000);
+        if (retryTimer && typeof retryTimer.unref === 'function') retryTimer.unref();
     }
 }
 
@@ -4666,7 +4674,7 @@ async function scheduleDisconnect(chatId) {
     }
     var stored = typeof raw === 'string' ? raw : JSON.stringify(raw);
     var pendingRecord = JSON.stringify({ userRecord: stored, scheduledAt: Date.now() });
-    await setData('pending_disconnect_' + chatId, pendingRecord, 60);
+    await setData('pending_disconnect_' + chatId, pendingRecord, 86400);
     var lang = await getData('lang_' + chatId) || 'ru';
     await sendMessage(chatId, getText(lang, 'connect_undo'), {
         inline_keyboard: [
@@ -4685,8 +4693,13 @@ async function undoDisconnect(chatId) {
     }
     var pending;
     try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
-    if (!pending || typeof pending.userRecord !== 'string') {
+    if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
         await sendMessage(chatId, '⚠️ Не удалось безопасно восстановить подключение. Подключи биржу заново.');
+        return;
+    }
+    if (Date.now() - Number(pending.scheduledAt) >= 10000) {
+        try { await VOID_KV.completeDisconnect(chatId, pendingRaw, pending.userRecord); } catch (e) {}
+        await sendMessage(chatId, 'ℹ️ Окно отмены уже истекло.');
         return;
     }
     var restored = await VOID_KV.restoreDisconnect(chatId, pendingRaw, pending.userRecord);
