@@ -14,7 +14,7 @@ function isFreshWebhookDate(value, now = Date.now(), maxAgeMs = 72 * 60 * 60 * 1
 
 function parseCryptoInvoiceId(value) {
     const id = String(value == null ? '' : value);
-    return /^\\d{1,20}$/.test(id) && !/^0+$/.test(id) ? id : null;
+    return /^\d{1,20}$/.test(id) && !/^0+$/.test(id) ? id : null;
 }
 
 function parseCryptoWebhookPayload(value) {
@@ -27,7 +27,7 @@ function parseCryptoWebhookPayload(value) {
 
 function parsePaymentChatId(value) {
     const raw = String(value == null ? '' : value);
-    if (!/^\\d{1,20}$/.test(raw)) return null;
+    if (!/^\d{1,20}$/.test(raw)) return null;
     const id = Number(raw);
     return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
