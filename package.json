@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node bot.js",
-    "test": "node risk_engine.test.js && node market_data.test.js && node handler_audit.test.js && node handler_help_fix.test.js && node runtime_resilience.test.js"
+    "test": "node risk_engine.test.js && node market_data.test.js && node contract_check.test.js && node handler_audit.test.js && node handler_help_fix.test.js && node runtime_resilience.test.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.35.0",
