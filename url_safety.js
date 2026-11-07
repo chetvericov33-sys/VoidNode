@@ -8,6 +8,10 @@ const TRUSTED_DOMAINS = Object.freeze([
   'trustwallet.com'
 ]);
 
+const REDIRECTOR_DOMAINS = Object.freeze(['bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'is.gd', 'cutt.ly', 'rebrand.ly', 'ow.ly']);
+
+const REDIRECT_PARAM_NAMES = new Set(['url', 'u', 'target', 'dest', 'destination', 'redirect', 'redirect_url', 'redirect_uri', 'next', 'continue', 'return', 'return_url', 'out']);
+
 const BRAND_DOMAINS = Object.freeze([
   'binance.com',
   'bybit.com',
@@ -61,10 +65,40 @@ function classifyUrlSafety(input, options = {}) {
   return { status: 'UNKNOWN', safe: false, reason: 'No reliable reputation evidence is available for this domain.' };
 }
 
+function inspectUrlRedirects(input, options = {}) {
+  let parsed;
+  try {
+    parsed = new URL(String(input));
+  } catch {
+    return { status: 'UNKNOWN', safe: false, reason: 'URL syntax could not be validated.' };
+  }
+
+  const host = parsed.hostname.toLowerCase().replace(/\\.$/, '');
+  if (REDIRECTOR_DOMAINS.includes(host)) {
+    return { status: 'UNKNOWN', safe: false, reason: 'This is a URL-shortening service; its destination has not been resolved.' };
+  }
+
+  const candidates = [];
+  for (const [key, value] of parsed.searchParams.entries()) {
+    if (!REDIRECT_PARAM_NAMES.has(key.toLowerCase()) || !value) continue;
+    let candidate = value;
+    try { candidate = decodeURIComponent(candidate); } catch {}
+    if (/^https?:\\/\\//i.test(candidate)) candidates.push(candidate);
+  }
+
+  if (candidates.length === 0) return classifyUrlSafety(input, options);
+
+  const verdicts = candidates.map(candidate => classifyUrlSafety(candidate, options));
+  if (verdicts.some(verdict => verdict.status === 'SUSPICIOUS')) {
+    return { status: 'SUSPICIOUS', safe: false, reason: 'A redirect parameter points to a suspicious destination.' };
+  }
+  return { status: 'UNKNOWN', safe: false, reason: 'A redirect destination is embedded in the URL; the final navigation target has not been verified.' };
+}
+
 function getUrlAlertLevel(result) {
   if (result && result.status === 'SAFE') return 'SAFE';
   if (result && result.status === 'SUSPICIOUS') return 'SUSPICIOUS';
   return 'UNKNOWN';
 }
 
-module.exports = { classifyUrlSafety, getUrlAlertLevel, TRUSTED_DOMAINS };
+module.exports = { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel, TRUSTED_DOMAINS };
