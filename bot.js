@@ -23,6 +23,7 @@ const { filterRelevantCryptoNews } = require('./news_relevance');
 const { fetchCryptoRssNews, filterNewsForAsset, articleMentionsAsset } = require('./crypto_news');
 const { requestOpenRouterCompletion } = require('./ai_completion');
 const { isExplicitMarketOverviewRequest } = require('./ai_intent');
+const { splitTelegramMessage } = require('./telegram_message');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -812,7 +813,7 @@ async function sendDocument(chatId, content, filename) {
     }
 }
 
-async function sendMessage(chatId, text, keyboard, parseMode) {
+async function sendMessage(chatId, text, keyboard, parseMode, forceNew) {
     if (!text) return null;
     if (keyboard === undefined) keyboard = null;
     if (parseMode === undefined) parseMode = 'Markdown';
@@ -833,7 +834,7 @@ async function sendMessage(chatId, text, keyboard, parseMode) {
         var lastId = null;
         try { lastId = await getUserLastMessageId(chatId); } catch (e) { console.error('Last message lookup failed:', e.message); }
 
-        if (lastId) {
+        if (lastId && !forceNew) {
             var edited = await editBotMessage(chatId, lastId, text, keyboard, parseMode);
             if (edited) {
                 await setUserLastMessageId(chatId, lastId);
@@ -4549,7 +4550,25 @@ async function handleAICommand(chatId, question, lang, messageId) {
     // message and update the bot-owned single-message UI instead.
     async function renderAIMessage(text, keyboard, parseMode) {
         if (messageId) await deleteUserMessage(chatId, messageId);
-        return await sendUpdatedMessage(chatId, text, keyboard, parseMode || 'Markdown', null);
+        var mode = parseMode || 'Markdown';
+        var chunks = splitTelegramMessage(text, 3800);
+        if (!chunks.length) return { ok:false, error:'empty AI response' };
+        if (chunks.length === 1) {
+            return await sendUpdatedMessage(chatId, chunks[0], keyboard, mode, null);
+        }
+        var first = await sendUpdatedMessage(chatId, chunks[0], null, mode, null);
+        if (!first || !first.ok) {
+            console.error('AI response delivery failed on first chunk');
+            return first;
+        }
+        for (var i = 1; i < chunks.length; i++) {
+            var sent = await sendMessage(chatId, chunks[i], i === chunks.length - 1 ? keyboard : null, mode, true);
+            if (!sent || !sent.ok) {
+                console.error('AI response delivery failed on chunk ' + (i + 1) + '/' + chunks.length);
+                return sent || { ok:false, error:'chunk delivery failed' };
+            }
+        }
+        return { ok:true, chunks:chunks.length };
     }
     await sendTyping(chatId);
 
