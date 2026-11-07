@@ -4501,7 +4501,6 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var prompt = this.buildPrompt(chatId, question, lang);
                 var completion = await requestOpenRouterCompletion({
                     fetchWithTimeout: fetchWithTimeout,
                     apiKey: OPENROUTER_API_KEY,
