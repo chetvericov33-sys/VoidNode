@@ -162,7 +162,7 @@ class RedisStorage {
         this.criticalPrefixes = [
             'user_', 'plan_', 'usage_', 'panic_', 'panic_price_',
             'payment_', 'order_', 'orders_', 'kill_switch_', 'state_', 'alert_', 'last_update_',
-            'prefs_', 'briefing_', 'ai_history_', 'pending_disconnect_'
+            'prefs_', 'briefing_', 'ai_history_', 'pending_disconnect_', 'telegram_update_done_'
         ];
         console.log('✅ Redis storage initialized');
     }
@@ -4777,7 +4777,7 @@ async function handleCallback(update) {
         return;
 
     } catch (error) {
-        console.error('Callback error:', error);
+        console.error('Callback error:', error.message);
         var errorKeyboard = {
             inline_keyboard: [
                 [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'back_to_menu' }],
@@ -4785,6 +4785,7 @@ async function handleCallback(update) {
             ]
         };
         await sendMessage(chatId, '❌ ' + (lang === 'ru' ? 'Операция не выполнена. Подробности записаны в журнал.' : 'Operation failed. Details were logged.'), errorKeyboard);
+        throw error;
     }
 }
 
@@ -5116,7 +5117,7 @@ async function handleMessage(update) {
         await sendMessage(chatId, getText(lang, 'default_response', cleanText));
 
     } catch (error) {
-        console.error('Message error:', error);
+        console.error('Message error:', error.message);
         var errorKeyboard = {
             inline_keyboard: [
                 [{ text: '🔄 ' + (lang === 'ru' ? 'Попробовать снова' : 'Try again'), callback_data: 'back_to_menu' }],
@@ -5124,6 +5125,7 @@ async function handleMessage(update) {
             ]
         };
         await sendMessage(chatId, getText(lang, 'error_general', error.message), errorKeyboard);
+        throw error;
     }
 }
 
@@ -5800,22 +5802,27 @@ app.post('/webhook', async function(req, res) {
         return res.sendStatus(401);
     }
     console.log('📩 Webhook called!');
+    var update = req.body;
+    if (!update || !Number.isSafeInteger(update.update_id)) return res.sendStatus(400);
+    var updateId = String(update.update_id);
+    var doneKey = 'telegram_update_done_' + updateId;
+    var lockKey = 'telegram_update_processing_' + updateId;
+    var lockToken = await VOID_KV.acquireLock(lockKey, 300);
+    if (!lockToken) return res.sendStatus(503);
     try {
-        var update = req.body;
-        if (update && update.update_id !== undefined) {
-            var updateKey = 'last_update_' + String(update.update_id);
-            if (await getData(updateKey)) return res.sendStatus(200);
-            await setData(updateKey, '1', 86400);
-        }
+        if (await getData(doneKey)) return res.sendStatus(200);
         if (update.callback_query) {
             await handleCallback(update);
         } else if (update.message) {
             await handleMessage(update);
         }
-        res.sendStatus(200);
+        await setData(doneKey, '1', 7 * 24 * 60 * 60);
+        return res.sendStatus(200);
     } catch (error) {
-        console.error('Webhook error:', error);
-        res.sendStatus(500);
+        console.error('Webhook processing failed:', error.message);
+        return res.sendStatus(500);
+    } finally {
+        await VOID_KV.releaseLock(lockKey, lockToken);
     }
 });
 
