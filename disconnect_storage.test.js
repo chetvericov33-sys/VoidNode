@@ -26,7 +26,7 @@ async function run() {
                 values.delete(keys[0]);
                 return 1;
             }
-            if (keys.length === 2 && script.includes("redis.call('SET', KEYS[2], ARGV[2])")) {
+            if (keys.length === 2 && script.includes("redis.call('SET', KEYS[2], ARGV[2])") && script.includes("redis.call('GET', KEYS[2])")) {
                 if (values.get(keys[0]) !== args[0] || values.get(keys[1]) !== args[1]) return 0;
                 values.set(keys[1], args[1]);
                 values.delete(keys[0]);
