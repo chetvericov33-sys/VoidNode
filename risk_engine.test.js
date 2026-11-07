@@ -18,5 +18,8 @@ const depegNone = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,
 const depegMaterial = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,stablePegRisk:12});
 assert.strictEqual(depegMaterial.score - depegNone.score, 12, 'stablecoin peg risk must increase total score by its calculated points');
 assert.strictEqual(depegMaterial.breakdown.find(function(x){return x.key==='stable_peg';}).points, 12, 'stablecoin peg factor must be visible in breakdown');
+const stalePrices = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,priceFreshnessRisk:15});
+assert.strictEqual(stalePrices.score - depegNone.score, 15, 'stale price risk must increase total score by its calculated points');
+assert.strictEqual(stalePrices.breakdown.find(function(x){return x.key==='price_freshness';}).points, 15, 'price freshness factor must be visible in breakdown');
 console.log('Risk Engine tests passed:', cases.length+'/'+cases.length);
 console.log('Audit example:', JSON.stringify(audit));
