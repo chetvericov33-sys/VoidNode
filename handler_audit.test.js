@@ -22,6 +22,21 @@ function handled(callback) {
   return false;
 }
 
+const requiredPaymentReliabilityMarkers = [
+  "payment_effects_pending_",
+  "payment_effect_referral_",
+  "payment_effect_user_notice_",
+  "payment_effect_menu_",
+  "payment_effect_history_",
+  "Payment processing lease lost",
+  "if (!updateLease.isHealthy()) return res.sendStatus(503);",
+  "if (!paymentLease.isHealthy()) return { status: 503"
+];
+const missingPaymentMarkers = requiredPaymentReliabilityMarkers.filter(marker => !source.includes(marker));
+if (missingPaymentMarkers.length) {
+  throw new Error('Payment/webhook reliability guard missing: ' + missingPaymentMarkers.join(', '));
+}
+
 const unhandled = uniqueCallbacks.filter(cb => !handled(cb));
 if (unhandled.length) {
   throw new Error('Unhandled callback_data: ' + unhandled.join(', '));
