@@ -65,5 +65,6 @@ async function deletePendingDisconnectIfMatches(redis, withTimeout, chatId, pend
 module.exports = {
     scanKeysByPrefix,
     createPendingDisconnectIfUserMatches,
+    replaceUserAndClearPending,
     deletePendingDisconnectIfMatches
 };
