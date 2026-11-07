@@ -6037,7 +6037,8 @@ async function handleCryptoWebhook(request) {
             var effectsRecord = { chatId: String(chatId), planId: planId, invoiceId: invoiceId, createdAt: activatedAt };
             var activated = await VOID_KV.activatePaidInvoice(invoiceId, chatId, planId, planRecord, paidRecord, effectsRecord);
             if (!activated) {
-                await processPendingPaymentEffects(invoiceId);
+                if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
+                await processPendingPaymentEffects(invoiceId, function() { return paymentLease.isHealthy(); });
                 return { status: 200, duplicate: true };
             }
             await invalidatePlanCache(chatId);
@@ -6164,6 +6165,7 @@ app.post('/webhook', async function(req, res) {
         } else if (update.message) {
             await handleMessage(update);
         }
+        if (!updateLease.isHealthy()) return res.sendStatus(503);
         await setData(doneKey, '1', 7 * 24 * 60 * 60);
         return res.sendStatus(200);
     } catch (error) {
