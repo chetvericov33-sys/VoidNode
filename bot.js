@@ -377,7 +377,11 @@ class RedisStorage {
         if (!token || !this.isRedisAvailable) return;
         try {
             await withTimeout(this.redis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [key], [token]), 8000, 'Redis release lock');
-        } catch (e) {}
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            console.warn('Redis lock release deferred until TTL expiry:', error.message);
+        }
     }
     async completeDisconnect(chatId, pendingRaw, expectedUserRaw) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
@@ -5924,7 +5928,10 @@ function verifyCryptoSignature(req) {
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
-async function processPendingPaymentEffects(invoiceId) {
+async function processPendingPaymentEffects(invoiceId, isLeaseHealthy) {
+    function assertLease() {
+        if (typeof isLeaseHealthy === 'function' && !isLeaseHealthy()) throw new Error('Payment processing lease lost');
+    }
     var pendingKey = 'payment_effects_pending_' + invoiceId;
     var raw = await getData(pendingKey);
     if (!raw) return false;
@@ -5941,6 +5948,7 @@ async function processPendingPaymentEffects(invoiceId) {
     }
 
     if (!await isDone('referral')) {
+        assertLease();
         var bonusResult = await REFERRAL.processPlanActivation(chatId, planId, invoiceId);
         if (bonusResult) {
             var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
@@ -5948,24 +5956,32 @@ async function processPendingPaymentEffects(invoiceId) {
                 ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
                 : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
             var referrerNotice = await sendMessage(bonusResult.referrerId, bonusMessage);
+            assertLease();
             if (!referrerNotice || referrerNotice.ok !== true) throw new Error('Referral bonus notification failed');
         }
+        assertLease();
         await markDone('referral');
     }
 
     var lang = await getData('lang_' + chatId) || 'ru';
     var plan = PLANS[planId];
     if (!await isDone('user_notice')) {
+        assertLease();
         var paymentNotice = await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
+        assertLease();
         if (!paymentNotice || paymentNotice.ok !== true) throw new Error('Payment activation notification failed');
         await markDone('user_notice');
     }
     if (!await isDone('menu')) {
+        assertLease();
         await showMainMenu(chatId);
+        assertLease();
         await markDone('menu');
     }
     if (!await isDone('history')) {
+        assertLease();
         await addHistory(chatId, '💳 Payment', plan.name + ' activated');
+        assertLease();
         await markDone('history');
     }
     await deleteData(pendingKey);
@@ -5994,7 +6010,8 @@ async function handleCryptoWebhook(request) {
         try {
             var processedKey = 'payment_processed_' + invoiceId;
             if (await getData(processedKey)) {
-                await processPendingPaymentEffects(invoiceId);
+                if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
+                await processPendingPaymentEffects(invoiceId, function() { return paymentLease.isHealthy(); });
                 return { status: 200, duplicate: true };
             }
 
@@ -6009,6 +6026,7 @@ async function handleCryptoWebhook(request) {
             var planId = String(paymentRecord.planId || '');
             if (chatId === null || !PLANS[planId]) return { status: 400, error: 'Invalid payment metadata' };
 
+            if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
             var activatedAt = Date.now();
             var paidRecord = { ...paymentRecord, status: 'paid', paidAt: activatedAt };
             var planRecord = {
@@ -6023,7 +6041,8 @@ async function handleCryptoWebhook(request) {
                 return { status: 200, duplicate: true };
             }
             await invalidatePlanCache(chatId);
-            await processPendingPaymentEffects(invoiceId);
+            if (!paymentLease.isHealthy()) return { status: 503, error: 'Payment processing lease lost' };
+            await processPendingPaymentEffects(invoiceId, function() { return paymentLease.isHealthy(); });
             return { status: 200 };
         } finally {
             paymentLease.stop();
