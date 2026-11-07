@@ -91,7 +91,8 @@ async function run() {
     assert.equal(await completeDisconnectIfMatches(redis, passthroughTimeout, 42, 'pending-v5', 'user-v5'), false);
     assert.equal(await restoreDisconnectIfMatches(redis, passthroughTimeout, 42, 'pending-v6', 'user-v5'), false);
     assert.equal(values.get('user_42'), 'user-v6');
-\n    assert.deepEqual(await scanKeysByPrefix(redis, passthroughTimeout, 'pending_disconnect_'), [
+
+    assert.deepEqual(await scanKeysByPrefix(redis, passthroughTimeout, 'pending_disconnect_'), [
         'pending_disconnect_1', 'pending_disconnect_2'
     ]);
 
