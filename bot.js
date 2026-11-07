@@ -13,7 +13,7 @@ const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
-const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
+const { withTimeout, fetchWithTimeout, probeRedisConnection, startLeaseHeartbeat, BoundedTTLCache } = require('./runtime_resilience');
 const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parseCryptoWebhookPayload, parsePaymentChatId, validateCryptoPaidInvoice } = require('./webhook_safety');
 const { activateReferralBonusIfUnprocessed } = require('./referral_storage');
@@ -291,6 +291,25 @@ class RedisStorage {
             var result = await withTimeout(this.redis.set(key, token, { nx: true, ex: ttlSeconds }), 8000, 'Redis acquire lock');
             return result === 'OK' || result === true ? token : null;
         } catch (e) { this.markUnavailable(); this.scheduleRetry(); return null; }
+    }
+    async renewLock(key, token, ttlSeconds) {
+        if (!token || !this.isRedisAvailable) return false;
+        try {
+            var result = await withTimeout(
+                this.redis.eval(
+                    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) else return 0 end",
+                    [key],
+                    [token, Math.max(1, Math.floor(Number(ttlSeconds) || 60))]
+                ),
+                8000,
+                'Redis renew lock'
+            );
+            return Number(result) === 1;
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            return false;
+        }
     }
     async activatePaidInvoice(invoiceId, chatId, planId, planRecord, paymentRecord, effectsRecord) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
@@ -5948,6 +5967,10 @@ async function handleCryptoWebhook(request) {
         var paymentLockKey = 'payment_processing_' + invoiceId;
         var paymentLockToken = await VOID_KV.acquireLock(paymentLockKey, 300);
         if (!paymentLockToken) return { status: 503, error: 'Payment processing busy or storage unavailable' };
+        var paymentLease = startLeaseHeartbeat(
+            function() { return VOID_KV.renewLock(paymentLockKey, paymentLockToken, 300); },
+            100000
+        );
         try {
             var processedKey = 'payment_processed_' + invoiceId;
             if (await getData(processedKey)) {
@@ -5983,6 +6006,7 @@ async function handleCryptoWebhook(request) {
             await processPendingPaymentEffects(invoiceId);
             return { status: 200 };
         } finally {
+            paymentLease.stop();
             await VOID_KV.releaseLock(paymentLockKey, paymentLockToken);
         }
     } catch (error) {
@@ -6024,14 +6048,22 @@ async function checkMonthlyDNA(){
 function runTaskWithRecovery(task, name, interval) {
     var run = async function() {
         var lock = null;
+        var lease = null;
+        var lockKey = 'worker_lock_' + name;
+        var lockTtl = Math.max(60, Math.ceil(interval / 1000) + 30);
         try {
-            lock = await VOID_KV.acquireLock('worker_lock_' + name, Math.max(60, Math.ceil(interval / 1000) + 30));
+            lock = await VOID_KV.acquireLock(lockKey, lockTtl);
             if (!lock) return;
+            lease = startLeaseHeartbeat(
+                function() { return VOID_KV.renewLock(lockKey, lock, lockTtl); },
+                Math.max(5000, Math.floor(lockTtl * 1000 / 3))
+            );
             await task();
         } catch (error) {
             console.error('❌ ' + name + ' error:', error.message);
         } finally {
-            if (lock) await VOID_KV.releaseLock('worker_lock_' + name, lock);
+            if (lease) lease.stop();
+            if (lock) await VOID_KV.releaseLock(lockKey, lock);
             setTimeout(run, interval);
         }
     };
@@ -6082,6 +6114,10 @@ app.post('/webhook', async function(req, res) {
     var lockKey = 'telegram_update_processing_' + updateId;
     var lockToken = await VOID_KV.acquireLock(lockKey, 300);
     if (!lockToken) return res.sendStatus(503);
+    var updateLease = startLeaseHeartbeat(
+        function() { return VOID_KV.renewLock(lockKey, lockToken, 300); },
+        100000
+    );
     try {
         if (await getData(doneKey)) return res.sendStatus(200);
         if (update.callback_query) {
@@ -6095,6 +6131,7 @@ app.post('/webhook', async function(req, res) {
         console.error('Webhook processing failed:', error.message);
         return res.sendStatus(500);
     } finally {
+        updateLease.stop();
         await VOID_KV.releaseLock(lockKey, lockToken);
     }
 });
