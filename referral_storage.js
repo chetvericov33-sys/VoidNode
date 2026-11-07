@@ -48,4 +48,31 @@ async function activateReferralBonusIfUnprocessed(redis, withTimeout, invoiceId,
     };
 }
 
-module.exports = { activateReferralBonusIfUnprocessed };
+async function registerReferralIfUnused(redis, withTimeout, refereeId, referrerId, now = Date.now()) {
+    const referee = String(refereeId == null ? '' : refereeId);
+    const referrer = String(referrerId == null ? '' : referrerId);
+    if (!/^\d{1,20}$/.test(referee) || !/^\d{1,20}$/.test(referrer) ||
+        !Number.isSafeInteger(Number(referee)) || !Number.isSafeInteger(Number(referrer)) ||
+        Number(referee) <= 0 || Number(referrer) <= 0 || referee === referrer) {
+        return false;
+    }
+    const script = "if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end; " +
+        "local raw = redis.call('GET', KEYS[3]); local invited = {}; " +
+        "if raw then local ok, decoded = pcall(cjson.decode, raw); " +
+        "if not ok or type(decoded) ~= 'table' then return redis.error_reply('Invalid referral invite history') end; invited = decoded end; " +
+        "table.insert(invited, { refereeId = ARGV[2], date = tonumber(ARGV[3]) }); " +
+        "redis.call('SET', KEYS[2], ARGV[1]); redis.call('SET', KEYS[1], 'true'); " +
+        "redis.call('SET', KEYS[3], cjson.encode(invited)); return 1";
+    const result = await withTimeout(
+        redis.eval(
+            script,
+            ['ref_used_' + referee, 'ref_referrer_' + referee, 'ref_invited_' + referrer],
+            [referrer, referee, now]
+        ),
+        8000,
+        'Atomic referral registration'
+    );
+    return Number(result) === 1;
+}
+
+module.exports = { activateReferralBonusIfUnprocessed, registerReferralIfUnused };
