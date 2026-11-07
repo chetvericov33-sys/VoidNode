@@ -16,7 +16,7 @@ const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./
 const { withTimeout, fetchWithTimeout, probeRedisConnection, startLeaseHeartbeat, BoundedTTLCache } = require('./runtime_resilience');
 const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parseCryptoWebhookPayload, parsePaymentChatId, validateCryptoPaidInvoice } = require('./webhook_safety');
-const { activateReferralBonusIfUnprocessed } = require('./referral_storage');
+const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require('./referral_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -348,6 +348,16 @@ class RedisStorage {
             this.scheduleRetry();
             console.error('Atomic payment activation error:', error.message);
             throw new Error('Critical payment storage unavailable');
+        }
+    }
+    async registerReferral(refereeId, referrerId) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await registerReferralIfUnused(this.redis, withTimeout, refereeId, referrerId);
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            throw new Error('Critical referral storage unavailable');
         }
     }
     async activateReferralBonus(invoiceId, refereeId, planId, bonusDays) {
@@ -3688,34 +3698,25 @@ class ReferralSystem {
             code = this.generateReferralCode(chatId);
             await this.kv.put(key, code);
         }
+        // Repair the reverse lookup on every access so existing codes remain resolvable.
+        await this.kv.put('ref_code_to_user_' + code, String(chatId));
         return code;
     }
 
     async getReferrerByCode(code) {
-        const key = 'ref_code_to_user_' + code;
+        const key = 'ref_code_to_user_' + String(code || '').toUpperCase();
         const chatId = await this.kv.get(key);
-        return chatId ? parseInt(chatId) : null;
+        const parsed = Number(chatId);
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
     }
 
     async registerReferralClick(refereeId, referrerCode) {
+        const referee = Number(refereeId);
+        if (!Number.isSafeInteger(referee) || referee <= 0) return null;
         const referrerId = await this.getReferrerByCode(referrerCode);
-        if (!referrerId || referrerId === refereeId) return null;
-
-        const usedKey = 'ref_used_' + refereeId;
-        const used = await this.kv.get(usedKey);
-        if (used) return null;
-
-        const referralKey = 'ref_referrer_' + refereeId;
-        await this.kv.put(referralKey, referrerId.toString());
-        await this.kv.put(usedKey, 'true');
-        
-        const listKey = 'ref_invited_' + referrerId;
-        let invited = await this.kv.get(listKey);
-        invited = invited ? JSON.parse(invited) : [];
-        invited.push({ refereeId, date: Date.now() });
-        await this.kv.put(listKey, JSON.stringify(invited));
-
-        return referrerId;
+        if (!referrerId || referrerId === referee) return null;
+        const registered = await this.kv.registerReferral(referee, referrerId);
+        return registered ? referrerId : null;
     }
 
     async processPlanActivation(refereeId, planId, invoiceId) {
