@@ -5932,23 +5932,42 @@ async function processPendingPaymentEffects(invoiceId) {
     var chatId = parsePaymentChatId(effects && effects.chatId);
     var planId = String(effects && effects.planId || '');
     if (chatId === null || !PLANS[planId]) throw new Error('Invalid pending payment effects');
+    var ttl = 180 * 24 * 60 * 60;
+    async function isDone(stage) {
+        return Boolean(await getData('payment_effect_' + stage + '_' + invoiceId));
+    }
+    async function markDone(stage) {
+        await setData('payment_effect_' + stage + '_' + invoiceId, '1', ttl);
+    }
 
-    var bonusResult = await REFERRAL.processPlanActivation(chatId, planId, invoiceId);
-    if (bonusResult) {
-        var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
-        var bonusMessage = '🎁 ' + (referrerLang === 'ru'
-            ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
-            : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
-        var referrerNotice = await sendMessage(bonusResult.referrerId, bonusMessage);
-        if (!referrerNotice || referrerNotice.ok !== true) throw new Error('Referral bonus notification failed');
+    if (!await isDone('referral')) {
+        var bonusResult = await REFERRAL.processPlanActivation(chatId, planId, invoiceId);
+        if (bonusResult) {
+            var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
+            var bonusMessage = '🎁 ' + (referrerLang === 'ru'
+                ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
+                : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
+            var referrerNotice = await sendMessage(bonusResult.referrerId, bonusMessage);
+            if (!referrerNotice || referrerNotice.ok !== true) throw new Error('Referral bonus notification failed');
+        }
+        await markDone('referral');
     }
 
     var lang = await getData('lang_' + chatId) || 'ru';
     var plan = PLANS[planId];
-    var paymentNotice = await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
-    if (!paymentNotice || paymentNotice.ok !== true) throw new Error('Payment activation notification failed');
-    await showMainMenu(chatId);
-    await addHistory(chatId, '💳 Payment', plan.name + ' activated');
+    if (!await isDone('user_notice')) {
+        var paymentNotice = await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
+        if (!paymentNotice || paymentNotice.ok !== true) throw new Error('Payment activation notification failed');
+        await markDone('user_notice');
+    }
+    if (!await isDone('menu')) {
+        await showMainMenu(chatId);
+        await markDone('menu');
+    }
+    if (!await isDone('history')) {
+        await addHistory(chatId, '💳 Payment', plan.name + ' activated');
+        await markDone('history');
+    }
     await deleteData(pendingKey);
     return true;
 }
