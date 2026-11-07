@@ -292,7 +292,7 @@ class RedisStorage {
             return result === 'OK' || result === true ? token : null;
         } catch (e) { this.markUnavailable(); this.scheduleRetry(); return null; }
     }
-    async activatePaidInvoice(invoiceId, chatId, planId, planRecord, paymentRecord) {
+    async activatePaidInvoice(invoiceId, chatId, planId, planRecord, paymentRecord, effectsRecord) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
         var script = "if redis.call('EXISTS', KEYS[3]) == 1 then return 0 end " +
             "local now = tonumber(ARGV[3]); local duration = tonumber(ARGV[4]); " +
@@ -306,11 +306,12 @@ class RedisStorage {
             "redis.call('SET', KEYS[1], cjson.encode(plan)); " +
             "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[5]); " +
             "redis.call('SET', KEYS[3], ARGV[6], 'EX', ARGV[7]); " +
+            "redis.call('SET', KEYS[4], ARGV[8], 'EX', ARGV[7]); " +
             "return 1";
         try {
             var result = await withTimeout(this.redis.eval(
                 script,
-                ['plan_' + chatId, 'payment_' + invoiceId, 'payment_processed_' + invoiceId],
+                ['plan_' + chatId, 'payment_' + invoiceId, 'payment_processed_' + invoiceId, 'payment_effects_pending_' + invoiceId],
                 [
                     JSON.stringify(planRecord),
                     JSON.stringify(paymentRecord),
@@ -318,7 +319,8 @@ class RedisStorage {
                     planRecord.durationMs,
                     180 * 24 * 60 * 60,
                     JSON.stringify({ processedAt: Date.now(), chatId: chatId, planId: planId }),
-                    180 * 24 * 60 * 60
+                    180 * 24 * 60 * 60,
+                    JSON.stringify(effectsRecord)
                 ]
             ), 8000, 'Atomic payment activation');
             return Number(result) === 1;
@@ -5902,6 +5904,33 @@ function verifyCryptoSignature(req) {
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
+async function processPendingPaymentEffects(invoiceId) {
+    var pendingKey = 'payment_effects_pending_' + invoiceId;
+    var raw = await getData(pendingKey);
+    if (!raw) return false;
+    var effects = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    var chatId = parsePaymentChatId(effects && effects.chatId);
+    var planId = String(effects && effects.planId || '');
+    if (chatId === null || !PLANS[planId]) throw new Error('Invalid pending payment effects');
+
+    var bonusResult = await REFERRAL.processPlanActivation(chatId, planId, invoiceId);
+    if (bonusResult) {
+        var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
+        var bonusMessage = '🎁 ' + (referrerLang === 'ru'
+            ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
+            : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
+        await sendMessage(bonusResult.referrerId, bonusMessage);
+    }
+
+    var lang = await getData('lang_' + chatId) || 'ru';
+    var plan = PLANS[planId];
+    await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
+    await showMainMenu(chatId);
+    await addHistory(chatId, '💳 Payment', plan.name + ' activated');
+    await deleteData(pendingKey);
+    return true;
+}
+
 async function handleCryptoWebhook(request) {
     try {
         if (!verifyCryptoSignature(request)) return { status: 401, error: 'Unauthorized' };
@@ -5919,7 +5948,10 @@ async function handleCryptoWebhook(request) {
         if (!paymentLockToken) return { status: 503, error: 'Payment processing busy or storage unavailable' };
         try {
             var processedKey = 'payment_processed_' + invoiceId;
-            if (await getData(processedKey)) return { status: 200, duplicate: true };
+            if (await getData(processedKey)) {
+                await processPendingPaymentEffects(invoiceId);
+                return { status: 200, duplicate: true };
+            }
 
             var paymentRecord = await getData('payment_' + invoiceId);
             if (!paymentRecord) return { status: 400, error: 'Unknown invoice' };
@@ -5939,27 +5971,14 @@ async function handleCryptoWebhook(request) {
                 activatedAt: activatedAt,
                 durationMs: PLANS[planId].duration * 24 * 60 * 60 * 1000
             };
-            var activated = await VOID_KV.activatePaidInvoice(invoiceId, chatId, planId, planRecord, paidRecord);
-            if (!activated) return { status: 200, duplicate: true };
-            await invalidatePlanCache(chatId);
-
-            var lang = await getData('lang_' + chatId) || 'ru';
-            var plan = PLANS[planId];
-        if (plan) {
-            try {
-                var bonusResult = await REFERRAL.processPlanActivation(chatId, planId, invoiceId);
-                if (bonusResult) {
-                    var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
-                    var bonusMessage = '🎁 ' + (referrerLang === 'ru'
-                        ? 'Твой друг активировал тариф! Ты получил +' + bonusResult.bonusDays + ' дней к подписке! 🎉'
-                        : 'Your friend activated a plan! You got +' + bonusResult.bonusDays + ' days to your subscription! 🎉');
-                    await sendMessage(bonusResult.referrerId, bonusMessage);
-                }
-            } catch (e) { console.error('Referral bonus error:', e.message); }
-            await sendMessage(chatId, getText(lang, 'plans_success', plan.name));
-            await showMainMenu(chatId);
-            await addHistory(chatId, '💳 Payment', plan.name + ' activated');
+            var effectsRecord = { chatId: String(chatId), planId: planId, invoiceId: invoiceId, createdAt: activatedAt };
+            var activated = await VOID_KV.activatePaidInvoice(invoiceId, chatId, planId, planRecord, paidRecord, effectsRecord);
+            if (!activated) {
+                await processPendingPaymentEffects(invoiceId);
+                return { status: 200, duplicate: true };
             }
+            await invalidatePlanCache(chatId);
+            await processPendingPaymentEffects(invoiceId);
             return { status: 200 };
         } finally {
             await VOID_KV.releaseLock(paymentLockKey, paymentLockToken);
