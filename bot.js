@@ -12,7 +12,7 @@ const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
-const { classifyUrlSafety, getUrlAlertLevel } = require('./url_safety');
+const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 
 // ============================================================
@@ -3533,7 +3533,7 @@ async function checkUrl(url) {
     catch (error) { return classifyUrlSafety(url); }
     var domain = parsed.hostname.toLowerCase().replace(/\.$/, '');
     var blacklisted = await getData('domain_blacklist_' + domain);
-    return classifyUrlSafety(url, { blacklisted: !!blacklisted });
+    return inspectUrlRedirects(url, { blacklisted: !!blacklisted });
 }
 
 function checkFile(fileName) {
