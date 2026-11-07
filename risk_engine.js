@@ -27,7 +27,7 @@ function calculateRiskBreakdown(input) {
   if (reserveGap === 0) reserve = 0;
 
   var altGap = Math.max(0, alts - altTarget);
-  var altExposure = altGap === 0 ? 0 : altGap <= 10 ? 5 : altGap <= 20 ? 10 : 15;
+  var altExposure = altGap === 0 ? 0 : altGap <= 10 ? 5 : altGap <= 20 ? 10 : 20;
 
   var diversification = meaningful >= 3 ? 0 : meaningful === 2 ? 5 : 10;
   var dataQuality = coverageComplete ? 0 : 20;
