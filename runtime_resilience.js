@@ -175,5 +175,6 @@ module.exports = {
     ALLOWED_HTTPS_HOSTS,
     DEFAULT_MAX_RESPONSE_BYTES,
     probeRedisConnection,
+    startLeaseHeartbeat,
     BoundedTTLCache
 };
