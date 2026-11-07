@@ -30,6 +30,7 @@ const passingMention = {
 
 assert.strictEqual(isRelevantCryptoNews(btcMarket), true);
 assert.strictEqual(isRelevantCryptoNews(defiHack), true);
+assert.strictEqual(isRelevantCryptoNews({ title: 'Solana developers announce a major network upgrade', description: 'The upgrade is scheduled for next month.' }), true);
 assert.strictEqual(isRelevantCryptoNews(cryptoRegulation), true);
 assert.strictEqual(isRelevantCryptoNews(genericBankStory), false);
 assert.strictEqual(isRelevantCryptoNews(tutorial), false);
