@@ -65,7 +65,7 @@ function classifyUrlSafety(input, options = {}) {
   return { status: 'UNKNOWN', safe: false, reason: 'No reliable reputation evidence is available for this domain.' };
 }
 
-function inspectUrlRedirects(input, options = {}) {
+function inspectUrlRedirects(input, options = {}, depth = 0) {
   let parsed;
   try {
     parsed = new URL(String(input));
@@ -73,7 +73,7 @@ function inspectUrlRedirects(input, options = {}) {
     return { status: 'UNKNOWN', safe: false, reason: 'URL syntax could not be validated.' };
   }
 
-  const host = parsed.hostname.toLowerCase().replace(/\\.$/, '');
+  const host = parsed.hostname.toLowerCase().endsWith('.') ? parsed.hostname.toLowerCase().slice(0, -1) : parsed.hostname.toLowerCase();
   if (REDIRECTOR_DOMAINS.includes(host)) {
     return { status: 'UNKNOWN', safe: false, reason: 'This is a URL-shortening service; its destination has not been resolved.' };
   }
@@ -83,12 +83,12 @@ function inspectUrlRedirects(input, options = {}) {
     if (!REDIRECT_PARAM_NAMES.has(key.toLowerCase()) || !value) continue;
     let candidate = value;
     try { candidate = decodeURIComponent(candidate); } catch {}
-    if (/^https?:\\/\\//i.test(candidate)) candidates.push(candidate);
+    if (candidate.startsWith('https://') || candidate.startsWith('http://')) candidates.push(candidate);
   }
 
   if (candidates.length === 0) return classifyUrlSafety(input, options);
 
-  const verdicts = candidates.map(candidate => classifyUrlSafety(candidate, options));
+  const verdicts = candidates.map(candidate => inspectUrlRedirects(candidate, options, depth + 1));
   if (verdicts.some(verdict => verdict.status === 'SUSPICIOUS')) {
     return { status: 'SUSPICIOUS', safe: false, reason: 'A redirect parameter points to a suspicious destination.' };
   }
