@@ -5036,37 +5036,6 @@ async function handleMessage(update) {
             return;
         }
 
-        var aiChatMode = await getData('ai_chat_mode_' + chatId);
-        if (aiChatMode === 'true') {
-            var aiModeSetAt = await getData('ai_chat_mode_set_at_' + chatId);
-            if (!aiModeSetAt || Date.now() - Number(aiModeSetAt) > STATE_TTL_SECONDS * 1000) {
-                await deleteData('ai_chat_mode_' + chatId);
-                await deleteData('ai_chat_mode_set_at_' + chatId);
-                aiChatMode = null;
-                console.log('🧭 AI mode expired/reset for ' + chatId);
-            }
-        }
-        console.log('🧭 Message stage: state=' + String(state) + ', aiChatMode=' + String(aiChatMode));
-        if (aiChatMode === 'true' && cleanText && cleanText.length > 1 && !cleanText.startsWith('/') && !isForwarded) {
-            await handleAICommand(chatId, cleanText, lang, messageId);
-            return;
-        }
-
-        if (cleanText && (cleanText.includes('http://') || cleanText.includes('https://'))) {
-            await autoCheckLinks(chatId, cleanText, lang, messageId);
-        }
-        if (cleanText && cleanText.startsWith('0x') && cleanText.length >= 42 && cleanText.length <= 44) {
-            await autoCheckContract(chatId, cleanText, lang, messageId);
-            return;
-        }
-
-        if (state === 'waiting_for_timezone') {
-            if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') { await setState(chatId,'idle'); await showSettingsMenu(chatId); return; }
-            if (await setTimezone(chatId,cleanText)) { await sendMessage(chatId,lang==='ru'?'✅ Часовой пояс сохранён: '+cleanText+'\nЕжедневный briefing будет приходить в 08:00.':'✅ Timezone saved: '+cleanText+'\nDaily briefing will arrive at 08:00.'); await showNotificationSettings(chatId); }
-            else await sendMessage(chatId,lang==='ru'?'❌ Неизвестный timezone. Пример: Europe/Amsterdam':'❌ Unknown timezone. Example: Europe/Amsterdam',getCancelKeyboard(lang));
-            return;
-        }
-
         if (state === 'waiting_for_keys') {
             if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') {
                 await setState(chatId, 'idle');
@@ -5124,6 +5093,38 @@ async function handleMessage(update) {
                 };
                 await sendMessage(chatId, getText(lang, 'invalid_format'), errorKeyboard);
             }
+            return;
+        }
+
+
+        var aiChatMode = await getData('ai_chat_mode_' + chatId);
+        if (aiChatMode === 'true') {
+            var aiModeSetAt = await getData('ai_chat_mode_set_at_' + chatId);
+            if (!aiModeSetAt || Date.now() - Number(aiModeSetAt) > STATE_TTL_SECONDS * 1000) {
+                await deleteData('ai_chat_mode_' + chatId);
+                await deleteData('ai_chat_mode_set_at_' + chatId);
+                aiChatMode = null;
+                console.log('🧭 AI mode expired/reset for ' + chatId);
+            }
+        }
+        console.log('🧭 Message stage: state=' + String(state) + ', aiChatMode=' + String(aiChatMode));
+        if (aiChatMode === 'true' && cleanText && cleanText.length > 1 && !cleanText.startsWith('/') && !isForwarded) {
+            await handleAICommand(chatId, cleanText, lang, messageId);
+            return;
+        }
+
+        if (cleanText && (cleanText.includes('http://') || cleanText.includes('https://'))) {
+            await autoCheckLinks(chatId, cleanText, lang, messageId);
+        }
+        if (cleanText && cleanText.startsWith('0x') && cleanText.length >= 42 && cleanText.length <= 44) {
+            await autoCheckContract(chatId, cleanText, lang, messageId);
+            return;
+        }
+
+        if (state === 'waiting_for_timezone') {
+            if (cleanText === '/cancel' || cleanText === '❌ Отмена' || cleanText === '❌ Cancel') { await setState(chatId,'idle'); await showSettingsMenu(chatId); return; }
+            if (await setTimezone(chatId,cleanText)) { await sendMessage(chatId,lang==='ru'?'✅ Часовой пояс сохранён: '+cleanText+'\nЕжедневный briefing будет приходить в 08:00.':'✅ Timezone saved: '+cleanText+'\nDaily briefing will arrive at 08:00.'); await showNotificationSettings(chatId); }
+            else await sendMessage(chatId,lang==='ru'?'❌ Неизвестный timezone. Пример: Europe/Amsterdam':'❌ Unknown timezone. Example: Europe/Amsterdam',getCancelKeyboard(lang));
             return;
         }
 
