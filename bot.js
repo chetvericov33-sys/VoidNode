@@ -5560,7 +5560,7 @@ async function sendNewsReport(chatId, articles, coin, lang, messageId) {
     var isRu = lang === 'ru';
     var marketFallback = articles.some(function(article){ return !!article.marketWideFallback; });
     var report = marketFallback
-        ? (isRu ? '📰 *СВЕЖИЕ НОВОСТИ КРИПТОРЫНКА*\n_Прямых упоминаний ' + coin.toUpperCase() + ' в свежих заголовках не найдено._\n\n' : '📰 *LATEST CRYPTO MARKET NEWS*\n_No direct ' + coin.toUpperCase() + ' headlines found in fresh sources._\\n\\n')
+        ? (isRu ? '📰 *СВЕЖИЕ НОВОСТИ КРИПТОРЫНКА*\n_Прямых упоминаний ' + coin.toUpperCase() + ' в свежих заголовках не найдено._\n\n' : '📰 *LATEST CRYPTO MARKET NEWS*\n_No direct ' + coin.toUpperCase() + ' headlines found in fresh sources._\n\n')
         : getText(lang, 'news_coin', coin.toUpperCase());
     var count = 0;
     var seenUrls = new Set();
