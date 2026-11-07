@@ -4537,7 +4537,7 @@ async function handleCallback(update) {
     if (callback.from.id !== chatId && callback.message.chat.type === 'private') return;
     var data = String(callback.data || '').slice(0, 128);
     var lang = await getData('lang_' + chatId) || 'ru';
-    var sensitiveCallback = /^(panic_convert|action_disconnect|undo_disconnect|plan_|menu_connect|settings_|lang_|mode_|onboard_connect|wizard_exchange_|wizard_send_keys)/.test(data);
+    var sensitiveCallback = /^(panic_convert|action_disconnect|undo_disconnect|plan_|menu_connect|wallet_real_read|exchange_|settings_|lang_|mode_|onboard_connect|wizard_exchange_|wizard_send_keys)/.test(data);
     if (sensitiveCallback && callback.message.chat.type !== 'private') { await answerCallback(callback.id); await sendMessage(chatId, '🔒 Эта функция доступна только в личном чате с Void Node.'); return; }
 
     await answerCallback(callback.id);
