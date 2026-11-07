@@ -4173,6 +4173,8 @@ class AIContext {
         var newsResult = await newsManager.getPersonalizedNews(chatId, lang);
         if (newsResult && !newsResult.error) {
             context.lastNews = newsResult;
+        } else {
+            context.lastNews = { articles: [], count: 0, timestamp: Date.now(), unavailable: true };
         }
         
         var keysUser = await loadUserKeys(chatId);
