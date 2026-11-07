@@ -96,6 +96,39 @@ async function probeRedisConnection(redis, timeoutMs = 5000) {
     }
 }
 
+function startLeaseHeartbeat(renew, intervalMs, onLost) {
+    if (typeof renew !== 'function') throw new TypeError('Lease renewal callback is required');
+    const delay = Math.max(1000, Number(intervalMs) || 10000);
+    let stopped = false;
+    let healthy = true;
+    let inFlight = false;
+    const timer = setInterval(async () => {
+        if (stopped || inFlight || !healthy) return;
+        inFlight = true;
+        try {
+            if (await renew() !== true) {
+                healthy = false;
+                if (typeof onLost === 'function') onLost();
+            }
+        } catch (error) {
+            healthy = false;
+            if (typeof onLost === 'function') onLost(error);
+        } finally {
+            inFlight = false;
+        }
+    }, delay);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+    return {
+        stop() {
+            stopped = true;
+            clearInterval(timer);
+        },
+        isHealthy() {
+            return healthy;
+        }
+    };
+}
+
 class BoundedTTLCache {
     constructor(options = {}) {
         this.maxEntries = Math.max(1, Number(options.maxEntries) || 1000);
