@@ -268,9 +268,17 @@ class RedisStorage {
     async activatePaidInvoice(invoiceId, chatId, planId, planRecord, paymentRecord) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
         var script = "if redis.call('EXISTS', KEYS[3]) == 1 then return 0 end " +
-            "redis.call('SET', KEYS[1], ARGV[1]) " +
-            "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3]) " +
-            "redis.call('SET', KEYS[3], ARGV[4], 'EX', ARGV[5]) " +
+            "local now = tonumber(ARGV[3]); local duration = tonumber(ARGV[4]); " +
+            "local plan = cjson.decode(ARGV[1]); local existingRaw = redis.call('GET', KEYS[1]); " +
+            "local expiry = now + duration; " +
+            "if existingRaw then local ok, existing = pcall(cjson.decode, existingRaw); " +
+            "if ok and existing then local oldExpiry = tonumber(existing.expires or 0) or 0; " +
+            "if oldExpiry > now then expiry = oldExpiry + duration end; " +
+            "if existing.trialUsed or existing.planId == 'TRIAL' then plan.trialUsed = true end; end end; " +
+            "plan.activatedAt = now; plan.expires = expiry; " +
+            "redis.call('SET', KEYS[1], cjson.encode(plan)); " +
+            "redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[5]); " +
+            "redis.call('SET', KEYS[3], ARGV[6], 'EX', ARGV[7]); " +
             "return 1";
         try {
             var result = await withTimeout(this.redis.eval(
@@ -279,6 +287,8 @@ class RedisStorage {
                 [
                     JSON.stringify(planRecord),
                     JSON.stringify(paymentRecord),
+                    Date.now(),
+                    planRecord.durationMs,
                     180 * 24 * 60 * 60,
                     JSON.stringify({ processedAt: Date.now(), chatId: chatId, planId: planId }),
                     180 * 24 * 60 * 60
@@ -907,10 +917,22 @@ async function getUserPlan(chatId) {
 async function invalidatePlanCache(chatId) { planCache.delete(chatId); }
 
 async function activateTrial(chatId) {
-    var key='plan_'+chatId, existing=await getData(key);
-    if(existing){try{var p=typeof existing==='string'?JSON.parse(existing):existing;if(p.trialUsed||p.planId==='TRIAL')return null;}catch(e){}}
-    await setData(key,JSON.stringify({planId:'TRIAL',activatedAt:Date.now(),expires:0,trialUsed:true}));
-    await invalidatePlanCache(chatId); return true;
+    var key = 'plan_' + chatId;
+    var existing = await getData(key);
+    if (existing) {
+        try {
+            var current = typeof existing === 'string' ? JSON.parse(existing) : existing;
+            if (!current || typeof current !== 'object') return null;
+            if (current.trialUsed || current.planId === 'TRIAL') return null;
+            if (current.planId && current.planId !== 'TRIAL' && Number(current.expires) > Date.now()) return null;
+        } catch (error) {
+            console.error('Trial activation blocked: invalid existing plan record');
+            return null;
+        }
+    }
+    await setData(key, JSON.stringify({ planId: 'TRIAL', activatedAt: Date.now(), expires: 0, trialUsed: true }));
+    await invalidatePlanCache(chatId);
+    return true;
 }
 
 async function activatePlan(chatId, planId) {
@@ -1820,7 +1842,11 @@ async function handlePlanSelection(chatId, planId, lang, messageId) {
             await sendUpdatedMessage(chatId, getText(lang, 'plans_trial_used'), null, 'Markdown', messageId);
             return;
         }
-        await activateTrial(chatId);
+        var trialActivated = await activateTrial(chatId);
+        if (!trialActivated && userPlan.plan !== 'TRIAL') {
+            await sendUpdatedMessage(chatId, getText(lang, 'plans_trial_used'), null, 'Markdown', messageId);
+            return;
+        }
         await sendUpdatedMessage(chatId, getText(lang, 'plans_trial_success'), null, 'Markdown', messageId);
         await showMainMenu(chatId);
         return;
@@ -5726,7 +5752,7 @@ async function handleCryptoWebhook(request) {
             var planRecord = {
                 planId: planId,
                 activatedAt: activatedAt,
-                expires: activatedAt + PLANS[planId].duration * 24 * 60 * 60 * 1000
+                durationMs: PLANS[planId].duration * 24 * 60 * 60 * 1000
             };
             var activated = await VOID_KV.activatePaidInvoice(invoiceId, chatId, planId, planRecord, paidRecord);
             if (!activated) return { status: 200, duplicate: true };
