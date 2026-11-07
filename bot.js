@@ -14,7 +14,7 @@ const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = r
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
-const { scanKeysByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
+const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -237,6 +237,15 @@ class RedisStorage {
             console.error('Redis list error:', error.message);
             if (strict) throw new Error('Critical storage listing unavailable');
             return [];
+        }
+    }
+    async forEachKey(prefix, callback) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            await forEachKeyByPrefix(this.redis, withTimeout, prefix, callback);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical storage listing unavailable');
         }
     }
     async atomicIncrementWithLimit(key, limit, ttlSeconds) {
@@ -4660,23 +4669,25 @@ function scheduleDisconnectFinalization(chatId, pendingRaw, expectedUserRaw, del
 
 async function recoverPendingDisconnects() {
     try {
-        var pendingKeys = await VOID_KV.list('pending_disconnect_', true);
-        for (var i = 0; i < pendingKeys.length; i++) {
-            var key = pendingKeys[i].name;
-            var chatId = Number(String(key).slice('pending_disconnect_'.length));
-            if (!Number.isSafeInteger(chatId)) continue;
-            var pendingRaw = await getData(key);
-            if (!pendingRaw) continue;
-            var pending;
-            try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
-            if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
-                // Delete only the exact malformed value we inspected; a newer pending request may have replaced it.
-                await VOID_KV.deletePendingDisconnectIfMatches(chatId, pendingRaw);
-                continue;
+        // Process each SCAN page immediately instead of retaining every pending key in memory.
+        await VOID_KV.forEachKey('pending_disconnect_', async function(keys) {
+            for (var i = 0; i < keys.length; i++) {
+                var key = keys[i];
+                var chatId = Number(String(key).slice('pending_disconnect_'.length));
+                if (!Number.isSafeInteger(chatId)) continue;
+                var pendingRaw = await getData(key);
+                if (!pendingRaw) continue;
+                var pending;
+                try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
+                if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
+                    // Delete only the exact malformed value we inspected; a newer pending request may have replaced it.
+                    await VOID_KV.deletePendingDisconnectIfMatches(chatId, pendingRaw);
+                    continue;
+                }
+                var remaining = 10000 - (Date.now() - Number(pending.scheduledAt));
+                scheduleDisconnectFinalization(chatId, pendingRaw, pending.userRecord, remaining);
             }
-            var remaining = 10000 - (Date.now() - Number(pending.scheduledAt));
-            scheduleDisconnectFinalization(chatId, pendingRaw, pending.userRecord, remaining);
-        }
+        });
     } catch (error) {
         console.warn('Pending exchange disconnect recovery will retry after storage recovery.');
         var retryTimer = setTimeout(recoverPendingDisconnects, 30000);
