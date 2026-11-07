@@ -33,6 +33,7 @@ function calculateRiskBreakdown(input) {
   var dataQuality = coverageComplete ? 0 : 20;
   var stablePegRisk = clamp(input.stablePegRisk, 0, 15);
   var priceFreshnessRisk = clamp(input.priceFreshnessRisk, 0, 15);
+  var marketLiquidityRisk = clamp(input.marketLiquidityRisk, 0, 15);
 
   var breakdown = [
     { key: 'concentration', labelRu: 'Концентрация', labelEn: 'Concentration', points: concentration,
@@ -42,7 +43,8 @@ function calculateRiskBreakdown(input) {
     { key: 'diversification', labelRu: 'Диверсификация', labelEn: 'Diversification', points: diversification },
     { key: 'data_quality', labelRu: 'Качество данных', labelEn: 'Data quality', points: dataQuality },
     { key: 'stable_peg', labelRu: 'Отклонение стейблкоинов от привязки', labelEn: 'Stablecoin peg deviation', points: stablePegRisk },
-    { key: 'price_freshness', labelRu: 'Актуальность котировок', labelEn: 'Price freshness', points: priceFreshnessRisk }
+    { key: 'price_freshness', labelRu: 'Актуальность котировок', labelEn: 'Price freshness', points: priceFreshnessRisk },
+    { key: 'market_liquidity', labelRu: 'Ликвидность рынка', labelEn: 'Market liquidity', points: marketLiquidityRisk }
   ];
 
   var score = clamp(breakdown.reduce(function(sum, f) { return sum + f.points; }, 0), 0, 100);
