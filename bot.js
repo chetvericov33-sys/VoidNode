@@ -14,6 +14,7 @@ const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = r
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
+const { deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -332,6 +333,15 @@ class RedisStorage {
                 ['pending_disconnect_' + chatId, 'user_' + chatId],
                 [pendingRaw, expectedUserRaw]), 8000, 'Atomic exchange disconnect');
             return Number(result) === 1;
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async deletePendingDisconnectIfMatches(chatId, pendingRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await deletePendingDisconnectIfMatches(this.redis, withTimeout, chatId, pendingRaw);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             throw new Error('Critical credential storage unavailable');
@@ -4654,7 +4664,8 @@ async function recoverPendingDisconnects() {
             var pending;
             try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
             if (!pending || typeof pending.userRecord !== 'string' || !Number.isFinite(Number(pending.scheduledAt))) {
-                await deleteData(key);
+                // Delete only the exact malformed value we inspected; a newer pending request may have replaced it.
+                await VOID_KV.deletePendingDisconnectIfMatches(chatId, pendingRaw);
                 continue;
             }
             var remaining = 10000 - (Date.now() - Number(pending.scheduledAt));
