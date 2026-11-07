@@ -320,6 +320,36 @@ class RedisStorage {
             await withTimeout(this.redis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [key], [token]), 8000, 'Redis release lock');
         } catch (e) {}
     }
+    async completeDisconnect(chatId, pendingRaw, expectedUserRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        var script = "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end; " +
+            "if redis.call('GET', KEYS[2]) ~= ARGV[2] then return 0 end; " +
+            "redis.call('DEL', KEYS[2]); redis.call('DEL', KEYS[1]); return 1";
+        try {
+            var result = await withTimeout(this.redis.eval(script,
+                ['pending_disconnect_' + chatId, 'user_' + chatId],
+                [pendingRaw, expectedUserRaw]), 8000, 'Atomic exchange disconnect');
+            return Number(result) === 1;
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async restoreDisconnect(chatId, pendingRaw, expectedUserRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        var script = "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end; " +
+            "if redis.call('GET', KEYS[2]) ~= ARGV[2] then return 0 end; " +
+            "redis.call('SET', KEYS[2], ARGV[2]); redis.call('DEL', KEYS[1]); return 1";
+        try {
+            var result = await withTimeout(this.redis.eval(script,
+                ['pending_disconnect_' + chatId, 'user_' + chatId],
+                [pendingRaw, expectedUserRaw]), 8000, 'Atomic exchange disconnect undo');
+            return Number(result) === 1;
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
 }
 
 var VOID_KV = new RedisStorage();
@@ -594,17 +624,21 @@ async function editBotMessage(chatId, messageId, text, keyboard, parseMode) {
 }
 
 async function deleteUserMessage(chatId, messageId) {
-    if (!messageId) return;
+    if (!messageId) return false;
     try {
         var url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage';
         var body = { chat_id: chatId, message_id: messageId };
-        await fetchWithTimeout(url, {
+        var response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         }, 10000, 'Telegram deleteMessage');
+        if (!response.ok) return false;
+        var result = await response.json();
+        return !!(result && result.ok === true && result.result === true);
     } catch (error) {
-        console.error('Failed to delete user message:', error.message);
+        console.warn('Telegram message deletion could not be confirmed.');
+        return false;
     }
 }
 
@@ -1609,15 +1643,27 @@ async function loadUserKeys(chatId) {
     if (!data) return null;
     try {
         var parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+            !validateExchangeId(parsed.exchangeId) ||
+            typeof parsed.apiKey !== 'string' || typeof parsed.secretKey !== 'string' ||
+            (parsed.permissionModel !== undefined && parsed.permissionModel !== 'read')) {
+            return null;
+        }
         var decryptedApiKey = decrypt(parsed.apiKey);
         var decryptedSecretKey = decrypt(parsed.secretKey);
+        if (typeof decryptedApiKey !== 'string' || decryptedApiKey.length < 8 || decryptedApiKey.length > 256 ||
+            typeof decryptedSecretKey !== 'string' || decryptedSecretKey.length < 8 || decryptedSecretKey.length > 512) {
+            return null;
+        }
         return {
             apiKey: decryptedApiKey,
             secretKey: decryptedSecretKey,
             exchangeId: parsed.exchangeId,
-            connectedAt: parsed.connectedAt, permissionModel: parsed.permissionModel || 'read', walletType: parsed.walletType || 'real'
+            connectedAt: parsed.connectedAt, permissionModel: 'read', walletType: 'real'
         };
     } catch (e) {
+        // Fail closed: never create an exchange connection from malformed or undecryptable data.
+        console.warn('Stored exchange credentials are invalid or cannot be decrypted.');
         return null;
     }
 }
@@ -4589,7 +4635,8 @@ async function scheduleDisconnect(chatId) {
         return;
     }
     var stored = typeof raw === 'string' ? raw : JSON.stringify(raw);
-    await setData('pending_disconnect_' + chatId, stored, 20);
+    var pendingRecord = JSON.stringify({ userRecord: stored, scheduledAt: Date.now() });
+    await setData('pending_disconnect_' + chatId, pendingRecord, 60);
     var lang = await getData('lang_' + chatId) || 'ru';
     await sendMessage(chatId, getText(lang, 'connect_undo'), {
         inline_keyboard: [
@@ -4599,26 +4646,31 @@ async function scheduleDisconnect(chatId) {
     });
     setTimeout(async function() {
         try {
-            var pending = await getData('pending_disconnect_' + chatId);
-            if (pending) {
-                await deleteData('user_' + chatId);
-                await deleteData('pending_disconnect_' + chatId);
-                console.log('🔌 Exchange disconnected after grace period for ' + chatId);
-            }
+            var completed = await VOID_KV.completeDisconnect(chatId, pendingRecord, stored);
+            if (completed) console.log('🔌 Exchange disconnected after grace period for ' + chatId);
         } catch (e) {
-            console.error('Delayed disconnect error:', e.message);
+            console.error('Delayed disconnect failed safely:', e.message);
         }
     }, 10000);
 }
 
 async function undoDisconnect(chatId) {
-    var pending = await getData('pending_disconnect_' + chatId);
-    if (!pending) {
+    var pendingRaw = await getData('pending_disconnect_' + chatId);
+    if (!pendingRaw) {
         await sendMessage(chatId, 'ℹ️ ' + ((await getData('lang_' + chatId) || 'ru') === 'ru' ? 'Окно отмены уже истекло.' : 'The undo window has expired.'));
         return;
     }
-    await setData('user_' + chatId, typeof pending === 'string' ? pending : JSON.stringify(pending));
-    await deleteData('pending_disconnect_' + chatId);
+    var pending;
+    try { pending = typeof pendingRaw === 'string' ? JSON.parse(pendingRaw) : pendingRaw; } catch (e) { pending = null; }
+    if (!pending || typeof pending.userRecord !== 'string') {
+        await sendMessage(chatId, '⚠️ Не удалось безопасно восстановить подключение. Подключи биржу заново.');
+        return;
+    }
+    var restored = await VOID_KV.restoreDisconnect(chatId, pendingRaw, pending.userRecord);
+    if (!restored) {
+        await sendMessage(chatId, 'ℹ️ Окно отмены уже истекло или подключение было изменено.');
+        return;
+    }
     var lang = await getData('lang_' + chatId) || 'ru';
     await sendMessage(chatId, getText(lang, 'connect_undo_success'));
     await showMainMenu(chatId);
@@ -5023,12 +5075,18 @@ async function handleMessage(update) {
                 await showMainMenu(chatId);
                 return;
             }
+            // Every non-cancel message in this state may contain credentials; require confirmed deletion.
+            var credentialMessageDeleted = await deleteUserMessage(chatId, messageId);
+            if (!credentialMessageDeleted) {
+                await setState(chatId, 'idle');
+                await deleteData('connect_exchange_' + chatId);
+                await sendMessage(chatId, '🔒 Не удалось подтвердить удаление сообщения. Ключи не сохранены. Удали исходное сообщение вручную и проверь права бота на удаление сообщений.');
+                return;
+            }
             var parts = cleanText.split(':');
             if (parts.length === 2) {
                 var apiKey = parts[0].trim();
                 var secretKey = parts[1].trim();
-                // Delete the credential-bearing Telegram message as early as possible.
-                await deleteUserMessage(chatId, messageId);
                 if (apiKey.length < 8 || apiKey.length > 256 || secretKey.length < 8 || secretKey.length > 512) {
                     await setState(chatId, 'idle');
                     await sendMessage(chatId, '❌ Неверный формат ключей. Создай новый ключ и попробуй снова.');
@@ -5041,6 +5099,8 @@ async function handleMessage(update) {
                 var encryptedApiKey = encrypt(apiKey);
                 var encryptedSecretKey = encrypt(secretKey);
                 if (!encryptedApiKey || !encryptedSecretKey) throw new Error('Credential encryption failed');
+                // Cancel any older disconnect request before replacing credentials.
+                await deleteData('pending_disconnect_' + chatId);
                 await setData('user_' + chatId, JSON.stringify({
                     apiKey: encryptedApiKey,
                     secretKey: encryptedSecretKey,
