@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
+const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 
 // ============================================================
@@ -1966,13 +1967,13 @@ async function handlePlanSelection(chatId, planId, lang, messageId) {
 async function checkContractAdvanced(address) {
     var result = {
         address: address,
-        isVerified: false,
+        isVerified: null,
         isHoneypot: null,
         canSell: null,
         canBuy: null,
         ownershipRenounced: false,
         liquidityLocked: false,
-        riskLevel: 'Низкий',
+        riskLevel: '🟡 НЕПОЛНАЯ ПРОВЕРКА',
         riskScore: 0,
         details: [],
         warnings: [],
@@ -1985,15 +1986,21 @@ async function checkContractAdvanced(address) {
             var resp = await fetchWithTimeout(url, {}, 10000, 'External API request');
             var data = await resp.json();
             
-            if (data.status === '1' && data.result) {
-                result.isVerified = true;
+            result.isVerified = classifyEtherscanVerification(data);
+            if (result.isVerified === true) {
                 result.details.push('✅ Контракт верифицирован на Etherscan');
                 result.riskScore -= 20;
-            } else {
+            } else if (result.isVerified === false) {
                 result.warnings.push('⚠️ Контракт НЕ верифицирован на Etherscan');
                 result.riskScore += 30;
-                result.details.push('❌ Контракт не верифицирован — высокий риск');
+                result.details.push('❌ Контракт не верифицирован — дополнительный риск');
+            } else {
+                result.warnings.push('⚠️ Статус верификации Etherscan неизвестен: ответ API не позволяет сделать вывод.');
+                result.details.push('ℹ️ Верификация контракта: UNKNOWN');
             }
+        } else {
+            result.warnings.push('⚠️ Etherscan API key не настроен: статус верификации неизвестен.');
+            result.details.push('ℹ️ Верификация контракта: UNKNOWN');
         }
 
         // Do not infer honeypots from hexadecimal address spelling. That creates false positives.
@@ -2062,8 +2069,9 @@ async function checkContractAdvanced(address) {
             result.riskLevel = '🟡 СРЕДНИЙ';
             result.recommendations.push('📊 Рекомендуется дополнительная проверка');
         } else {
-            result.riskLevel = '🟢 НИЗКИЙ';
-            result.recommendations.push('🟢 По доступным проверкам критичных признаков не найдено; это не гарантия безопасности.');
+            result.riskLevel = '🟡 НЕПОЛНАЯ ПРОВЕРКА';
+            result.recommendations.push('⚠️ Недостаточно данных для низкого уровня риска: honeypot не проверен симуляцией покупки и продажи.');
+            result.recommendations.push('🔎 Не считайте этот результат подтверждением безопасности контракта.');
         }
 
         if (result.isVerified) {
@@ -2073,20 +2081,7 @@ async function checkContractAdvanced(address) {
         return result;
     } catch (error) {
         console.error('Advanced contract check error:', error);
-        return {
-            address: address,
-            isVerified: false,
-            isHoneypot: false,
-            canSell: true,
-            canBuy: true,
-            ownershipRenounced: false,
-            liquidityLocked: false,
-            riskLevel: '🔴 ОШИБКА',
-            riskScore: 50,
-            details: ['❌ Ошибка проверки: ' + error.message],
-            warnings: ['⚠️ Не удалось провести полную проверку'],
-            recommendations: ['🔍 Проверьте контракт вручную на Etherscan']
-        };
+        return createContractCheckFailure(address);
     }
 }
 
@@ -3254,7 +3249,7 @@ async function handleContractCheck(chatId, address, lang, messageId) {
         var message = '🔍 *ОТЧЕТ ПО КОНТРАКТУ*\n──────\n\n';
         message += '📌 *Адрес:* `' + address + '`\n\n';
         message += '📊 *Уровень риска:* ' + result.riskLevel + '\n';
-        message += '📊 *Оценка риска:* ' + result.riskScore + '/100\n\n';
+        message += '📊 *Оценка риска:* ' + (result.riskScore === null ? 'Не рассчитана' : result.riskScore + '/100') + '\n\n';
         message += '📋 *ДЕТАЛИ ПРОВЕРКИ*\n──────\n';
         for (var i = 0; i < result.details.length; i++) {
             message += result.details[i] + '\n';
@@ -3274,7 +3269,7 @@ async function handleContractCheck(chatId, address, lang, messageId) {
             message += result.recommendations[i] + '\n';
         }
         message += '\n';
-        message += '✅ *Верифицирован:* ' + (result.isVerified ? 'Да' : 'Нет') + '\n';
+        message += '✅ *Верифицирован:* ' + (result.isVerified === true ? 'Да' : (result.isVerified === false ? 'Нет' : 'Неизвестно')) + '\n';
         message += '🚫 *Honeypot:* ' + (result.isHoneypot === true ? 'Обнаружен!' : (result.isHoneypot === false ? 'Не обнаружен' : 'Не определено — недостаточно данных')) + '\n';
         message += '\n──────\n';
         message += '🛡️ *Void Node — защита от скамов*';
@@ -3329,7 +3324,7 @@ async function handleWalletCheck(chatId, address, lang, messageId) {
         message += '📊 *Транзакций:* ' + result.totalTransactions + '\n';
         message += '📄 *Тип:* ' + (result.isContract ? 'Контракт' : 'EOA-кошелек') + '\n\n';
         message += '📊 *Уровень риска:* ' + result.riskLevel + '\n';
-        message += '📊 *Оценка риска:* ' + result.riskScore + '/100\n\n';
+        message += '📊 *Оценка риска:* ' + (result.riskScore === null ? 'Не рассчитана' : result.riskScore + '/100') + '\n\n';
         
         if (result.tokens.length > 0) {
             message += '🪙 *ТОКЕНЫ (первые 10)*\n──────\n';
@@ -5531,7 +5526,7 @@ async function autoCheckContract(chatId, address, lang, messageId) {
     var message = '📄 *АВТОМАТИЧЕСКАЯ ПРОВЕРКА КОНТРАКТА*\n──────\n\n';
     message += '📌 *Адрес:* `' + address + '`\n\n';
     message += '📊 *Уровень риска:* ' + result.riskLevel + '\n';
-    message += '📊 *Оценка риска:* ' + result.riskScore + '/100\n\n';
+    message += '📊 *Оценка риска:* ' + (result.riskScore === null ? 'Не рассчитана' : result.riskScore + '/100') + '\n\n';
     if (result.warnings.length > 0) {
         message += '⚠️ *Предупреждения:*\n';
         for (var i = 0; i < result.warnings.length; i++) {
