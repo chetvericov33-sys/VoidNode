@@ -21,7 +21,7 @@ function calculateRiskBreakdown(input) {
   // Risk points are deterministic and additive; the final score is capped at 100.
   // Missing valuation data receives a material uncertainty penalty because unknown
   // balances can hide concentration and exposure outside the priced portfolio.
-  var concentration = top <= 50 ? 0 : top <= 60 ? 20 : top <= 70 ? 40 : 50;
+  var concentration = top <= 35 ? 0 : top <= 45 ? 10 : top <= 50 ? 15 : top <= 60 ? 25 : top <= 70 ? 40 : 50;
   var reserveGap = Math.max(0, stableTarget - stable);
   var reserve = reserveGap <= 5 ? 5 : reserveGap <= 10 ? 10 : 15;
   if (reserveGap === 0) reserve = 0;
