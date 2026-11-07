@@ -18,7 +18,7 @@ const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatch
 const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parseCryptoWebhookPayload, parsePaymentChatId, validateCryptoPaidInvoice } = require('./webhook_safety');
 const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require('./referral_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
-const { isMarketOrNewsQuestion, appendNewsDisclosure, appendNewsUnavailableNotice, formatNewsDisclosure } = require('./news_disclosure');
+const { isMarketOrNewsQuestion, isSimplePriceQuestion, appendNewsDisclosure, appendNewsUnavailableNotice, formatNewsDisclosure } = require('./news_disclosure');
 const { filterRelevantCryptoNews } = require('./news_relevance');
 const { fetchCryptoRssNews, filterNewsForAsset, articleMentionsAsset } = require('./crypto_news');
 const { requestOpenRouterCompletion } = require('./ai_completion');
@@ -4435,7 +4435,7 @@ class AIContext {
         
         var coinMatch = question.match(/(BTC|ETH|SOL|BNB|ADA|XRP|DOGE|SHIB|MATIC|DOT|AVAX|LINK|UNI|PEPE|ARB|OP|APT|SUI|NEAR|ATOM|LTC|BCH|FIL|FTM|AAVE|MKR|CRV|SNX|COMP|ZEC|XLM|ALGO|HBAR|RUNE|FLOW|WAVES|NEO|DASH|KSM|ENJ|CHZ|SAND|MANA|AXS|GALA|GRT)\b/i);
         
-        if (coinMatch && !isMarketOrNewsQuestion(question)) {
+        if (coinMatch && isSimplePriceQuestion(question)) {
             var coin = coinMatch[0].toUpperCase();
             if (context.lastSnowball && context.lastSnowball.tokens) {
                 var token = context.lastSnowball.tokens.find(function(t) { return t.symbol === coin; });
