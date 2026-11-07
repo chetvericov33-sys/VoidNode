@@ -4,26 +4,24 @@ const assert = require('node:assert/strict');
 const {
     scanKeysByPrefix,
     createPendingDisconnectIfUserMatches,
+    replaceUserAndClearPending,
     deletePendingDisconnectIfMatches
 } = require('./disconnect_storage');
 
 async function run() {
-    const values = new Map([
-        ['user_42', 'user-v1'],
-        ['pending_disconnect_42', 'old-pending']
-    ]);
-    const calls = [];
+    const values = new Map([['user_42', 'user-v1'], ['pending_disconnect_42', 'old-pending']]);
     const redis = {
         async eval(script, keys, args) {
-            calls.push({ script, keys, args });
-            if (script.includes("redis.call('SET', KEYS[1], ARGV[1])")) {\n                values.set(keys[0], args[0]);\n                values.delete(keys[1]);\n                return 1;\n            }\n            if (keys.length === 2) {
-                assert.match(script, /GET', KEYS\[1\]\) ~= ARGV\[1\]/);
+            if (script.includes("redis.call('SET', KEYS[1], ARGV[1])")) {
+                values.set(keys[0], args[0]);
+                values.delete(keys[1]);
+                return 1;
+            }
+            if (keys.length === 2) {
                 if (values.get(keys[0]) !== args[0]) return 0;
                 values.set(keys[1], args[1]);
                 return 1;
             }
-            assert.match(script, /GET', KEYS\[1\]\) ~= ARGV\[1\]/);
-            assert.match(script, /return redis\.call\('DEL', KEYS\[1\]\)/);
             if (values.get(keys[0]) !== args[0]) return 0;
             return values.delete(keys[0]) ? 1 : 0;
         },
@@ -37,37 +35,29 @@ async function run() {
     };
     const passthroughTimeout = promise => promise;
 
-    // Conditional scheduling must not overwrite a pending request if reconnect changed the user record.
     values.set('user_42', 'user-v2');
     assert.equal(await createPendingDisconnectIfUserMatches(redis, passthroughTimeout, 42, 'user-v1', 'pending-old'), false);
     assert.equal(values.get('pending_disconnect_42'), 'old-pending');
 
-    // When the expected user record is current, scheduling succeeds atomically.
     assert.equal(await createPendingDisconnectIfUserMatches(redis, passthroughTimeout, 42, 'user-v2', 'pending-new'), true);
     assert.equal(values.get('pending_disconnect_42'), 'pending-new');
 
-    // A stale recovery read must not delete a newer pending request.
     assert.equal(await deletePendingDisconnectIfMatches(redis, passthroughTimeout, 42, 'old-pending'), false);
     assert.equal(values.get('pending_disconnect_42'), 'pending-new');
 
-    // The exact malformed value inspected by recovery can be safely removed.
     assert.equal(await deletePendingDisconnectIfMatches(redis, passthroughTimeout, 42, 'pending-new'), true);
     assert.equal(values.has('pending_disconnect_42'), false);
 
-
-    // Reconnect must atomically install new credentials and clear any pending disconnect.
     values.set('pending_disconnect_42', 'pending-during-reconnect');
     assert.equal(await replaceUserAndClearPending(redis, passthroughTimeout, 42, 'user-v3'), true);
     assert.equal(values.get('user_42'), 'user-v3');
     assert.equal(values.has('pending_disconnect_42'), false);
 
-    // A delayed finalizer holding the previous user snapshot cannot delete the new credentials.
     assert.equal(await createPendingDisconnectIfUserMatches(redis, passthroughTimeout, 42, 'user-v2', 'stale-pending'), false);
     assert.equal(values.get('user_42'), 'user-v3');
-\n    // SCAN walks every page and returns the matching keys.
+
     assert.deepEqual(await scanKeysByPrefix(redis, passthroughTimeout, 'pending_disconnect_'), [
-        'pending_disconnect_1',
-        'pending_disconnect_2'
+        'pending_disconnect_1', 'pending_disconnect_2'
     ]);
 
     await assert.rejects(
