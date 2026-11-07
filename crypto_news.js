@@ -7,30 +7,30 @@ const FEEDS = [
 ];
 const MAX_AGE_MS = 72 * 60 * 60 * 1000;
 function decodeXml(value) {
- return String(value || '').replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/g, '$1')
+ return String(value || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
   .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'")
-  .replace(/&#(\\d+);/g, function(_, n) { return String.fromCodePoint(Number(n)); })
+  .replace(/&#(\d+);/g, function(_, n) { return String.fromCodePoint(Number(n)); })
   .replace(/&#x([0-9a-f]+);/gi, function(_, n) { return String.fromCodePoint(parseInt(n, 16)); });
 }
 function stripHtml(value) {
- return decodeXml(value).replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
-  .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
-  .replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();
+ return decodeXml(value).replace(/<script[\s\S]*?<\/script>/gi, ' ')
+  .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+  .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function readTag(xml, tag) {
- var match = xml.match(new RegExp('<(?:[\\\\w.-]+:)?' + tag + '\\\\b[^>]*>([\\\\s\\\\S]*?)<\\\\/(?:[\\\\w.-]+:)?' + tag + '\\\\s*>', 'i'));
+ var match = xml.match(new RegExp('<(?:[\\w.-]+:)?' + tag + '\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?' + tag + '\\s*>', 'i'));
  return match ? decodeXml(match[1]).trim() : '';
 }
 function readLink(xml) {
  var link = readTag(xml, 'link');
  if (link) return stripHtml(link);
- var atom = xml.match(/<(?:[\\w.-]+:)?link\\b[^>]*href=["']([^"']+)["'][^>]*\\/?\\s*>/i);
+ var atom = xml.match(/<(?:[\w.-]+:)?link\b[^>]*href=["']([^"']+)["'][^>]*\/?\s*>/i);
  return atom ? decodeXml(atom[1]).trim() : '';
 }
 function parseFeed(xml, sourceName, now) {
  now = Number(now) || Date.now();
- var blocks = String(xml || '').match(/<(?:[\\w.-]+:)?(?:item|entry)\\b[^>]*>[\\s\\S]*?<\\/(?:[\\w.-]+:)?(?:item|entry)\\s*>/gi) || [];
+ var blocks = String(xml || '').match(/<(?:[\w.-]+:)?(?:item|entry)\b[^>]*>[\s\S]*?<\/(?:[\w.-]+:)?(?:item|entry)\s*>/gi) || [];
  var articles = [];
  blocks.forEach(function(block) {
   var title = stripHtml(readTag(block, 'title'));
@@ -56,7 +56,7 @@ async function fetchCryptoRssNews(fetchWithTimeout, now) {
  }));
  var byUrl = new Map();
  results.flat().forEach(function(article) {
-  var key = article.url.split('?')[0].replace(/\\/$/,'').toLowerCase();
+  var key = article.url.split('?')[0].replace(/\/$/, '').toLowerCase();
   if (!byUrl.has(key)) byUrl.set(key, article);
  });
  return Array.from(byUrl.values()).sort(function(a,b){return Date.parse(b.publishedAt)-Date.parse(a.publishedAt);});
@@ -76,7 +76,7 @@ function articleMentionsAsset(article, rawSymbol) {
  var text = String(article.title || '') + ' ' + String(article.description || '');
  var candidates = [symbol].concat(ALIASES[symbol] || []);
  return candidates.some(function(candidate) {
-  var safe = candidate.replace(/[^A-Za-z0-9 ]/g,'').trim().replace(/ +/g,'\\\\s+');
+  var safe = candidate.replace(/[^A-Za-z0-9 ]/g,'').trim().replace(/ +/g,'\\s+');
   return new RegExp('(^|[^A-Za-z0-9])' + safe + '([^A-Za-z0-9]|$)','i').test(text);
  });
 }
