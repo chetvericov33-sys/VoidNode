@@ -12,5 +12,7 @@ const cases=[
 ];
 for(const [name,input,expected] of cases){const r=calculateRiskBreakdown(input);assert(expected.includes(level(r)), name+' => '+r.score+'/'+level(r));}
 const audit=calculateRiskBreakdown({top:42,weights:[42,25,18,15],stable:15,alts:43,meaningful:4,coverageComplete:true,targets:{BTC:50,USDT:20,ALTS:30}});
+assert.strictEqual(calculateRiskBreakdown({top:42,stable:15,alts:43,meaningful:4,coverageComplete:true}).score >= 20, true, '42% concentration must not be classified as low');
+assert.strictEqual(calculateRiskBreakdown({top:50,stable:25,alts:25,meaningful:3,coverageComplete:false}).score >= 20, true, 'partial valuation must carry a material uncertainty penalty');
 console.log('Risk Engine tests passed:', cases.length+'/'+cases.length);
 console.log('Audit example:', JSON.stringify(audit));
