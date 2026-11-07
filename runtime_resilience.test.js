@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { withTimeout, fetchWithTimeout, validateOutboundUrl, probeRedisConnection, startLeaseHeartbeat, BoundedTTLCache } = require('./runtime_resilience');
+const { withTimeout, fetchWithTimeout, validateOutboundUrl, ALLOWED_HTTPS_HOSTS, probeRedisConnection, startLeaseHeartbeat, BoundedTTLCache } = require('./runtime_resilience');
 
 async function run() {
     assert.equal(await withTimeout(Promise.resolve('ok'), 50, 'test'), 'ok');
@@ -18,6 +18,10 @@ async function run() {
     global.fetch = originalFetch;
 
     assert.equal(validateOutboundUrl('https://api.telegram.org/bot123/getMe').hostname, 'api.telegram.org');
+    for (const host of ['www.coindesk.com', 'cointelegraph.com', 'www.theblock.co', 'decrypt.co']) {
+        assert.ok(ALLOWED_HTTPS_HOSTS.includes(host), host + ' must be allowlisted for the primary crypto RSS feeds');
+        assert.equal(validateOutboundUrl('https://' + host + '/feed').hostname, host);
+    }
     assert.throws(() => validateOutboundUrl('http://api.telegram.org/'), /HTTPS/);
     assert.throws(() => validateOutboundUrl('https://127.0.0.1/'), /not allowlisted/);
     assert.throws(() => validateOutboundUrl('https://api.telegram.org:8443/'), /disallowed port/);

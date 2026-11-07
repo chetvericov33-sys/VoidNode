@@ -7,6 +7,10 @@ const ALLOWED_HTTPS_HOSTS = Object.freeze([
     'api.dexscreener.com',
     'api.coingecko.com',
     'newsapi.org',
+    'www.coindesk.com',
+    'cointelegraph.com',
+    'www.theblock.co',
+    'decrypt.co',
     'openrouter.ai',
     'finnhub.io'
 ]);
