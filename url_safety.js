@@ -66,6 +66,10 @@ function classifyUrlSafety(input, options = {}) {
 }
 
 function inspectUrlRedirects(input, options = {}, depth = 0) {
+  if (options.blacklisted === true) return classifyUrlSafety(input, options);
+  if (depth >= 5) {
+    return { status: 'UNKNOWN', safe: false, reason: 'Redirect inspection reached the maximum nesting depth.' };
+  }
   let parsed;
   try {
     parsed = new URL(String(input));
