@@ -103,7 +103,8 @@ async function run() {
         visitedPages.push(pageKeys.slice());
     });
     assert.deepEqual(visitedPages, [['pending_disconnect_1'], ['pending_disconnect_2']]);
-\n    await assert.rejects(
+
+    await assert.rejects(
         deletePendingDisconnectIfMatches(redis, async () => { throw new Error('timeout'); }, 42, 'anything'),
         /timeout/
     );
