@@ -3845,7 +3845,7 @@ class NewsManager {
 
     async getPersonalizedNews(chatId, lang, forceUpdate) {
         if (forceUpdate === undefined) forceUpdate = false;
-        var cacheKey = 'news_cache_v2_' + chatId;
+        var cacheKey = 'news_cache_v3_' + chatId;
         var now = Date.now();
         var lastUpdate = this.lastUpdate.get(chatId) || 0;
         if (!forceUpdate && now - lastUpdate < this.updateInterval) {
@@ -3921,7 +3921,7 @@ class NewsManager {
             var rawSeen = await getData('news_seen_stories_' + chatId);
             if (rawSeen) persistentSeen = typeof rawSeen === 'string' ? JSON.parse(rawSeen) : rawSeen;
             if (!Array.isArray(persistentSeen)) persistentSeen = [];
-            persistentSeen = persistentSeen.filter(function(x){ return x && Date.now() - Number(x.seenAt||0) < 7*24*60*60*1000; });
+            persistentSeen = persistentSeen.filter(function(x){ return x && Date.now() - Number(x.seenAt||0) < 6*60*60*1000; });
         } catch(e) { persistentSeen = []; }
 
         function normalizeNewsText(text) {
@@ -3964,18 +3964,22 @@ class NewsManager {
         var newsPromises = topAssets.map(async function(asset) {
             try {
                 var query = asset.symbol;
-                var cacheKey = 'news_asset_v2_' + query + '_' + (isRu ? 'ru' : 'en');
+                var cacheKey = 'news_asset_v3_' + query + '_' + (isRu ? 'ru' : 'en');
                 var cached = await getData(cacheKey);
                 if (cached) {
                     var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
                     if (Date.now() - parsed.timestamp < 300000) return parsed.articles;
                 }
-                var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=10&apiKey=' + NEWS_API_KEY;
+                // Balance symbols can be BASE/QUOTE; search the actual asset ticker only.
+                var searchSymbol = String(query || '').split('/')[0].trim().replace(/[^A-Za-z0-9._-]/g, '');
+                if (!searchSymbol) return [];
+                var params = new URLSearchParams({ q: searchSymbol + ' crypto', language: isRu ? 'ru' : 'en', sortBy: 'publishedAt', pageSize: '25', apiKey: NEWS_API_KEY });
+                var url = 'https://newsapi.org/v2/everything?' + params.toString();
                 var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
                 var data = await response.json();
                 var articles = [];
                 if (data.status === 'ok' && data.articles) {
-                    articles = filterRelevantCryptoNews(data.articles);
+                    articles = filterRelevantCryptoNews(data.articles, [searchSymbol]);
                     await setData(cacheKey, JSON.stringify({ articles: articles, timestamp: Date.now() }), 300);
                 }
                 return articles;
