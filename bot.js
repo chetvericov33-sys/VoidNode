@@ -18,8 +18,10 @@ const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatch
 const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parseCryptoWebhookPayload, parsePaymentChatId, validateCryptoPaidInvoice } = require('./webhook_safety');
 const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require('./referral_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
-const { isMarketOrNewsQuestion, appendNewsDisclosure, appendNewsUnavailableNotice, formatNewsDisclosure } = require('./news_disclosure');
+const { isMarketOrNewsQuestion, isSimplePriceQuestion, appendNewsDisclosure, appendNewsUnavailableNotice, formatNewsDisclosure } = require('./news_disclosure');
 const { filterRelevantCryptoNews } = require('./news_relevance');
+const { fetchCryptoRssNews, filterNewsForAsset, articleMentionsAsset } = require('./crypto_news');
+const { requestOpenRouterCompletion } = require('./ai_completion');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -3844,7 +3846,7 @@ class NewsManager {
 
     async getPersonalizedNews(chatId, lang, forceUpdate) {
         if (forceUpdate === undefined) forceUpdate = false;
-        var cacheKey = 'news_cache_v2_' + chatId;
+        var cacheKey = 'news_cache_v4_' + chatId;
         var now = Date.now();
         var lastUpdate = this.lastUpdate.get(chatId) || 0;
         if (!forceUpdate && now - lastUpdate < this.updateInterval) {
@@ -3915,110 +3917,103 @@ class NewsManager {
         var allArticles = [];
         var seenUrls = new Set();
         var seenStories = [];
-        var persistentSeen = [];
-        try {
-            var rawSeen = await getData('news_seen_stories_' + chatId);
-            if (rawSeen) persistentSeen = typeof rawSeen === 'string' ? JSON.parse(rawSeen) : rawSeen;
-            if (!Array.isArray(persistentSeen)) persistentSeen = [];
-            persistentSeen = persistentSeen.filter(function(x){ return x && Date.now() - Number(x.seenAt||0) < 7*24*60*60*1000; });
-        } catch(e) { persistentSeen = []; }
-
         function normalizeNewsText(text) {
-            return String(text || '').toLowerCase()
-                .replace(/https?:\/\/\S+/g, ' ')
-                .replace(/[^\p{L}\p{N}]+/gu, ' ')
-                .trim();
-        }
-
-        function canonicalNewsToken(token) {
-            token = String(token || '').toLowerCase();
-            var suffixes=['ами','ями','ого','ему','ому','ыми','ими','ов','ев','ам','ям','ах','ях','ing','ed','es','s'];
-            for(var si=0;si<suffixes.length;si++){var suf=suffixes[si];if(token.endsWith(suf)&&token.length-suf.length>=4){token=token.slice(0,-suf.length);break;}}
-            return token;
+            return String(text || '').toLowerCase().replace(/https?:\/\/\S+/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
         }
         function newsTokenSet(text) {
-            var stop=new Set(['the','and','for','with','from','that','this','will','into','after','before','about','over','user','users','как','что','это','для','после','перед','из','на','и','в','с','по','к','до','который','которые','пользователь','пользователя']);
-            return new Set(normalizeNewsText(text).split(/\s+/).map(canonicalNewsToken).filter(function(t){return t.length>=4&&!stop.has(t);}));
+            var stop = new Set(['the','and','for','with','from','that','this','will','into','after','before','about','over','как','что','это','для','после','перед','из','на','и','в','с','по']);
+            return new Set(normalizeNewsText(text).split(/\s+/).filter(function(t){return t.length >= 4 && !stop.has(t);}));
         }
-        function overlap(a,b){var n=0;a.forEach(function(t){if(b.has(t))n++;});return n;}
-        function storySimilar(bodyA,titleA,bodyB,titleB){
-            var common=overlap(bodyA,bodyB), union=bodyA.size+bodyB.size-common, j=union?common/union:0;
-            var titleCommon=overlap(titleA,titleB);
-            return (j>=0.30&&common>=4)||(titleCommon>=2&&common>=5);
-        }
-        function isDuplicateStory(title,description,url) {
-            var body=newsTokenSet(String(title||'')+' '+String(description||''));
-            var titleSet=newsTokenSet(String(title||''));
-            var normalizedUrl=String(url||'').split('?')[0].replace(/\/$/,'').toLowerCase();
-            if(normalizedUrl&&seenUrls.has(normalizedUrl))return true;
-            for(var si=0;si<seenStories.length;si++){var x=seenStories[si];if(x&&x.body&&storySimilar(body,titleSet,x.body,x.title))return true;}
-            for(var pi=0;pi<persistentSeen.length;pi++){
-                var h=persistentSeen[pi],hb=newsTokenSet(String(h.title||'')+' '+String(h.description||'')),ht=newsTokenSet(String(h.title||''));
-                if(normalizedUrl&&h.url===normalizedUrl)return true;
-                if(hb.size>=4&&storySimilar(body,titleSet,hb,ht))return true;
+        function isDuplicateStory(article) {
+            var body = newsTokenSet(String(article.title || '') + ' ' + String(article.description || ''));
+            var title = newsTokenSet(article.title || '');
+            for (var i = 0; i < seenStories.length; i++) {
+                var prior = seenStories[i], common = 0;
+                body.forEach(function(token){ if (prior.body.has(token)) common++; });
+                var titleCommon = 0;
+                title.forEach(function(token){ if (prior.title.has(token)) titleCommon++; });
+                if ((common >= 4 && common / Math.max(1, body.size + prior.body.size - common) >= 0.35) || titleCommon >= 3) return true;
             }
-            seenStories.push({body:body,title:titleSet});
+            seenStories.push({body:body,title:title});
             return false;
         }
-        var newsPromises = topAssets.map(async function(asset) {
-            try {
-                var query = asset.symbol;
-                var cacheKey = 'news_asset_v2_' + query + '_' + (isRu ? 'ru' : 'en');
-                var cached = await getData(cacheKey);
-                if (cached) {
-                    var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
-                    if (Date.now() - parsed.timestamp < 300000) return parsed.articles;
-                }
-                var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=10&apiKey=' + NEWS_API_KEY;
-                var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
-                var data = await response.json();
-                var articles = [];
-                if (data.status === 'ok' && data.articles) {
-                    articles = filterRelevantCryptoNews(data.articles);
-                    await setData(cacheKey, JSON.stringify({ articles: articles, timestamp: Date.now() }), 300);
-                }
-                return articles;
-            } catch (error) {
-                console.error('News error for ' + asset.symbol + ':', error);
-                return [];
-            }
+
+        // Primary source: direct RSS feeds from established crypto publishers.
+        // Unlike the old generic-news search, these feeds do not require NEWS_API_KEY
+        // and already contain crypto-industry reporting.
+        var rssArticles = await fetchCryptoRssNews(fetchWithTimeout);
+        var now = Date.now();
+        var maxAge = 72 * 60 * 60 * 1000;
+        rssArticles = rssArticles.filter(function(article) {
+            var published = Date.parse(article.publishedAt || '');
+            return Number.isFinite(published) && now - published <= maxAge && published <= now + 5 * 60 * 1000;
         });
-        var allArticlesArrays = await Promise.all(newsPromises);
-        for (var i = 0; i < allArticlesArrays.length; i++) {
-            var articles = allArticlesArrays[i];
-            var asset = topAssets[i];
-            for (var j = 0; j < articles.length; j++) {
-                var article = articles[j];
-                var normalizedArticleUrl = String(article.url || '').split('?')[0].replace(/\/$/, '').toLowerCase();
-                if (article.url && !seenUrls.has(normalizedArticleUrl) && !isDuplicateStory(article.title, article.description, article.url)) {
-                    seenUrls.add(normalizedArticleUrl);
-                    allArticles.push({
-                        title: article.title,
-                        description: article.description,
-                        url: article.url,
-                        source: article.source,
-                        publishedAt: article.publishedAt,
-                        asset: asset.symbol,
-                        weight: asset.weight || 0,
-                        relevance: (asset.weight || 0) / 100
-                    });
-                }
-            }
-        }
-        allArticles.sort(function(a, b) {
-            var relevanceDiff = (b.relevance || 0) - (a.relevance || 0);
-            if (Math.abs(relevanceDiff) > 0.01) return relevanceDiff;
-            return new Date(b.publishedAt) - new Date(a.publishedAt);
-        });
-        var topArticles = allArticles.slice(0, 7);
-        if (topArticles.length) {
-            topArticles.forEach(function(a){
-                var u=String(a.url||'').split('?')[0].replace(/\/$/,'').toLowerCase();
-                persistentSeen.push({url:u,title:String(a.title||''),description:String(a.description||''),seenAt:Date.now()});
+
+        rssArticles.forEach(function(article) {
+            var matchedAssets = topAssets.filter(function(asset) {
+                return articleMentionsAsset(article, asset.symbol);
             });
-            persistentSeen = persistentSeen.slice(-50);
-            await setData('news_seen_stories_' + chatId, JSON.stringify(persistentSeen), 7*24*60*60);
+            article.asset = matchedAssets.length ? matchedAssets.map(function(a){return a.symbol;}).join(', ') : 'CRYPTO MARKET';
+            article.weight = matchedAssets.reduce(function(max, a){return Math.max(max, Number(a.weight)||0);}, 0);
+            article.relevance = matchedAssets.length ? 1 : 0;
+            var normalizedUrl = String(article.url || '').split('?')[0].replace(/\/$/, '').toLowerCase();
+            if (!normalizedUrl || seenUrls.has(normalizedUrl) || isDuplicateStory(article)) return;
+            seenUrls.add(normalizedUrl);
+            allArticles.push(article);
+        });
+
+        // Legacy NewsAPI is only a secondary fill source when RSS coverage is thin.
+        // It is never allowed to make the whole news feed depend on a single paid key.
+        if (allArticles.length < 5 && NEWS_API_KEY) {
+            var fallbackPromises = topAssets.slice(0, 3).map(async function(asset) {
+                try {
+                    var searchSymbol = String(asset.symbol || '').split('/')[0].trim().replace(/[^A-Za-z0-9]/g, '');
+                    if (!searchSymbol) return [];
+                    var params = new URLSearchParams({
+                        q: searchSymbol + ' crypto',
+                        language: isRu ? 'ru' : 'en',
+                        sortBy: 'publishedAt',
+                        pageSize: '20',
+                        from: new Date(now - maxAge).toISOString().slice(0, 10),
+                        apiKey: NEWS_API_KEY
+                    });
+                    var response = await fetchWithTimeout('https://newsapi.org/v2/everything?' + params.toString(), {}, 10000, 'NewsAPI fallback');
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    var data = await response.json();
+                    if (data.status !== 'ok' || !Array.isArray(data.articles)) return [];
+                    return filterRelevantCryptoNews(data.articles, [searchSymbol]).filter(function(article) {
+                        var published = Date.parse(article.publishedAt || '');
+                        return Number.isFinite(published) && now - published <= maxAge;
+                    }).map(function(article) {
+                        article.asset = asset.symbol;
+                        article.weight = Number(asset.weight) || 0;
+                        article.relevance = 1;
+                        return article;
+                    });
+                } catch (error) {
+                    console.warn('NewsAPI fallback unavailable for ' + asset.symbol + ':', String(error.message || error).slice(0,160));
+                    return [];
+                }
+            });
+            var fallbackArrays = await Promise.all(fallbackPromises);
+            fallbackArrays.flat().forEach(function(article) {
+                var normalizedUrl = String(article.url || '').split('?')[0].replace(/\/$/, '').toLowerCase();
+                if (!normalizedUrl || seenUrls.has(normalizedUrl) || isDuplicateStory(article)) return;
+                seenUrls.add(normalizedUrl);
+                allArticles.push(article);
+            });
         }
+
+        // Prefer portfolio-specific coverage, but keep general crypto headlines visible.
+        // Freshness remains the primary ordering criterion.
+        allArticles.sort(function(a, b) {
+            var ageA = Date.parse(a.publishedAt || '') || 0;
+            var ageB = Date.parse(b.publishedAt || '') || 0;
+            var ageDiff = ageB - ageA;
+            if (Math.abs(ageDiff) > 6 * 60 * 60 * 1000) return ageDiff;
+            return (Number(b.relevance)||0) - (Number(a.relevance)||0) || ageDiff;
+        });
+        var topArticles = allArticles.slice(0, 10);
         var result = {
             articles: topArticles,
             assets: topAssets,
@@ -4026,7 +4021,7 @@ class NewsManager {
             count: topArticles.length,
             totalAssets: topAssets.length
         };
-        await setData('news_cache_v2_' + chatId, JSON.stringify(result), 900);
+        await setData('news_cache_v4_' + chatId, JSON.stringify(result), 900);
         return result;
     }
 }
@@ -4178,6 +4173,8 @@ class AIContext {
         var newsResult = await newsManager.getPersonalizedNews(chatId, lang);
         if (newsResult && !newsResult.error) {
             context.lastNews = newsResult;
+        } else {
+            context.lastNews = { articles: [], count: 0, timestamp: Date.now(), unavailable: true };
         }
         
         var keysUser = await loadUserKeys(chatId);
@@ -4438,7 +4435,7 @@ class AIContext {
         
         var coinMatch = question.match(/(BTC|ETH|SOL|BNB|ADA|XRP|DOGE|SHIB|MATIC|DOT|AVAX|LINK|UNI|PEPE|ARB|OP|APT|SUI|NEAR|ATOM|LTC|BCH|FIL|FTM|AAVE|MKR|CRV|SNX|COMP|ZEC|XLM|ALGO|HBAR|RUNE|FLOW|WAVES|NEO|DASH|KSM|ENJ|CHZ|SAND|MANA|AXS|GALA|GRT)\b/i);
         
-        if (coinMatch && !isMarketOrNewsQuestion(question)) {
+        if (coinMatch && isSimplePriceQuestion(question)) {
             var coin = coinMatch[0].toUpperCase();
             if (context.lastSnowball && context.lastSnowball.tokens) {
                 var token = context.lastSnowball.tokens.find(function(t) { return t.symbol === coin; });
@@ -4500,57 +4497,21 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
-                        'HTTP-Referer': 'https://t.me/' + BOT_USERNAME,
-                        'X-Title': 'Void Node Bot'
-                    },
-                    body: JSON.stringify({
-                        model: CURRENT_AI_MODEL,
-                        messages: [
-                            { role: 'system', content: this.getSystemPrompt(lang) },
-                            { role: 'user', content: prompt }
-                        ],
-                        max_tokens: 1000,
-                        temperature: 0.2
-                    })
-                }, 25000, 'OpenRouter chat completion');
-
-                var rawBody = await response.text();
-                var data = null;
-                try { data = rawBody ? JSON.parse(rawBody) : null; } catch (parseError) {
-                    console.error('OpenRouter returned non-JSON response:', response.status, rawBody.slice(0, 500));
-                }
-
-                if (!response.ok || !data || data.error) {
-                    var apiError = data && data.error ? data.error : {};
-                    console.error('OpenRouter error:', {
-                        status: response.status,
-                        code: apiError.code || null,
-                        message: apiError.message || response.statusText || 'Invalid API response'
-                    });
-                    return {
-                        error: isRu
-                            ? '⚠️ ИИ-сервис временно недоступен. Попробуй повторить запрос позже. Лимит не будет списан повторно.'
-                            : '⚠️ The AI service is temporarily unavailable. Please try again later. Your request will not be charged twice.'
-                    };
-                }
-
-                var answer = data && data.choices && data.choices[0] &&
-                    data.choices[0].message && data.choices[0].message.content;
-                if (typeof answer !== 'string' || !answer.trim()) {
-                    console.error('OpenRouter returned an empty completion:', response.status, data && data.model);
-                    return {
-                        error: isRu
-                            ? '⚠️ ИИ вернул пустой ответ. Попробуй повторить запрос.'
-                            : '⚠️ The AI returned an empty response. Please try again.'
-                    };
-                }
-
-                console.log('🧠 OpenRouter model used:', data.model || CURRENT_AI_MODEL);
+                var completion = await requestOpenRouterCompletion({
+                    fetchWithTimeout: fetchWithTimeout,
+                    apiKey: OPENROUTER_API_KEY,
+                    primaryModel: CURRENT_AI_MODEL,
+                    fallbackModels: String(process.env.OPENROUTER_FALLBACK_MODELS || '')
+                        .split(',').map(function(model) { return model.trim(); }).filter(Boolean),
+                    messages: [
+                        { role: 'system', content: this.getSystemPrompt(lang) },
+                        { role: 'user', content: prompt }
+                    ],
+                    maxTokens: 1000,
+                    timeoutMs: 18000
+                });
+                var answer = completion.answer;
+                console.log('🧠 OpenRouter model used:', completion.model, 'attempts:', completion.attempts);
                 var finalAnswer = answer.trim();
                 if (isMarketOrNewsQuestion(question)) {
                     finalAnswer = context.lastNews && Array.isArray(context.lastNews.articles) && context.lastNews.articles.length
@@ -5535,34 +5496,72 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
 async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
     var isRu = lang === 'ru';
     try {
-        var cacheKey = 'news_single_v2_' + coin + '_' + (isRu ? 'ru' : 'en');
+        var normalizedCoin = String(coin || '').split('/')[0].trim().toUpperCase();
+        var cacheKey = 'news_single_v3_' + normalizedCoin + '_' + (isRu ? 'ru' : 'en');
         var cached = await getData(cacheKey);
         if (cached) {
             var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
-            if (Date.now() - parsed.timestamp < 300000) {
-                await sendNewsReport(chatId, parsed.articles, coin, lang, messageId);
+            if (Date.now() - parsed.timestamp < 5 * 60 * 1000 && Array.isArray(parsed.articles) && parsed.articles.length) {
+                await sendNewsReport(chatId, parsed.articles, normalizedCoin, lang, messageId);
                 return;
             }
         }
-        var url = 'https://newsapi.org/v2/everything?q=' + coin + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=5&apiKey=' + NEWS_API_KEY;
-        var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
-        var data = await response.json();
-        var relevantArticles = data.status === 'ok' ? filterRelevantCryptoNews(data.articles) : [];
+
+        // Direct publisher feeds are the primary source. NewsAPI is only a fallback.
+        var rssArticles = await fetchCryptoRssNews(fetchWithTimeout);
+        var relevantArticles = filterNewsForAsset(rssArticles, normalizedCoin).slice(0, 5);
+        if (!relevantArticles.length && NEWS_API_KEY) {
+            try {
+                var params = new URLSearchParams({
+                    q: normalizedCoin + ' crypto',
+                    language: isRu ? 'ru' : 'en',
+                    sortBy: 'publishedAt',
+                    pageSize: '20',
+                    from: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString().slice(0, 10),
+                    apiKey: NEWS_API_KEY
+                });
+                var response = await fetchWithTimeout('https://newsapi.org/v2/everything?' + params.toString(), {}, 10000, 'NewsAPI asset fallback');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                var data = await response.json();
+                if (data.status === 'ok' && Array.isArray(data.articles)) {
+                    relevantArticles = filterRelevantCryptoNews(data.articles, [normalizedCoin]).filter(function(article) {
+                        var published = Date.parse(article.publishedAt || '');
+                        return Number.isFinite(published) && Date.now() - published <= 72 * 60 * 60 * 1000;
+                    }).slice(0, 5);
+                }
+            } catch (fallbackError) {
+                console.warn('NewsAPI asset fallback unavailable:', String(fallbackError.message || fallbackError).slice(0,160));
+            }
+        }
+
+        if (!relevantArticles.length && rssArticles.length) {
+            relevantArticles = rssArticles.slice(0, 5).map(function(article) {
+                return Object.assign({}, article, { marketWideFallback: true });
+            });
+        }
         if (!relevantArticles.length) {
-            await sendUpdatedMessage(chatId, getText(lang, 'news_empty'), null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, isRu
+                ? '⚠️ Сейчас источники не вернули свежих публикаций. Попробуй обновить ленту чуть позже.'
+                : '⚠️ News sources returned no fresh publications right now. Please refresh again shortly.',
+                null, 'Markdown', messageId);
             return;
         }
         await setData(cacheKey, JSON.stringify({ articles: relevantArticles, timestamp: Date.now() }), 300);
-        await sendNewsReport(chatId, relevantArticles, coin, lang, messageId);
+        await sendNewsReport(chatId, relevantArticles, normalizedCoin, lang, messageId);
     } catch (error) {
-        console.error('News error:', error);
-        await sendUpdatedMessage(chatId, '❌ Error getting news. Please try again later.', null, 'Markdown', messageId);
+        console.error('News error:', String(error.message || error).slice(0,200));
+        await sendUpdatedMessage(chatId, isRu
+            ? '❌ Не удалось загрузить новости. Попробуй ещё раз позже.'
+            : '❌ Could not load news. Please try again later.', null, 'Markdown', messageId);
     }
 }
 
 async function sendNewsReport(chatId, articles, coin, lang, messageId) {
     var isRu = lang === 'ru';
-    var report = getText(lang, 'news_coin', coin.toUpperCase());
+    var marketFallback = articles.some(function(article){ return !!article.marketWideFallback; });
+    var report = marketFallback
+        ? (isRu ? '📰 *СВЕЖИЕ НОВОСТИ КРИПТОРЫНКА*\n_Прямых упоминаний ' + coin.toUpperCase() + ' в свежих заголовках не найдено._\n\n' : '📰 *LATEST CRYPTO MARKET NEWS*\n_No direct ' + coin.toUpperCase() + ' headlines found in fresh sources._\n\n')
+        : getText(lang, 'news_coin', coin.toUpperCase());
     var count = 0;
     var seenUrls = new Set();
     for (var i = 0; i < articles.length; i++) {

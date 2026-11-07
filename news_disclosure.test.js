@@ -3,6 +3,7 @@
 const assert = require('assert');
 const {
     isMarketOrNewsQuestion,
+    isSimplePriceQuestion,
     formatNewsDisclosure,
     appendNewsDisclosure,
     appendNewsUnavailableNotice
@@ -15,6 +16,10 @@ assert.strictEqual(isMarketOrNewsQuestion('Сколько у меня USDT в п
 assert.strictEqual(isMarketOrNewsQuestion('BTC'), false);
 assert.strictEqual(isMarketOrNewsQuestion('BTC падает сегодня'), true);
 assert.strictEqual(isMarketOrNewsQuestion('Why is BTC down today?'), true);
+assert.strictEqual(isMarketOrNewsQuestion('Что нового по PEPE?'), true);
+assert.strictEqual(isMarketOrNewsQuestion('What happened to SUI today?'), true);
+assert.strictEqual(isSimplePriceQuestion('Сколько стоит BTC сейчас?'), true);
+assert.strictEqual(isSimplePriceQuestion('Что думаешь о BTC?'), false);
 
 const ru = appendNewsDisclosure('Bitcoin снижается.', 'ru');
 assert.ok(ru.includes('Bitcoin снижается.'));
