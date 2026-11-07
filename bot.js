@@ -10,7 +10,7 @@ const ccxt = require('ccxt');
 const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
-const { normalizeBalanceEntries, validateSpotTicker } = require('./market_data');
+const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -1686,8 +1686,7 @@ async function analyzePortfolio(chatId,lang) {
                 if(ageMs!==null&&ageMs>=0&&ageMs<=CONFIG.RISK.FRESH_MS)freshness='fresh';
                 else if(ageMs!==null&&ageMs>CONFIG.RISK.FRESH_MS&&ageMs<=CONFIG.RISK.STALE_MS)freshness='aging';
                 else if(ageMs!==null&&ageMs>CONFIG.RISK.STALE_MS)freshness='stale';
-                var bid=Number(ticker.bid),ask=Number(ticker.ask),quoteVolume=ticker.quoteVolume==null||ticker.quoteVolume===''?NaN:Number(ticker.quoteVolume),spreadPct=Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>=bid?((ask-bid)/((ask+bid)/2))*100:null;
-                var lowLiquidity=(spreadPct!==null&&spreadPct>CONFIG.RISK.MAX_SPREAD_PCT)||(Number.isFinite(quoteVolume)&&quoteVolume>=0&&quoteVolume<CONFIG.RISK.MIN_QUOTE_VOLUME_USDT);
+                var liquidity=assessMarketLiquidity(ticker,CONFIG.RISK),spreadPct=liquidity.spreadPct,quoteVolume=liquidity.quoteVolume,lowLiquidity=liquidity.lowLiquidity;
                 rows.push({symbol:coin,amount:amt,price:price,value:v,change24h:Number.isFinite(Number(ticker.percentage))?Number(ticker.percentage):0,priceTimestamp:tickerTime>0?tickerTime:null,priceAgeMs:ageMs,priceFreshness:freshness,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,liquidityStatus:lowLiquidity?'low':'unverified'});
                 if(lowLiquidity){lowLiquidityAssets.push({symbol:coin,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,weightValue:v});lowLiquidityWeight+=v;}
                 total+=v;
