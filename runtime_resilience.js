@@ -1,5 +1,32 @@
 'use strict';
 
+const ALLOWED_HTTPS_HOSTS = Object.freeze([
+    'api.telegram.org',
+    'pay.crypt.bot',
+    'api.etherscan.io',
+    'api.dexscreener.com',
+    'api.coingecko.com',
+    'newsapi.org',
+    'openrouter.ai',
+    'finnhub.io'
+]);
+const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+function validateOutboundUrl(input, allowedHosts = ALLOWED_HTTPS_HOSTS) {
+    let url;
+    try {
+        url = new URL(String(input));
+    } catch {
+        throw new Error('Outbound URL is invalid');
+    }
+    if (url.protocol !== 'https:') throw new Error('Outbound URL must use HTTPS');
+    if (url.username || url.password) throw new Error('Outbound URL must not contain credentials');
+    if (url.port && url.port !== '443') throw new Error('Outbound URL uses a disallowed port');
+    const hostname = url.hostname.toLowerCase().replace(/\\.$/, '');
+    if (!allowedHosts.includes(hostname)) throw new Error('Outbound host is not allowlisted');
+    return url;
+}
+
 function withTimeout(promise, ms, label) {
     const timeoutMs = Number(ms || 8000);
     let timer;
@@ -9,14 +36,48 @@ function withTimeout(promise, ms, label) {
     return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(timer));
 }
 
-async function fetchWithTimeout(url, options = {}, ms, label) {
+async function fetchWithTimeout(input, options = {}, ms, label, config = {}) {
     const timeoutMs = Number(ms || 10000);
+    const allowedHosts = Array.isArray(config.allowedHosts) ? config.allowedHosts : ALLOWED_HTTPS_HOSTS;
+    validateOutboundUrl(input, allowedHosts);
+    const maxResponseBytes = Number.isSafeInteger(config.maxResponseBytes) && config.maxResponseBytes > 0
+        ? config.maxResponseBytes
+        : DEFAULT_MAX_RESPONSE_BYTES;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        return await fetch(url, { ...options, signal: controller.signal });
+        // Never follow redirects: a trusted API endpoint must not redirect this server
+        // to an arbitrary host, private IP, or cloud metadata endpoint.
+        const response = await fetch(input, { ...options, redirect: 'error', signal: controller.signal });
+        const declaredLength = Number(response.headers && response.headers.get('content-length'));
+        if (Number.isFinite(declaredLength) && declaredLength > maxResponseBytes) {
+            controller.abort();
+            throw new Error((label || 'HTTP response') + ' exceeded response size limit');
+        }
+        if (!response.body) return response;
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > maxResponseBytes) {
+                controller.abort();
+                try { await reader.cancel(); } catch {}
+                throw new Error((label || 'HTTP response') + ' exceeded response size limit');
+            }
+            chunks.push(Buffer.from(value));
+        }
+        const body = Buffer.concat(chunks);
+        const noBodyStatus = [204, 205, 304].includes(response.status);
+        return new Response(noBodyStatus ? null : body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers
+        });
     } catch (error) {
-        if (controller.signal.aborted) {
+        if (controller.signal.aborted && !String(error.message || '').includes('exceeded response size limit')) {
             throw new Error((label || 'HTTP request') + ' timeout after ' + timeoutMs + 'ms');
         }
         throw error;
@@ -74,4 +135,12 @@ class BoundedTTLCache {
     }
 }
 
-module.exports = { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache };
+module.exports = {
+    withTimeout,
+    fetchWithTimeout,
+    validateOutboundUrl,
+    ALLOWED_HTTPS_HOSTS,
+    DEFAULT_MAX_RESPONSE_BYTES,
+    probeRedisConnection,
+    BoundedTTLCache
+};
