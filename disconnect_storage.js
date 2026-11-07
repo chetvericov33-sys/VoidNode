@@ -1,8 +1,8 @@
 'use strict';
 
-async function scanKeysByPrefix(redis, withTimeout, prefix) {
+async function forEachKeyByPrefix(redis, withTimeout, prefix, onKeys) {
+    if (typeof onKeys !== 'function') throw new TypeError('SCAN callback is required');
     var cursor = '0';
-    var keys = [];
     var seenCursors = new Set();
     do {
         if (seenCursors.has(String(cursor))) throw new Error('Redis SCAN cursor did not advance');
@@ -15,9 +15,16 @@ async function scanKeysByPrefix(redis, withTimeout, prefix) {
         if (!Array.isArray(page) || page.length !== 2 || !Array.isArray(page[1])) {
             throw new Error('Redis SCAN returned invalid data');
         }
+        if (page[1].length) await onKeys(page[1]);
         cursor = String(page[0]);
-        keys = keys.concat(page[1]);
     } while (cursor !== '0');
+}
+
+async function scanKeysByPrefix(redis, withTimeout, prefix) {
+    var keys = [];
+    await forEachKeyByPrefix(redis, withTimeout, prefix, function(pageKeys) {
+        keys = keys.concat(pageKeys);
+    });
     return keys;
 }
 
@@ -92,6 +99,7 @@ async function deletePendingDisconnectIfMatches(redis, withTimeout, chatId, pend
 
 module.exports = {
     scanKeysByPrefix,
+    forEachKeyByPrefix,
     createPendingDisconnectIfUserMatches,
     completeDisconnectIfMatches,
     restoreDisconnectIfMatches,
