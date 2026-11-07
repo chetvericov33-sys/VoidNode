@@ -15,6 +15,7 @@ const { classifyEtherscanVerification, createContractCheckFailure } = require('.
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
+const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parseCryptoWebhookPayload, parsePaymentChatId, validateCryptoPaidInvoice } = require('./webhook_safety');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -5919,19 +5920,11 @@ async function handleCryptoWebhook(request) {
         if (!verifyCryptoSignature(request)) return { status: 401, error: 'Unauthorized' };
         var update = request.body;
         if (!update || update.update_type !== 'invoice_paid') return { status: 200 };
-        if (update.request_date) {
-            var requestAge = Math.abs(Date.now() - new Date(update.request_date).getTime());
-            if (!isFinite(requestAge) || requestAge > 72 * 60 * 60 * 1000) return { status: 400, error: 'Stale webhook' };
-        }
-        var payload = update.payload;
-        if (typeof payload === 'string') {
-            try { payload = JSON.parse(payload); }
-            catch (e) { console.error('CryptoBot payload JSON parse error:', e.message); return { status: 400, error: 'Invalid invoice payload' }; }
-        }
-        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { status: 400, error: 'Invalid invoice payload' };
-        var invoice = payload;
-        var invoiceId = String(invoice.invoice_id || invoice.id || '');
-        if (!invoiceId) return { status: 400, error: 'Missing invoice id' };
+        if (!isFreshWebhookDate(update.request_date)) return { status: 400, error: 'Invalid or stale webhook date' };
+        var invoice = parseCryptoWebhookPayload(update.payload);
+        if (!invoice) return { status: 400, error: 'Invalid invoice payload' };
+        var invoiceId = parseCryptoInvoiceId(invoice.invoice_id || invoice.id);
+        if (!invoiceId) return { status: 400, error: 'Invalid invoice id' };
 
         // Serialize concurrent deliveries for this invoice; fail closed if Redis is unavailable.
         var paymentLockKey = 'payment_processing_' + invoiceId;
@@ -5945,14 +5938,12 @@ async function handleCryptoWebhook(request) {
             if (!paymentRecord) return { status: 400, error: 'Unknown invoice' };
             paymentRecord = typeof paymentRecord === 'string' ? JSON.parse(paymentRecord) : paymentRecord;
 
-            if (String(invoice.status || '').toLowerCase() !== 'paid') return { status: 400, error: 'Invoice is not paid' };
-            if (String(paymentRecord.invoiceId || '') !== invoiceId) return { status: 400, error: 'Invoice metadata mismatch' };
-            if (String(invoice.asset || '').toUpperCase() !== String(paymentRecord.asset).toUpperCase()) return { status: 400, error: 'Asset mismatch' };
-            if (String(invoice.amount) !== String(paymentRecord.amount)) return { status: 400, error: 'Amount mismatch' };
+            var invoiceError = validateCryptoPaidInvoice(invoice, paymentRecord, invoiceId);
+            if (invoiceError) return { status: 400, error: invoiceError };
 
-            var chatId = parseInt(paymentRecord.chatId, 10);
+            var chatId = parsePaymentChatId(paymentRecord.chatId);
             var planId = String(paymentRecord.planId || '');
-            if (!Number.isSafeInteger(chatId) || !PLANS[planId]) return { status: 400, error: 'Invalid payment metadata' };
+            if (chatId === null || !PLANS[planId]) return { status: 400, error: 'Invalid payment metadata' };
 
             var activatedAt = Date.now();
             var paidRecord = { ...paymentRecord, status: 'paid', paidAt: activatedAt };
@@ -6077,7 +6068,7 @@ app.post('/webhook', async function(req, res) {
     }
     console.log('📩 Webhook called!');
     var update = req.body;
-    if (!update || !Number.isSafeInteger(update.update_id)) return res.sendStatus(400);
+    if (!update || !isValidTelegramUpdateId(update.update_id)) return res.sendStatus(400);
     var updateId = String(update.update_id);
     var doneKey = 'telegram_update_done_' + updateId;
     var lockKey = 'telegram_update_processing_' + updateId;
