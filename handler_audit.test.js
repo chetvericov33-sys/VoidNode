@@ -24,10 +24,11 @@ function handled(callback) {
 
 const requiredPaymentReliabilityMarkers = [
   "payment_effects_pending_",
-  "payment_effect_referral_",
-  "payment_effect_user_notice_",
-  "payment_effect_menu_",
-  "payment_effect_history_",
+  "payment_effect_' + stage + '_'",
+  "isDone('referral')",
+  "isDone('user_notice')",
+  "isDone('menu')",
+  "isDone('history')",
   "Payment processing lease lost",
   "if (!updateLease.isHealthy()) return res.sendStatus(503);",
   "if (!paymentLease.isHealthy()) return { status: 503"
