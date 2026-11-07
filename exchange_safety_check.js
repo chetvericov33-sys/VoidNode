@@ -1,0 +1,66 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const {
+    SUPPORTED_EXCHANGES,
+    CCXT_REQUEST_TIMEOUT_MS,
+    validateExchangeId,
+    enforceReadOnlyExchange,
+    BLOCKED_MUTATING_METHODS,
+    createReadOnlyExchangeConfig
+} = require('./exchange_safety');
+
+async function run() {
+for (const id of ['binance', 'bybit', 'gate', 'kraken']) {
+    assert.equal(validateExchangeId(id), true);
+    const config = createReadOnlyExchangeConfig(id, 'A'.repeat(32), 'B'.repeat(32));
+    assert.equal(config.enableRateLimit, true);
+    assert.equal(config.timeout, CCXT_REQUEST_TIMEOUT_MS);
+    assert.equal(config.options.defaultType, 'spot');
+    assert.equal(config.apiKey, 'A'.repeat(32));
+    assert.equal(config.secret, 'B'.repeat(32));
+}
+
+assert.deepEqual(SUPPORTED_EXCHANGES, ['binance', 'bybit', 'gate', 'kraken']);
+for (const id of ['okx', 'kucoin', 'constructor', '__proto__', 'toString', '', null, 1]) {
+    assert.equal(validateExchangeId(id), false);
+    assert.throws(() => createReadOnlyExchangeConfig(id, 'A'.repeat(32), 'B'.repeat(32)), /Unsupported exchange/);
+}
+for (const [apiKey, secret] of [
+    ['', 'B'.repeat(32)],
+    ['A'.repeat(7), 'B'.repeat(32)],
+    ['A'.repeat(257), 'B'.repeat(32)],
+    ['A'.repeat(32), 'B'.repeat(7)],
+    ['A'.repeat(32), 'B'.repeat(513)],
+    [null, 'B'.repeat(32)],
+    ['A'.repeat(32), {}]
+]) {
+    assert.throws(() => createReadOnlyExchangeConfig('binance', apiKey, secret), /Invalid API credentials/);
+}
+
+const readOnlyClient = {
+    fetchBalance: async () => ({ total: { BTC: 1 } }),
+    createOrder: async () => 'should never execute',
+    withdraw: async () => 'should never execute'
+};
+const guardedClient = enforceReadOnlyExchange(readOnlyClient);
+assert.equal(await guardedClient.fetchBalance().then(x => x.total.BTC), 1);
+for (const method of BLOCKED_MUTATING_METHODS) {
+    assert.equal(typeof guardedClient[method], 'function');
+    await assert.rejects(guardedClient[method](), /Read-only mode/);
+}
+await assert.rejects(guardedClient.createOrder(), /Read-only mode/);
+await assert.rejects(guardedClient.withdraw(), /Read-only mode/);
+
+const config = createReadOnlyExchangeConfig('binance', 'A'.repeat(32), 'B'.repeat(32));
+assert.equal(Object.prototype.hasOwnProperty.call(config, 'urls'), false);
+assert.equal(Object.prototype.hasOwnProperty.call(config, 'proxy'), false);
+assert.equal(Object.prototype.hasOwnProperty.call(config, 'fetchImplementation'), false);
+
+console.log('EXCHANGE SAFETY TEST: PASS');
+}
+
+run().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});
