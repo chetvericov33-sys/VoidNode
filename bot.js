@@ -20,6 +20,7 @@ const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 const { isMarketOrNewsQuestion, appendNewsDisclosure, appendNewsUnavailableNotice, formatNewsDisclosure } = require('./news_disclosure');
 const { filterRelevantCryptoNews } = require('./news_relevance');
+const { fetchCryptoRssNews, filterNewsForAsset, articleMentionsAsset } = require('./crypto_news');
 const { requestOpenRouterCompletion } = require('./ai_completion');
 
 // ============================================================
@@ -3845,7 +3846,7 @@ class NewsManager {
 
     async getPersonalizedNews(chatId, lang, forceUpdate) {
         if (forceUpdate === undefined) forceUpdate = false;
-        var cacheKey = 'news_cache_v3_' + chatId;
+        var cacheKey = 'news_cache_v4_' + chatId;
         var now = Date.now();
         var lastUpdate = this.lastUpdate.get(chatId) || 0;
         if (!forceUpdate && now - lastUpdate < this.updateInterval) {
@@ -3916,114 +3917,103 @@ class NewsManager {
         var allArticles = [];
         var seenUrls = new Set();
         var seenStories = [];
-        var persistentSeen = [];
-        try {
-            var rawSeen = await getData('news_seen_stories_' + chatId);
-            if (rawSeen) persistentSeen = typeof rawSeen === 'string' ? JSON.parse(rawSeen) : rawSeen;
-            if (!Array.isArray(persistentSeen)) persistentSeen = [];
-            persistentSeen = persistentSeen.filter(function(x){ return x && Date.now() - Number(x.seenAt||0) < 6*60*60*1000; });
-        } catch(e) { persistentSeen = []; }
-
         function normalizeNewsText(text) {
-            return String(text || '').toLowerCase()
-                .replace(/https?:\/\/\S+/g, ' ')
-                .replace(/[^\p{L}\p{N}]+/gu, ' ')
-                .trim();
-        }
-
-        function canonicalNewsToken(token) {
-            token = String(token || '').toLowerCase();
-            var suffixes=['ами','ями','ого','ему','ому','ыми','ими','ов','ев','ам','ям','ах','ях','ing','ed','es','s'];
-            for(var si=0;si<suffixes.length;si++){var suf=suffixes[si];if(token.endsWith(suf)&&token.length-suf.length>=4){token=token.slice(0,-suf.length);break;}}
-            return token;
+            return String(text || '').toLowerCase().replace(/https?:\/\/\S+/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
         }
         function newsTokenSet(text) {
-            var stop=new Set(['the','and','for','with','from','that','this','will','into','after','before','about','over','user','users','как','что','это','для','после','перед','из','на','и','в','с','по','к','до','который','которые','пользователь','пользователя']);
-            return new Set(normalizeNewsText(text).split(/\s+/).map(canonicalNewsToken).filter(function(t){return t.length>=4&&!stop.has(t);}));
+            var stop = new Set(['the','and','for','with','from','that','this','will','into','after','before','about','over','как','что','это','для','после','перед','из','на','и','в','с','по']);
+            return new Set(normalizeNewsText(text).split(/\s+/).filter(function(t){return t.length >= 4 && !stop.has(t);}));
         }
-        function overlap(a,b){var n=0;a.forEach(function(t){if(b.has(t))n++;});return n;}
-        function storySimilar(bodyA,titleA,bodyB,titleB){
-            var common=overlap(bodyA,bodyB), union=bodyA.size+bodyB.size-common, j=union?common/union:0;
-            var titleCommon=overlap(titleA,titleB);
-            return (j>=0.30&&common>=4)||(titleCommon>=2&&common>=5);
-        }
-        function isDuplicateStory(title,description,url) {
-            var body=newsTokenSet(String(title||'')+' '+String(description||''));
-            var titleSet=newsTokenSet(String(title||''));
-            var normalizedUrl=String(url||'').split('?')[0].replace(/\/$/,'').toLowerCase();
-            if(normalizedUrl&&seenUrls.has(normalizedUrl))return true;
-            for(var si=0;si<seenStories.length;si++){var x=seenStories[si];if(x&&x.body&&storySimilar(body,titleSet,x.body,x.title))return true;}
-            for(var pi=0;pi<persistentSeen.length;pi++){
-                var h=persistentSeen[pi],hb=newsTokenSet(String(h.title||'')+' '+String(h.description||'')),ht=newsTokenSet(String(h.title||''));
-                if(normalizedUrl&&h.url===normalizedUrl)return true;
-                if(hb.size>=4&&storySimilar(body,titleSet,hb,ht))return true;
+        function isDuplicateStory(article) {
+            var body = newsTokenSet(String(article.title || '') + ' ' + String(article.description || ''));
+            var title = newsTokenSet(article.title || '');
+            for (var i = 0; i < seenStories.length; i++) {
+                var prior = seenStories[i], common = 0;
+                body.forEach(function(token){ if (prior.body.has(token)) common++; });
+                var titleCommon = 0;
+                title.forEach(function(token){ if (prior.title.has(token)) titleCommon++; });
+                if ((common >= 4 && common / Math.max(1, body.size + prior.body.size - common) >= 0.35) || titleCommon >= 3) return true;
             }
-            seenStories.push({body:body,title:titleSet});
+            seenStories.push({body:body,title:title});
             return false;
         }
-        var newsPromises = topAssets.map(async function(asset) {
-            try {
-                var query = asset.symbol;
-                var cacheKey = 'news_asset_v3_' + query + '_' + (isRu ? 'ru' : 'en');
-                var cached = await getData(cacheKey);
-                if (cached) {
-                    var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
-                    if (Date.now() - parsed.timestamp < 300000) return parsed.articles;
-                }
-                // Balance symbols can be BASE/QUOTE; search the actual asset ticker only.
-                var searchSymbol = String(query || '').split('/')[0].trim().replace(/[^A-Za-z0-9._-]/g, '');
-                if (!searchSymbol) return [];
-                var params = new URLSearchParams({ q: searchSymbol + ' crypto', language: isRu ? 'ru' : 'en', sortBy: 'publishedAt', pageSize: '25', apiKey: NEWS_API_KEY });
-                var url = 'https://newsapi.org/v2/everything?' + params.toString();
-                var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
-                var data = await response.json();
-                var articles = [];
-                if (data.status === 'ok' && data.articles) {
-                    articles = filterRelevantCryptoNews(data.articles, [searchSymbol]);
-                    await setData(cacheKey, JSON.stringify({ articles: articles, timestamp: Date.now() }), 300);
-                }
-                return articles;
-            } catch (error) {
-                console.error('News error for ' + asset.symbol + ':', error);
-                return [];
-            }
+
+        // Primary source: direct RSS feeds from established crypto publishers.
+        // Unlike the old generic-news search, these feeds do not require NEWS_API_KEY
+        // and already contain crypto-industry reporting.
+        var rssArticles = await fetchCryptoRssNews(fetchWithTimeout);
+        var now = Date.now();
+        var maxAge = 72 * 60 * 60 * 1000;
+        rssArticles = rssArticles.filter(function(article) {
+            var published = Date.parse(article.publishedAt || '');
+            return Number.isFinite(published) && now - published <= maxAge && published <= now + 5 * 60 * 1000;
         });
-        var allArticlesArrays = await Promise.all(newsPromises);
-        for (var i = 0; i < allArticlesArrays.length; i++) {
-            var articles = allArticlesArrays[i];
-            var asset = topAssets[i];
-            for (var j = 0; j < articles.length; j++) {
-                var article = articles[j];
-                var normalizedArticleUrl = String(article.url || '').split('?')[0].replace(/\/$/, '').toLowerCase();
-                if (article.url && !seenUrls.has(normalizedArticleUrl) && !isDuplicateStory(article.title, article.description, article.url)) {
-                    seenUrls.add(normalizedArticleUrl);
-                    allArticles.push({
-                        title: article.title,
-                        description: article.description,
-                        url: article.url,
-                        source: article.source,
-                        publishedAt: article.publishedAt,
-                        asset: asset.symbol,
-                        weight: asset.weight || 0,
-                        relevance: (asset.weight || 0) / 100
-                    });
-                }
-            }
-        }
-        allArticles.sort(function(a, b) {
-            var relevanceDiff = (b.relevance || 0) - (a.relevance || 0);
-            if (Math.abs(relevanceDiff) > 0.01) return relevanceDiff;
-            return new Date(b.publishedAt) - new Date(a.publishedAt);
-        });
-        var topArticles = allArticles.slice(0, 7);
-        if (topArticles.length) {
-            topArticles.forEach(function(a){
-                var u=String(a.url||'').split('?')[0].replace(/\/$/,'').toLowerCase();
-                persistentSeen.push({url:u,title:String(a.title||''),description:String(a.description||''),seenAt:Date.now()});
+
+        rssArticles.forEach(function(article) {
+            var matchedAssets = topAssets.filter(function(asset) {
+                return articleMentionsAsset(article, asset.symbol);
             });
-            persistentSeen = persistentSeen.slice(-50);
-            await setData('news_seen_stories_' + chatId, JSON.stringify(persistentSeen), 7*24*60*60);
+            article.asset = matchedAssets.length ? matchedAssets.map(function(a){return a.symbol;}).join(', ') : 'CRYPTO MARKET';
+            article.weight = matchedAssets.reduce(function(max, a){return Math.max(max, Number(a.weight)||0);}, 0);
+            article.relevance = matchedAssets.length ? 1 : 0;
+            var normalizedUrl = String(article.url || '').split('?')[0].replace(/\/$/, '').toLowerCase();
+            if (!normalizedUrl || seenUrls.has(normalizedUrl) || isDuplicateStory(article)) return;
+            seenUrls.add(normalizedUrl);
+            allArticles.push(article);
+        });
+
+        // Legacy NewsAPI is only a secondary fill source when RSS coverage is thin.
+        // It is never allowed to make the whole news feed depend on a single paid key.
+        if (allArticles.length < 5 && NEWS_API_KEY) {
+            var fallbackPromises = topAssets.slice(0, 3).map(async function(asset) {
+                try {
+                    var searchSymbol = String(asset.symbol || '').split('/')[0].trim().replace(/[^A-Za-z0-9]/g, '');
+                    if (!searchSymbol) return [];
+                    var params = new URLSearchParams({
+                        q: searchSymbol + ' crypto',
+                        language: isRu ? 'ru' : 'en',
+                        sortBy: 'publishedAt',
+                        pageSize: '20',
+                        from: new Date(now - maxAge).toISOString().slice(0, 10),
+                        apiKey: NEWS_API_KEY
+                    });
+                    var response = await fetchWithTimeout('https://newsapi.org/v2/everything?' + params.toString(), {}, 10000, 'NewsAPI fallback');
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    var data = await response.json();
+                    if (data.status !== 'ok' || !Array.isArray(data.articles)) return [];
+                    return filterRelevantCryptoNews(data.articles, [searchSymbol]).filter(function(article) {
+                        var published = Date.parse(article.publishedAt || '');
+                        return Number.isFinite(published) && now - published <= maxAge;
+                    }).map(function(article) {
+                        article.asset = asset.symbol;
+                        article.weight = Number(asset.weight) || 0;
+                        article.relevance = 1;
+                        return article;
+                    });
+                } catch (error) {
+                    console.warn('NewsAPI fallback unavailable for ' + asset.symbol + ':', String(error.message || error).slice(0,160));
+                    return [];
+                }
+            });
+            var fallbackArrays = await Promise.all(fallbackPromises);
+            fallbackArrays.flat().forEach(function(article) {
+                var normalizedUrl = String(article.url || '').split('?')[0].replace(/\/$/, '').toLowerCase();
+                if (!normalizedUrl || seenUrls.has(normalizedUrl) || isDuplicateStory(article)) return;
+                seenUrls.add(normalizedUrl);
+                allArticles.push(article);
+            });
         }
+
+        // Prefer portfolio-specific coverage, but keep general crypto headlines visible.
+        // Freshness remains the primary ordering criterion.
+        allArticles.sort(function(a, b) {
+            var ageA = Date.parse(a.publishedAt || '') || 0;
+            var ageB = Date.parse(b.publishedAt || '') || 0;
+            var ageDiff = ageB - ageA;
+            if (Math.abs(ageDiff) > 6 * 60 * 60 * 1000) return ageDiff;
+            return (Number(b.relevance)||0) - (Number(a.relevance)||0) || ageDiff;
+        });
+        var topArticles = allArticles.slice(0, 10);
         var result = {
             articles: topArticles,
             assets: topAssets,
@@ -4031,7 +4021,7 @@ class NewsManager {
             count: topArticles.length,
             totalAssets: topAssets.length
         };
-        await setData('news_cache_v2_' + chatId, JSON.stringify(result), 900);
+        await setData('news_cache_v4_' + chatId, JSON.stringify(result), 900);
         return result;
     }
 }
