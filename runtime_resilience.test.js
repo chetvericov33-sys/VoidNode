@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { withTimeout, fetchWithTimeout, validateOutboundUrl, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
+const { withTimeout, fetchWithTimeout, validateOutboundUrl, probeRedisConnection, startLeaseHeartbeat, BoundedTTLCache } = require('./runtime_resilience');
 
 async function run() {
     assert.equal(await withTimeout(Promise.resolve('ok'), 50, 'test'), 'ok');
@@ -41,6 +41,20 @@ async function run() {
     assert.equal(await probeRedisConnection({ ping: async () => 'NOPE' }, 20), false);
     assert.equal(await probeRedisConnection({ ping: () => new Promise(() => {}) }, 5), false);
     assert.equal(await probeRedisConnection({}, 5), false);
+
+    let renewCalls = 0;
+    const healthyLease = startLeaseHeartbeat(async () => { renewCalls++; return true; }, 10);
+    await new Promise(resolve => setTimeout(resolve, 35));
+    healthyLease.stop();
+    assert.equal(healthyLease.isHealthy(), true);
+    assert.ok(renewCalls >= 1);
+
+    let lostCallbackCalled = false;
+    const lostLease = startLeaseHeartbeat(async () => false, 10, () => { lostCallbackCalled = true; });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    lostLease.stop();
+    assert.equal(lostLease.isHealthy(), false);
+    assert.equal(lostCallbackCalled, true);
 
     const cache = new BoundedTTLCache({ maxEntries: 2, defaultTtlMs: 20 });
     cache.set('a', 0);
