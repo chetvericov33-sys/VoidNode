@@ -13,12 +13,12 @@ function isRelevantCryptoNews(article, assetSymbols) {
     var description = String(article.description || '').replace(/<[^>]*>/g, ' ').trim();
     if (!title || title.length < 12 || LOW_VALUE_CONTENT.test(title)) return false;
     var headlineAndSummary = title + ' ' + description.slice(0, 900);
-    var cryptoContext = CRYPTO_TOPIC.test(title) || CRYPTO_TOPIC.test(description.slice(0, 500));
+    var cryptoContext = CRYPTO_TOPIC.test(title);
     var assets = Array.isArray(assetSymbols) ? assetSymbols : [];
     var assetMentioned = assets.some(function(raw) {
         var symbol = normalizeAssetSymbol(raw);
         if (!symbol || symbol.length < 2) return false;
-        return new RegExp('(^|[^A-Za-z0-9])' + symbol + '([^A-Za-z0-9]|$)', 'i').test(headlineAndSummary);
+        return new RegExp('(^|[^A-Za-z0-9])' + symbol + '([^A-Za-z0-9]|$)', 'i').test(title);
     });
     if (!cryptoContext && !assetMentioned) return false;
     if (!EVENT_SIGNAL.test(headlineAndSummary)) return false;
