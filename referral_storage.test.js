@@ -13,7 +13,7 @@ async function run() {
         async eval(script, keys, args) {
             assert.ok(script.includes("redis.call('EXISTS', KEYS[4])"));
             assert.ok(script.includes("table.insert(bonuses"));
-            if (values.has(keys[3])) return null;
+            if (values.has(keys[3])) return values.get(keys[3]);
             if (values.get(keys[0]) !== args[0]) return null;
             const planRaw = values.get(keys[1]);
             if (!planRaw) return null;
@@ -26,8 +26,9 @@ async function run() {
             bonuses.push({ from: args[3], plan: args[4], days, date: now });
             values.set(keys[1], JSON.stringify(plan));
             values.set(keys[2], JSON.stringify(bonuses));
-            values.set(keys[3], '1');
-            return JSON.stringify({ referrerId: args[0], bonusDays: days, newExpires });
+            const result = JSON.stringify({ referrerId: args[0], bonusDays: days, newExpires });
+            values.set(keys[3], result);
+            return result;
         }
     };
     const passthrough = promise => promise;
@@ -38,7 +39,7 @@ async function run() {
     assert.equal(JSON.parse(values.get('ref_bonus_100')).length, 1);
 
     const duplicate = await activateReferralBonusIfUnprocessed(redis, passthrough, '9001', 200, 'SILVER', 5, 20000);
-    assert.equal(duplicate, null);
+    assert.deepEqual(duplicate, first);
     assert.equal(JSON.parse(values.get('ref_bonus_100')).length, 1);
 
     const second = await activateReferralBonusIfUnprocessed(redis, passthrough, '9002', 200, 'PLATINUM', 15, 20000);
