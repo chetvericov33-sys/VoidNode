@@ -14,7 +14,7 @@ const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = r
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
-const { scanKeysByPrefix, createPendingDisconnectIfUserMatches, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
+const { scanKeysByPrefix, createPendingDisconnectIfUserMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -351,6 +351,15 @@ class RedisStorage {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
         try {
             return await createPendingDisconnectIfUserMatches(this.redis, withTimeout, chatId, expectedUserRaw, pendingRaw);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async replaceUserAndClearPending(chatId, userRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await replaceUserAndClearPending(this.redis, withTimeout, chatId, userRaw);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             throw new Error('Critical credential storage unavailable');
@@ -5149,15 +5158,16 @@ async function handleMessage(update) {
                 var encryptedApiKey = encrypt(apiKey);
                 var encryptedSecretKey = encrypt(secretKey);
                 if (!encryptedApiKey || !encryptedSecretKey) throw new Error('Credential encryption failed');
-                // Cancel any older disconnect request before replacing credentials.
-                await deleteData('pending_disconnect_' + chatId);
-                await setData('user_' + chatId, JSON.stringify({
+                // Replace credentials and clear any pending disconnect in one Redis transaction.
+                // This prevents a concurrent disconnect request from being stranded between DEL and SET.
+                var newUserRecord = JSON.stringify({
                     apiKey: encryptedApiKey,
                     secretKey: encryptedSecretKey,
                     exchangeId: selectedExchange,
                     connectedAt: Date.now(),
                     permissionModel: 'read'
-                }));
+                });
+                await VOID_KV.replaceUserAndClearPending(chatId, newUserRecord);
                 await setData('active_wallet_' + chatId, 'real');
                 await deleteData('connect_permission_' + chatId);
                 await deleteData('connect_exchange_' + chatId);
