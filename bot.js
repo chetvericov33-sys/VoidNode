@@ -4294,7 +4294,7 @@ class AIContext {
                 prompt += '  ' + (lang === 'ru' ? 'Источник: ' : 'Source: ') + String(article.source && article.source.name || article.source || 'Unknown').slice(0, 100) + '\n';
                 if (articleDate) prompt += '  ' + (lang === 'ru' ? 'Опубликовано: ' : 'Published: ') + String(articleDate).slice(0, 40) + '\n';
                 if (article.asset) prompt += '  Asset: ' + String(article.asset).slice(0, 20) + '\n';
-                if (article.description) prompt += '  ' + (lang === 'ru' ? 'Описание: ' : 'Description: ') + String(article.description).slice(0, 350).replace(/[\\r\\n]+/g, ' ') + '\n';
+                if (article.description) prompt += '  ' + (lang === 'ru' ? 'Описание: ' : 'Description: ') + String(article.description).slice(0, 350).replace(/[\r\n]+/g, ' ') + '\n';
                 if (article.url) prompt += '  URL: ' + String(article.url).slice(0, 300) + '\n';
             }
             prompt += (lang === 'ru' ? 'Атрибутируй публикации источникам; не утверждай, что проверил их независимо. Отмечай совпадения и расхождения между источниками.\n\n' : 'Attribute publications to their sources; do not imply independent verification. Note agreement and disagreement across sources.\n\n');
@@ -4437,7 +4437,7 @@ class AIContext {
         
         var coinMatch = question.match(/(BTC|ETH|SOL|BNB|ADA|XRP|DOGE|SHIB|MATIC|DOT|AVAX|LINK|UNI|PEPE|ARB|OP|APT|SUI|NEAR|ATOM|LTC|BCH|FIL|FTM|AAVE|MKR|CRV|SNX|COMP|ZEC|XLM|ALGO|HBAR|RUNE|FLOW|WAVES|NEO|DASH|KSM|ENJ|CHZ|SAND|MANA|AXS|GALA|GRT)\b/i);
         
-        if (coinMatch) {
+        if (coinMatch && !isMarketOrNewsQuestion(question)) {
             var coin = coinMatch[0].toUpperCase();
             if (context.lastSnowball && context.lastSnowball.tokens) {
                 var token = context.lastSnowball.tokens.find(function(t) { return t.symbol === coin; });
