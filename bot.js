@@ -2585,7 +2585,7 @@ async function showMarketPulse(chatId) {
     try {
         var url='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false';
         if(COINGECKO_API_KEY) url+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
-        var r=await withTimeout(fetch(url),10000,'CoinGecko market pulse');
+        var r=await fetchWithTimeout(url, {}, 10000, 'CoinGecko market pulse');
         if(!r.ok) throw new Error('market api '+r.status);
         var data=await r.json();
         if(!Array.isArray(data)) throw new Error('market api returned invalid data');
@@ -3991,7 +3991,7 @@ async function generateVerifiedInsight(a, lang) {
         var user=lang==='ru'
             ? 'Верни JSON без markdown строго с тремя строковыми полями: conclusion, why, action. conclusion — 1-2 предложения о сути; why — главная причина с фактом/числом; action — безопасный следующий шаг без исполнения сделок. Факты: '+JSON.stringify(facts)
             : 'Return strict JSON without markdown with exactly three string fields: conclusion, why, action. conclusion = 1-2 sentences with the main takeaway; why = main reason with facts/numbers; action = safe next step without executing trades. Facts: '+JSON.stringify(facts);
-        var response=await withTimeout(fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+OPENROUTER_API_KEY,'HTTP-Referer':'https://t.me/'+BOT_USERNAME,'X-Title':'Void Node Verified Explanation'},body:JSON.stringify({model:CURRENT_AI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:260,temperature:0.1})}),7000,'AI narrative');
+        var response=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+OPENROUTER_API_KEY,'HTTP-Referer':'https://t.me/'+BOT_USERNAME,'X-Title':'Void Node Verified Explanation'},body:JSON.stringify({model:CURRENT_AI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:260,temperature:0.1})},7000,'AI narrative');
         if(!response.ok) throw new Error('AI narrative HTTP '+response.status);
         var data=await response.json(), raw=data&&data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;
         if(!raw) throw new Error('Empty AI narrative');
@@ -4344,7 +4344,7 @@ class AIContext {
                 try {
                     var coinUrl='https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids='+coinIds[coin]+'&price_change_percentage=24h&sparkline=false';
                     if (COINGECKO_API_KEY) coinUrl+='&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY);
-                    var coinFetch=await withTimeout(fetch(coinUrl),10000,'CoinGecko '+coin+' quote');
+                    var coinFetch=await fetchWithTimeout(coinUrl, {}, 10000, 'CoinGecko '+coin+' quote');
                     if (!coinFetch.ok) throw new Error('CoinGecko HTTP '+coinFetch.status);
                     var coinRows=await coinFetch.json();
                     var quote=Array.isArray(coinRows)?coinRows[0]:null;
@@ -5687,7 +5687,7 @@ async function buildDailyBriefing(chatId,lang,firstBriefing) {
         msg+=(delta&&delta.changes.length?'⚠️ *'+(lang==='ru'?'ЧТО ИЗМЕНИЛОСЬ':'WHAT CHANGED')+'*\n'+delta.changes.slice(0,3).map(function(x){return '• '+x;}).join('\n')+'\n\n':'🟢 '+(lang==='ru'?'Существенных изменений не обнаружено.':'No material changes detected.')+'\n\n');
     } else msg+=(lang==='ru'?'📊 Подключи биржу и выполни первый анализ.':'📊 Connect an exchange and run the first analysis.')+'\n\n';
     msg+='❤️ *'+(lang==='ru'?'Пульс рынка':'Market Pulse')+'*\n';
-    try { var r=await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false'+(COINGECKO_API_KEY?'&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY):'')); var d=await r.json(); msg+=d.slice(0,3).map(function(x){return '• '+String(x.symbol||'').toUpperCase()+' '+(Number(x.price_change_percentage_24h)>=0?'+':'')+Number(x.price_change_percentage_24h||0).toFixed(1)+'%';}).join(' · ')+'\n\n'; } catch(e){msg+=(lang==='ru'?'данные рынка временно недоступны':'market data temporarily unavailable')+'\n\n';}
+    try { var r=await fetchWithTimeout('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&price_change_percentage=24h&sparkline=false'+(COINGECKO_API_KEY?'&x_cg_demo_api_key='+encodeURIComponent(COINGECKO_API_KEY):''), {}, 10000, 'CoinGecko daily briefing'); var d=await r.json(); msg+=d.slice(0,3).map(function(x){return '• '+String(x.symbol||'').toUpperCase()+' '+(Number(x.price_change_percentage_24h)>=0?'+':'')+Number(x.price_change_percentage_24h||0).toFixed(1)+'%';}).join(' · ')+'\n\n'; } catch(e){msg+=(lang==='ru'?'данные рынка временно недоступны':'market data temporarily unavailable')+'\n\n';}
     if(news&&!news.error&&news.articles&&news.articles.length){msg+='📰 *'+(lang==='ru'?'ВАЖНОЕ ИЗ НОВОСТЕЙ':'IMPORTANT NEWS')+'*\n';news.articles.slice(0,2).forEach(function(a){msg+='• '+String(a.title||'News').replace(/[\r\n]+/g,' ').slice(0,110)+'\n';});msg+='\n';}
     msg+='🤖 *AI*\n'+(analysis?(lang==='ru'?'Главное сегодня — смотреть на изменение риска, а не на отдельную красную свечу.':'Today, focus on the change in portfolio risk rather than a single red candle.'):(lang==='ru'?'AI подключится после первого анализа.':'AI context will improve after the first analysis.'))+'\n\n';
     msg+='❄️ *'+(lang==='ru'?'ДЕНЬ БЕЗ ПАНИКИ':'NO-PANIC DAY')+'*\n'+(analysis&&(!delta||Math.abs(delta.deltaRisk)<10)?(lang==='ru'?'Критического ухудшения не видно. Срочных действий не требуется.':'No critical deterioration is visible. No urgent action is required.'):(lang==='ru'?'Ситуация требует внимания, но решение лучше принимать после проверки причин.':'The situation deserves attention, but review the causes before acting.')); if(firstBriefing){msg+='\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n'+(lang==='ru'?'👋 *Вот как будет выглядеть твоё утро*\n\nКаждый день в 08:00 Void Node присылает такую сводку.\n\n🎯 *Зачем это каждый день*\n\nОдин анализ — это диагноз.\n\nРезультат — в контроле.\n\nЯ смотрю портфель каждое утро, ловлю движения в моменте и раз в месяц показываю прогресс.\n\nЭто и есть работа тренера.':'👋 *This is what your morning will look like*\n\nEvery day at 08:00 Void Node sends this briefing.\n\n🎯 *Why every day*\n\nOne analysis is a diagnosis.\n\nResults come from control.\n\nI look at the portfolio every morning, watch changes in context and show progress once a month.\n\nThat is the work of a coach.')+'\n\n'+(lang==='ru'?'Сейчас у тебя Trial — 3 анализа портфеля за всё время.':'You are on Trial — 3 portfolio analyses for life.');}
