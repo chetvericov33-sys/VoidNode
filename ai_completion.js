@@ -42,7 +42,7 @@ async function requestOpenRouterCompletion(options) {
     // Never silently switch to a paid model. Explicit fallbacks must be configured by the owner.
     var models = [primary].concat(fallbacks.map(function(model) { return String(model || '').trim(); }).filter(Boolean));
     if (!models.some(function(model) { return model !== primary; })) {
-        models.push(primary === 'openrouter/free' ? 'openrouter/free' : 'openrouter/free');
+        models.push('openrouter/free');
     }
     var uniqueModels = [];
     models.forEach(function(model) { if (model && uniqueModels.indexOf(model) === -1) uniqueModels.push(model); });
