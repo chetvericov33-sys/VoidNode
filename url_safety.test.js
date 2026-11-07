@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { classifyUrlSafety } = require('./url_safety');
+const { classifyUrlSafety, getUrlAlertLevel } = require('./url_safety');
 
 assert.strictEqual(classifyUrlSafety('https://binance.com').status, 'SAFE');
 assert.strictEqual(classifyUrlSafety('https://www.binance.com/login').status, 'UNKNOWN');
@@ -16,5 +16,11 @@ assert.strictEqual(classifyUrlSafety('javascript:alert(1)').status, 'SUSPICIOUS'
 assert.strictEqual(classifyUrlSafety('https://user:pass@example.org').status, 'SUSPICIOUS');
 assert.strictEqual(classifyUrlSafety('https://xn--binance-9za.example').status, 'SUSPICIOUS');
 assert.strictEqual(classifyUrlSafety('https://example.org', { blacklisted: true }).status, 'SUSPICIOUS');
+
+assert.strictEqual(getUrlAlertLevel(classifyUrlSafety('https://binance.com')), 'SAFE');
+assert.strictEqual(getUrlAlertLevel(classifyUrlSafety('https://binance-login.com')), 'SUSPICIOUS');
+assert.strictEqual(getUrlAlertLevel(classifyUrlSafety('https://example.org')), 'UNKNOWN');
+assert.strictEqual(getUrlAlertLevel(null), 'UNKNOWN');
+assert.strictEqual(getUrlAlertLevel({ status: 'UNEXPECTED' }), 'UNKNOWN');
 
 console.log('URL safety tests passed');
