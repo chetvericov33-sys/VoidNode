@@ -24,6 +24,7 @@ function response(status, body) {
     assert.strictEqual(result.model,'free/model-b');
     assert.strictEqual(result.attempts,2);
     assert.strictEqual(calls.length,2);
+    assert.deepStrictEqual(calls,['openrouter/free','nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free']);
 
     var fallbackCalls = [];
     result = await requestOpenRouterCompletion({
