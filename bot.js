@@ -1494,7 +1494,7 @@ function comparePortfolioSnapshots(prev,current,lang){
     if(Math.abs(deltaValue)>=1) changes.push((ru?'Стоимость: ':'Value: ')+'$'+prev.totalUSDT.toFixed(2)+' → $'+current.totalUSDT.toFixed(2)+' ('+(deltaValue>=0?'+':'')+deltaValue.toFixed(1)+'%)');
     [['btcPercent','BTC'],['altPercent',ru?'Альткоины':'Alts'],['usdtPercent',ru?'Стейблкоины':'Stable']].forEach(function(x){var d=current[x[0]]-prev[x[0]];if(Math.abs(d)>=2)changes.push(x[1]+': '+prev[x[0]].toFixed(1)+'% → '+current[x[0]].toFixed(1)+'% ('+(d>=0?'+':'')+d.toFixed(1)+' pp)');});
     if(prev.topPosition&&current.topPosition&&prev.topPosition.symbol===current.topPosition.symbol){var dc=current.topPosition.weight-prev.topPosition.weight;if(Math.abs(dc)>=2)changes.push((ru?'Концентрация ':'Concentration ')+current.topPosition.symbol+': '+prev.topPosition.weight.toFixed(1)+'% → '+current.topPosition.weight.toFixed(1)+'%');}
-    if(Number(prev.coveragePct||100)!==Number(current.coveragePct||100))changes.push((ru?'Полнота данных: ':'Data completeness: ')+Number(prev.coveragePct||0)+'% → '+Number(current.coveragePct||0)+'%');
+    if(Number(prev.coveragePct||100)!==Number(current.coveragePct||100))changes.push((ru?'Покрытие активов по количеству: ':'Asset-count coverage: ')+Number(prev.coveragePct||0)+'% → '+Number(current.coveragePct||0)+'%');
     return {deltaRisk:deltaRisk,deltaValue:deltaValue,changes:changes};
 }
 
@@ -1694,9 +1694,9 @@ async function analyzePortfolio(chatId,lang) {
     if(!rec.length)rec.push(lang==='ru'?'Критичных перекосов по текущим проверенным данным не найдено.':'No critical imbalance was found in the currently verified data.');
     var pricedAssets=rows.length, allPositiveAssets=pricedAssets+unknownAssets.length;
     var coveragePct=allPositiveAssets?Math.round((pricedAssets/allPositiveAssets)*100):0;
-    var confidencePct=coveragePct;
+    var confidencePct=coverageComplete ? 100 : (pricedAssets > 0 ? 50 : 0);
     var dataStatus=coveragePct===100?'FRESH':(coveragePct>0?'PARTIAL':'UNKNOWN');
-    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':'medium',btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
+    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':(pricedAssets>0?'low':'unknown'),btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
     a.insight=await generateVerifiedInsight(a,lang);
     var previousSnapshot=await savePortfolioSnapshot(chatId,a); if(wallet.type!=='demo') await collectTradeSnapshot(chatId); await setData('analysis_'+chatId,JSON.stringify(a),24*60*60); await addHistory(chatId,getText(lang,'history_analyze'),'Risk '+score+'/100; value ≈ $'+total.toFixed(2));
     return {success:true,analysis:a,remaining:limit.remaining};
@@ -1765,7 +1765,7 @@ function formatPortfolioAnalysis(r,lang){
     var rt=lang==='ru'?({critical:'Критический',high:'Высокий',medium:'Средний',low:'Низкий'}[a.riskLevel]||'Неизвестен'):({critical:'Critical',high:'High',medium:'Medium',low:'Unknown'}[a.riskLevel]||'Unknown');
     var beginner=a.mode!=='pro', ru=lang==='ru';
     var t=ru?'🛡️ *VOID NODE — РИСК-ПРОВЕРКА*':'🛡️ *VOID NODE — RISK CHECK*';
-    t+='\n──────\n\n💰 '+(ru?'Стоимость портфеля':'Known value')+': $'+a.totalUSDT.toFixed(2)+'\n🛡️ '+(ru?'Риск':'Risk')+': '+em+' '+rt+' ('+a.riskScore+'/100)\n🎯 '+(ru?'Режим':'Mode')+': '+(beginner?(ru?'🔰 Новичок':'🔰 Beginner'):(ru?'🚀 Опытный':'🚀 Experienced'))+'\n🔎 '+(ru?'Надёжность данных':'Confidence')+': '+(a.confidence==='high'?'High':'Medium')+'\n📡 '+(ru?'Полнота данных':'Coverage')+': '+(a.coverageComplete?(ru?'полное':'complete'):(ru?'частичное':'partial'))+'\n\n';
+    t+='\n──────\n\n💰 '+(ru?'Стоимость портфеля':'Known value')+': $'+a.totalUSDT.toFixed(2)+'\n🛡️ '+(ru?'Риск':'Risk')+': '+em+' '+rt+' ('+a.riskScore+'/100)\n🎯 '+(ru?'Режим':'Mode')+': '+(beginner?(ru?'🔰 Новичок':'🔰 Beginner'):(ru?'🚀 Опытный':'🚀 Experienced'))+'\n🔎 '+(ru?'Уровень уверенности':'Confidence level')+': '+(a.confidence==='high'?'High':(a.confidence==='low'?'Low':'Unknown'))+'\n📡 '+(ru?'Полнота данных':'Coverage')+': '+(a.coverageComplete?(ru?'полное':'complete'):(ru?'частичное':'partial'))+'\n\n';
     t+='📐 '+(ru?'Распределение портфеля':'Allocation')+':\n• BTC: '+a.btcPercent.toFixed(1)+'%\n• Альткоины: '+a.altPercent.toFixed(1)+'%\n• Стейблкоины: '+a.usdtPercent.toFixed(1)+'%\n\n';
     if(beginner){
         t+='🧭 *'+(ru?'Что это значит':'What this means')+'*\n';
@@ -1791,7 +1791,7 @@ function formatPortfolioAnalysis(r,lang){
     t+='• '+(ru?'Итого':'Total')+': *'+a.riskScore+'/100*\n';
     if(topFactor&&topFactor.points>0)t+='🎯 '+(ru?'Главная причина: ':'Main reason: ')+(ru?topFactor.labelRu:topFactor.labelEn)+'.\n';
     if(a.topPosition&&a.topPosition.weight>0){var impact=(a.topPosition.weight*0.30);t+='📉 '+(ru?'При падении крупнейшей позиции на 30% вклад в снижение портфеля был бы около ':'A 30% drop in the largest position would reduce the portfolio by about ')+impact.toFixed(1)+'%.\n';}
-    t+='📡 '+(ru?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(ru?'полноты':'complete')+', '+Number(a.confidencePct||0)+'% '+(ru?'надёжности':'confidence')+', '+String(a.dataStatus||'UNKNOWN')+'\n';
+    t+='📡 '+(ru?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(ru?'активов по количеству':'assets by count')+', '+Number(a.confidencePct||0)+'% '+(ru?'надёжности':'confidence')+', '+String(a.dataStatus||'UNKNOWN')+'\n';
 
 t+='\n🔎 *'+(ru?'Крупнейшие позиции':'Largest positions')+'*\n';
     a.assets.slice(0,5).forEach(function(x){t+='• '+x.symbol+': '+x.weight.toFixed(1)+'% ($'+x.value.toFixed(2)+')\n';});
@@ -2651,7 +2651,7 @@ async function showProtectionDashboard(chatId){
     t+=(wallet?(wallet.type==='demo'?'🧪 Демо-режим':'👁️ Read-only подключён'):'⚪ Кошелёк не подключён')+'\n';
     if(a)t+=em+' Risk Score: *'+a.riskScore+'/100*\n';
     t+=(a?(fresh?'🟢 ':'🟡 ')+(lang==='ru'?'Анализ':'Analysis')+': '+age+' мин. назад':'⚪ '+(lang==='ru'?'Анализ ещё не создан':'No analysis yet'))+'\n';
-    if(a)t+='🔎 '+(lang==='ru'?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(lang==='ru'?'полноты':'complete')+' | '+Number(a.confidencePct||0)+'% '+(lang==='ru'?'надёжности':'confidence')+' | '+String(a.dataStatus||'UNKNOWN')+'\n';
+    if(a)t+='🔎 '+(lang==='ru'?'Данные':'Data')+': '+Number(a.coveragePct||0)+'% '+(lang==='ru'?'активов по количеству':'assets by count')+' | '+Number(a.confidencePct||0)+'% '+(lang==='ru'?'надёжности':'confidence')+' | '+String(a.dataStatus||'UNKNOWN')+'\n';
     t+='🔔 '+(lang==='ru'?'Активных оповещений: ':'Active alerts: ')+alerts.length+'\n\n';
     if(fixes.length){
         t+=(lang==='ru'?'🚨 *ЧТО ТРЕБУЕТ ВНИМАНИЯ*':'🚨 *WHAT NEEDS ATTENTION*')+'\n';
