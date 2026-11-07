@@ -3969,7 +3969,7 @@ class NewsManager {
                     var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
                     if (Date.now() - parsed.timestamp < 300000) return parsed.articles;
                 }
-                var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=3&apiKey=' + NEWS_API_KEY;
+                var url = 'https://newsapi.org/v2/everything?q=' + query + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=10&apiKey=' + NEWS_API_KEY;
                 var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
                 var data = await response.json();
                 var articles = [];
