@@ -16,6 +16,20 @@ function normalizeBalanceEntries(balances) {
   return { entries: entries, duplicates: duplicates };
 }
 
+function assessMarketLiquidity(ticker, config) {
+  var bid = Number(ticker && ticker.bid), ask = Number(ticker && ticker.ask);
+  var rawVolume = ticker && ticker.quoteVolume;
+  var quoteVolume = rawVolume == null || rawVolume === '' ? null : Number(rawVolume);
+  if (!Number.isFinite(quoteVolume) || quoteVolume < 0) quoteVolume = null;
+  var spreadPct = Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask >= bid
+    ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null;
+  var maxSpread = Number(config && config.MAX_SPREAD_PCT);
+  var minVolume = Number(config && config.MIN_QUOTE_VOLUME_USDT);
+  var lowLiquidity = (spreadPct !== null && Number.isFinite(maxSpread) && spreadPct > maxSpread) ||
+    (quoteVolume !== null && Number.isFinite(minVolume) && quoteVolume < minVolume);
+  return { spreadPct: spreadPct, quoteVolume: quoteVolume, lowLiquidity: lowLiquidity };
+}
+
 function validateSpotTicker(market, ticker, base, quote) {
   if (!market) return { ok: false, reason: 'market_pair_unavailable' };
   if (market.active === false) return { ok: false, reason: 'market_inactive' };
@@ -31,4 +45,4 @@ function validateSpotTicker(market, ticker, base, quote) {
   return { ok: true, price: price };
 }
 
-module.exports = { normalizeBalanceEntries: normalizeBalanceEntries, validateSpotTicker: validateSpotTicker };
+module.exports = { normalizeBalanceEntries: normalizeBalanceEntries, validateSpotTicker: validateSpotTicker, assessMarketLiquidity: assessMarketLiquidity };
