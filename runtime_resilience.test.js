@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
+const { withTimeout, fetchWithTimeout, validateOutboundUrl, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 
 async function run() {
     assert.equal(await withTimeout(Promise.resolve('ok'), 50, 'test'), 'ok');
@@ -13,8 +13,28 @@ async function run() {
         receivedSignal = options.signal instanceof AbortSignal;
         options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
     });
-    await assert.rejects(fetchWithTimeout('https://example.invalid', {}, 5, 'test fetch'), /test fetch timeout/);
+    await assert.rejects(fetchWithTimeout('https://example.invalid', {}, 5, 'test fetch', { allowedHosts: ['example.invalid'] }), /test fetch timeout/);
     assert.equal(receivedSignal, true);
+    global.fetch = originalFetch;
+
+    assert.equal(validateOutboundUrl('https://api.telegram.org/bot123/getMe').hostname, 'api.telegram.org');
+    assert.throws(() => validateOutboundUrl('http://api.telegram.org/'), /HTTPS/);
+    assert.throws(() => validateOutboundUrl('https://127.0.0.1/'), /not allowlisted/);
+    assert.throws(() => validateOutboundUrl('https://api.telegram.org:8443/'), /disallowed port/);
+    assert.throws(() => validateOutboundUrl('https://user:pass@api.telegram.org/'), /credentials/);
+
+    let requestOptions;
+    global.fetch = async (url, options) => {
+        requestOptions = options;
+        return new Response('bounded response', { status: 200, headers: { 'content-type': 'text/plain' } });
+    };
+    const boundedResponse = await fetchWithTimeout('https://api.telegram.org/test', { redirect: 'follow' }, 100, 'bounded test');
+    assert.equal(requestOptions.redirect, 'error');
+    assert.equal(await boundedResponse.text(), 'bounded response');
+    await assert.rejects(
+        fetchWithTimeout('https://api.telegram.org/test', {}, 100, 'large test', { maxResponseBytes: 4 }),
+        /response size limit/
+    );
     global.fetch = originalFetch;
 
     assert.equal(await probeRedisConnection({ ping: async () => 'PONG' }, 20), true);
