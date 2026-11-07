@@ -5494,34 +5494,72 @@ async function handleNewsCommand(chatId, coin, lang, messageId) {
 async function handleNewsSingleCoin(chatId, coin, lang, messageId) {
     var isRu = lang === 'ru';
     try {
-        var cacheKey = 'news_single_v2_' + coin + '_' + (isRu ? 'ru' : 'en');
+        var normalizedCoin = String(coin || '').split('/')[0].trim().toUpperCase();
+        var cacheKey = 'news_single_v3_' + normalizedCoin + '_' + (isRu ? 'ru' : 'en');
         var cached = await getData(cacheKey);
         if (cached) {
             var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
-            if (Date.now() - parsed.timestamp < 300000) {
-                await sendNewsReport(chatId, parsed.articles, coin, lang, messageId);
+            if (Date.now() - parsed.timestamp < 5 * 60 * 1000 && Array.isArray(parsed.articles) && parsed.articles.length) {
+                await sendNewsReport(chatId, parsed.articles, normalizedCoin, lang, messageId);
                 return;
             }
         }
-        var url = 'https://newsapi.org/v2/everything?q=' + coin + '+crypto&language=' + (isRu ? 'ru' : 'en') + '&sortBy=publishedAt&pageSize=5&apiKey=' + NEWS_API_KEY;
-        var response = await fetchWithTimeout(url, {}, 10000, 'External API request');
-        var data = await response.json();
-        var relevantArticles = data.status === 'ok' ? filterRelevantCryptoNews(data.articles) : [];
+
+        // Direct publisher feeds are the primary source. NewsAPI is only a fallback.
+        var rssArticles = await fetchCryptoRssNews(fetchWithTimeout);
+        var relevantArticles = filterNewsForAsset(rssArticles, normalizedCoin).slice(0, 5);
+        if (!relevantArticles.length && NEWS_API_KEY) {
+            try {
+                var params = new URLSearchParams({
+                    q: normalizedCoin + ' crypto',
+                    language: isRu ? 'ru' : 'en',
+                    sortBy: 'publishedAt',
+                    pageSize: '20',
+                    from: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString().slice(0, 10),
+                    apiKey: NEWS_API_KEY
+                });
+                var response = await fetchWithTimeout('https://newsapi.org/v2/everything?' + params.toString(), {}, 10000, 'NewsAPI asset fallback');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                var data = await response.json();
+                if (data.status === 'ok' && Array.isArray(data.articles)) {
+                    relevantArticles = filterRelevantCryptoNews(data.articles, [normalizedCoin]).filter(function(article) {
+                        var published = Date.parse(article.publishedAt || '');
+                        return Number.isFinite(published) && Date.now() - published <= 72 * 60 * 60 * 1000;
+                    }).slice(0, 5);
+                }
+            } catch (fallbackError) {
+                console.warn('NewsAPI asset fallback unavailable:', String(fallbackError.message || fallbackError).slice(0,160));
+            }
+        }
+
+        if (!relevantArticles.length && rssArticles.length) {
+            relevantArticles = rssArticles.slice(0, 5).map(function(article) {
+                return Object.assign({}, article, { marketWideFallback: true });
+            });
+        }
         if (!relevantArticles.length) {
-            await sendUpdatedMessage(chatId, getText(lang, 'news_empty'), null, 'Markdown', messageId);
+            await sendUpdatedMessage(chatId, isRu
+                ? '⚠️ Сейчас источники не вернули свежих публикаций. Попробуй обновить ленту чуть позже.'
+                : '⚠️ News sources returned no fresh publications right now. Please refresh again shortly.',
+                null, 'Markdown', messageId);
             return;
         }
         await setData(cacheKey, JSON.stringify({ articles: relevantArticles, timestamp: Date.now() }), 300);
-        await sendNewsReport(chatId, relevantArticles, coin, lang, messageId);
+        await sendNewsReport(chatId, relevantArticles, normalizedCoin, lang, messageId);
     } catch (error) {
-        console.error('News error:', error);
-        await sendUpdatedMessage(chatId, '❌ Error getting news. Please try again later.', null, 'Markdown', messageId);
+        console.error('News error:', String(error.message || error).slice(0,200));
+        await sendUpdatedMessage(chatId, isRu
+            ? '❌ Не удалось загрузить новости. Попробуй ещё раз позже.'
+            : '❌ Could not load news. Please try again later.', null, 'Markdown', messageId);
     }
 }
 
 async function sendNewsReport(chatId, articles, coin, lang, messageId) {
     var isRu = lang === 'ru';
-    var report = getText(lang, 'news_coin', coin.toUpperCase());
+    var marketFallback = articles.some(function(article){ return !!article.marketWideFallback; });
+    var report = marketFallback
+        ? (isRu ? '📰 *СВЕЖИЕ НОВОСТИ КРИПТОРЫНКА*\\n_Прямых упоминаний ' + coin.toUpperCase() + ' в свежих заголовках не найдено._\\n\\n' : '📰 *LATEST CRYPTO MARKET NEWS*\\n_No direct ' + coin.toUpperCase() + ' headlines found in fresh sources._\\n\\n')
+        : getText(lang, 'news_coin', coin.toUpperCase());
     var count = 0;
     var seenUrls = new Set();
     for (var i = 0; i < articles.length; i++) {
