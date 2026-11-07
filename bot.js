@@ -4272,7 +4272,7 @@ class AIContext {
             }
             prompt += '\n';
         } else {
-            prompt += (lang === 'ru' ? '⚠️ Нет данных о портфеле. Предложи выполнить /analyze.\n\n' : '⚠️ No portfolio data. Suggest running /analyze.\n\n');
+            prompt += (lang === 'ru' ? '⚠️ Данные о портфеле не переданы. Не предполагай состав или баланс; предлагай /analyze только если вопрос требует персональных цифр портфеля.\n\n' : '⚠️ No portfolio data is available. Do not assume holdings or balances; suggest /analyze only when the question requires personal portfolio figures.\n\n');
         }
 
         if (context.lastOrders) {
