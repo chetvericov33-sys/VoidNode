@@ -2,7 +2,7 @@
 
 function isMarketOrNewsQuestion(question) {
     var q = String(question || '').toLowerCase().replace(/ё/g, 'е');
-    return /рынок|рынке|рынка|крипторын|что происходит|новост|событи|почему.{0,60}(падает|растет|снижается|просел)|макроэконом|инфляц|процентн.{0,20}ставк|санкц|регулирован|bitcoin|\bbtc\b|ethereum|\beth\b|solana|\bsol\b|binance|market|crypto|news|what is happening|what's happening|why.{0,60}(fall|drop|rise|pump|dump)/i.test(q);
+    return /рынок|рынке|рынка|крипторын|что происходит|что нового|новост|событи|почему.{0,60}(падает|растет|снижается|просел)|(?:падает|растет|снижается|просел).{0,60}(?:рынок|биткоин|bitcoin|btc|эфир|ethereum|eth|sol|solana)|макроэконом|инфляц|процентн.{0,20}ставк|санкц|регулирован|bitcoin|ethereum|solana|binance|market|crypto|news|what is happening|what's happening|why.{0,60}(fall|drop|rise|pump|dump)|why.{0,40}\b(?:btc|eth|sol)\b|\b(?:btc|eth|sol)\b.{0,50}\b(?:down|fall|drop|rise|up|pump|dump)\b/i.test(q);
 }
 
 function formatNewsDisclosure(lang) {
