@@ -2731,16 +2731,16 @@ async function showMarketPulse(chatId) {
             var pulseNews = await newsManager.getPersonalizedNews(chatId, lang);
             var pulseArticles = pulseNews && Array.isArray(pulseNews.articles) ? pulseNews.articles.slice(0, 3) : [];
             if (pulseArticles.length) {
-                text += '\\n📰 *' + (lang === 'ru' ? 'НОВОСТНОЙ ФОН' : 'NEWS CONTEXT') + '*\\n';
+                text += '\n📰 *' + (lang === 'ru' ? 'НОВОСТНОЙ ФОН' : 'NEWS CONTEXT') + '*\n';
                 pulseArticles.forEach(function(article) {
                     var title = escapeMarkdown(String(article.title || 'News').slice(0, 180));
                     var source = escapeMarkdown(String(article.source && article.source.name || article.source || 'Unknown').slice(0, 80));
                     var published = article.publishedAt ? new Date(article.publishedAt).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US') : '';
-                    text += '• ' + title + '\\n  ' + source + (published ? ' · ' + published : '') + '\\n';
-                    if (article.description) text += '  ' + escapeMarkdown(String(article.description).slice(0, 220)) + '\\n';
-                    if (article.url) text += '  [' + (lang === 'ru' ? 'Источник' : 'Source') + '](' + article.url + ')\\n';
+                    text += '• ' + title + '\n  ' + source + (published ? ' · ' + published : '') + '\n';
+                    if (article.description) text += '  ' + escapeMarkdown(String(article.description).slice(0, 220)) + '\n';
+                    if (article.url) text += '  [' + (lang === 'ru' ? 'Источник' : 'Source') + '](' + article.url + ')\n';
                 });
-                text += '\\n' + formatNewsDisclosure(lang) + '\\n';
+                text += '\n' + formatNewsDisclosure(lang) + '\n';
             }
         } catch (newsError) { console.warn('Market pulse news unavailable:', newsError.message); }
         await sendUpdatedMessage(chatId,text,{inline_keyboard:[[{text:'📰 '+(lang==='ru'?'Новости':'News'),callback_data:'menu_news'},{text:'📊 '+(lang==='ru'?'Портфель':'Portfolio'),callback_data:'menu_analyze'}],[{text:'🤖 AI',callback_data:'menu_ai'},{text:getText(lang,'back_to_market'),callback_data:'menu_market'}]]},'Markdown');
