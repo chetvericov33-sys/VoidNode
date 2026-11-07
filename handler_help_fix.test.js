@@ -7,7 +7,7 @@ function assert(cond, msg) {
 
 assert(src.includes("if (/^help_q[1-9]$/.test(data))"), 'generic help callback handler is missing');
 assert(src.includes("var helpKey = 'q' + data.slice(-1);"), 'help callback normalization is missing');
-assert(src.includes("var helpAnswerKey = 'help_answer_' + helpQuestionKey;"), 'help answer key construction is missing');
+assert(src.includes("var helpAnswerKey = 'help_answer_' + helpKey;"), 'help answer key construction is missing');
 assert(!src.includes("help_answer_' + data"), 'unsafe help_answer_<data> construction remains');
 assert(!src.match(/getText\([^\n]*['\"]help_answer_help_q/), 'broken translation lookup remains');
 
