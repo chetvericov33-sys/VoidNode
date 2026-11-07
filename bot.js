@@ -10,6 +10,7 @@ const ccxt = require('ccxt');
 const crypto = require('crypto');
 const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
+const { normalizeBalanceEntries, validateSpotTicker } = require('./market_data');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -1663,27 +1664,36 @@ async function analyzePortfolio(chatId,lang) {
     } else {
         try {
             var ex=await connectExchange(wallet.exchangeId,wallet.apiKey,wallet.secretKey,chatId),bal=await ex.fetchBalance(),balances=bal.total||{};
-            var usdt=Number(balances.USDT||0); if(usdt>0){rows.push({symbol:'USDT',amount:usdt,price:1,value:usdt,change24h:0});total+=usdt;}
+            var normalizedBalances=normalizeBalanceEntries(balances);
+            normalizedBalances.duplicates.forEach(function(coin){coverageComplete=false;unknownAssets.push({symbol:coin,amount:null,reason:'duplicate_asset_symbol'});invalidMarketDataAssets.push({symbol:coin,reason:'duplicate_asset_symbol'});});
+            var usdtEntry=normalizedBalances.entries.find(function(x){return x.symbol==='USDT';});
+            if(usdtEntry){if(!Number.isFinite(usdtEntry.amount)||usdtEntry.amount<0){coverageComplete=false;unknownAssets.push({symbol:'USDT',amount:null,reason:'invalid_balance'});invalidMarketDataAssets.push({symbol:'USDT',reason:'invalid_balance'});}else if(usdtEntry.amount>0){rows.push({symbol:'USDT',amount:usdtEntry.amount,price:1,value:usdtEntry.amount,change24h:0,priceFreshness:'unverified'});total+=usdtEntry.amount;unverifiedPriceWeight+=usdtEntry.amount;unverifiedPriceAssets.push({symbol:'USDT',weightValue:usdtEntry.amount});}}
+            var marketMap={}; try{if(typeof ex.loadMarkets==='function')marketMap=await ex.loadMarkets();else marketMap=ex.markets||{};}catch(e){console.warn('Market metadata unavailable:',e.message);marketMap={};}
             var tickers={}; try{if(typeof ex.fetchTickers==='function')tickers=await ex.fetchTickers();}catch(e){console.warn('Ticker snapshot unavailable:',e.message);}
-            Object.keys(balances).forEach(function(coin){
-                var amt=Number(balances[coin]); if(coin==='USDT')return; if(!Number.isFinite(amt)||amt<0){coverageComplete=false;unknownAssets.push({symbol:coin,amount:null,reason:'invalid_balance'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_balance'});return;} if(amt===0)return;
-                var ticker=tickers[coin+'/USDT'],price=Number(ticker&&(ticker.last||ticker.close)||0);
-                if(Number.isFinite(price)&&price>0){
-                    var v=amt*price, tickerTime=Number(ticker.timestamp||0);
-                    if(!(tickerTime>0)&&ticker.datetime){var parsedTime=Date.parse(ticker.datetime);if(Number.isFinite(parsedTime))tickerTime=parsedTime;}
-                    var ageMs=tickerTime>0?Date.now()-tickerTime:null, freshness='unverified';
-                    if(ageMs!==null&&ageMs>=0&&ageMs<=CONFIG.RISK.FRESH_MS)freshness='fresh';
-                    else if(ageMs!==null&&ageMs>CONFIG.RISK.FRESH_MS&&ageMs<=CONFIG.RISK.STALE_MS)freshness='aging';
-                    else if(ageMs!==null&&ageMs>CONFIG.RISK.STALE_MS)freshness='stale';
-                    var bid=Number(ticker.bid),ask=Number(ticker.ask),quoteVolume=Number(ticker.quoteVolume),spreadPct=Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>=bid?((ask-bid)/((ask+bid)/2))*100:null;
-                    var lowLiquidity=(spreadPct!==null&&spreadPct>CONFIG.RISK.MAX_SPREAD_PCT)||(Number.isFinite(quoteVolume)&&quoteVolume>=0&&quoteVolume<CONFIG.RISK.MIN_QUOTE_VOLUME_USDT);
-                    rows.push({symbol:coin,amount:amt,price:price,value:v,change24h:Number.isFinite(Number(ticker.percentage))?Number(ticker.percentage):0,priceTimestamp:tickerTime>0?tickerTime:null,priceAgeMs:ageMs,priceFreshness:freshness,spreadPct:spreadPct,quoteVolume: Number.isFinite(quoteVolume)?quoteVolume:null,liquidityStatus:lowLiquidity?'low':'unverified'});
-                    if(lowLiquidity){lowLiquidityAssets.push({symbol:coin,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,weightValue:v});lowLiquidityWeight+=v;}
-                    total+=v;
-                    if(freshness==='stale'){stalePriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});stalePriceWeight+=v;}
-                    else if(freshness==='aging'){agingPriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});agingPriceWeight+=v;}
-                    else if(freshness==='unverified'){unverifiedPriceAssets.push({symbol:coin,weightValue:v});unverifiedPriceWeight+=v;}
-                } else {coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt,reason:'invalid_or_unavailable_price'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_or_unavailable_price'});}
+            normalizedBalances.entries.forEach(function(entry){
+                var coin=entry.symbol,amt=entry.amount;
+                if(coin==='USDT'||normalizedBalances.duplicates.indexOf(coin)!==-1)return;
+                if(!Number.isFinite(amt)||amt<0){coverageComplete=false;unknownAssets.push({symbol:coin,amount:null,reason:'invalid_balance'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_balance'});return;}
+                if(amt===0)return;
+                var pair=coin+'/USDT',market=marketMap[pair],ticker=tickers[pair];
+                var validation=validateSpotTicker(market,ticker,coin,'USDT');
+                if(!validation.ok){coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt,reason:validation.reason});invalidMarketDataAssets.push({symbol:coin,reason:validation.reason});return;}
+                var price=validation.price,v=amt*price;
+                if(!Number.isFinite(v)||v<=0){coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt,reason:'invalid_valuation'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_valuation'});return;}
+                var tickerTime=Number(ticker.timestamp||0);
+                if(!(tickerTime>0)&&ticker.datetime){var parsedTime=Date.parse(ticker.datetime);if(Number.isFinite(parsedTime))tickerTime=parsedTime;}
+                var ageMs=tickerTime>0?Date.now()-tickerTime:null, freshness='unverified';
+                if(ageMs!==null&&ageMs>=0&&ageMs<=CONFIG.RISK.FRESH_MS)freshness='fresh';
+                else if(ageMs!==null&&ageMs>CONFIG.RISK.FRESH_MS&&ageMs<=CONFIG.RISK.STALE_MS)freshness='aging';
+                else if(ageMs!==null&&ageMs>CONFIG.RISK.STALE_MS)freshness='stale';
+                var bid=Number(ticker.bid),ask=Number(ticker.ask),quoteVolume=Number(ticker.quoteVolume),spreadPct=Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>=bid?((ask-bid)/((ask+bid)/2))*100:null;
+                var lowLiquidity=(spreadPct!==null&&spreadPct>CONFIG.RISK.MAX_SPREAD_PCT)||(Number.isFinite(quoteVolume)&&quoteVolume>=0&&quoteVolume<CONFIG.RISK.MIN_QUOTE_VOLUME_USDT);
+                rows.push({symbol:coin,amount:amt,price:price,value:v,change24h:Number.isFinite(Number(ticker.percentage))?Number(ticker.percentage):0,priceTimestamp:tickerTime>0?tickerTime:null,priceAgeMs:ageMs,priceFreshness:freshness,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,liquidityStatus:lowLiquidity?'low':'unverified'});
+                if(lowLiquidity){lowLiquidityAssets.push({symbol:coin,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,weightValue:v});lowLiquidityWeight+=v;}
+                total+=v;
+                if(freshness==='stale'){stalePriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});stalePriceWeight+=v;}
+                else if(freshness==='aging'){agingPriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});agingPriceWeight+=v;}
+                else if(freshness==='unverified'){unverifiedPriceAssets.push({symbol:coin,weightValue:v});unverifiedPriceWeight+=v;}
             });
             if(unknownAssets.length)sourceLabel='read-only / partial coverage';
         } catch(e){return {error:getText(lang,'error_exchange')};}
