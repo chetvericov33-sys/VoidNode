@@ -22,6 +22,8 @@ assert.strictEqual(inspectUrlRedirects('https://binance.com/redirect?url=https%3
 assert.strictEqual(inspectUrlRedirects('https://binance.com/redirect?url=https%3A%2F%2Fexample.org').status, 'UNKNOWN');
 assert.strictEqual(inspectUrlRedirects('https://bit.ly/abc123').status, 'UNKNOWN');
 assert.strictEqual(inspectUrlRedirects('https://example.org/?next=https%3A%2F%2Fmetamask-login.example').status, 'SUSPICIOUS');
+assert.strictEqual(inspectUrlRedirects('https://example.org/?next=https%3A%2F%2Fexample.org%2F%3Furl%3Dhttps%253A%252F%252Fbinance-login.com').status, 'SUSPICIOUS');
+assert.strictEqual(inspectUrlRedirects('https://example.org/?next=https%3A%2F%2Fexample.org%2F%3Furl%3Dhttps%253A%252F%252Fexample.org').status, 'UNKNOWN');
 assert.strictEqual(getUrlAlertLevel(classifyUrlSafety('https://binance.com')), 'SAFE');
 assert.strictEqual(getUrlAlertLevel(classifyUrlSafety('https://binance-login.com')), 'SUSPICIOUS');
 assert.strictEqual(getUrlAlertLevel(classifyUrlSafety('https://example.org')), 'UNKNOWN');
