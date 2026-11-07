@@ -61,4 +61,10 @@ function classifyUrlSafety(input, options = {}) {
   return { status: 'UNKNOWN', safe: false, reason: 'No reliable reputation evidence is available for this domain.' };
 }
 
-module.exports = { classifyUrlSafety, TRUSTED_DOMAINS };
+function getUrlAlertLevel(result) {
+  if (result && result.status === 'SAFE') return 'SAFE';
+  if (result && result.status === 'SUSPICIOUS') return 'SUSPICIOUS';
+  return 'UNKNOWN';
+}
+
+module.exports = { classifyUrlSafety, getUrlAlertLevel, TRUSTED_DOMAINS };
