@@ -161,7 +161,7 @@ class RedisStorage {
         this.isRedisAvailable = true;
         this.criticalPrefixes = [
             'user_', 'plan_', 'usage_', 'panic_', 'panic_price_',
-            'payment_', 'order_', 'orders_', 'kill_switch_', 'state_', 'alert_', 'last_update_',
+            'payment_', 'payment_processed_', 'order_', 'orders_', 'kill_switch_', 'state_', 'alert_', 'last_update_',
             'prefs_', 'briefing_', 'ai_history_', 'pending_disconnect_', 'telegram_update_done_'
         ];
         console.log('✅ Redis storage initialized');
