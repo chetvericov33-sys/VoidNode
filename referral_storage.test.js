@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { activateReferralBonusIfUnprocessed } = require('./referral_storage');
+const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require('./referral_storage');
 
 async function run() {
     const values = new Map([
@@ -50,6 +50,26 @@ async function run() {
         activateReferralBonusIfUnprocessed(redis, passthrough, 'bad-id', 200, 'SILVER', 5, 30000),
         /Invalid referral bonus parameters/
     );
+
+    const registrationValues = new Map();
+    const registrationRedis = {
+        async eval(script, keys, args) {
+            assert.ok(script.includes("redis.call('EXISTS', KEYS[1])"));
+            if (registrationValues.has(keys[0])) return 0;
+            const invited = registrationValues.has(keys[2]) ? JSON.parse(registrationValues.get(keys[2])) : [];
+            invited.push({ refereeId: args[1], date: Number(args[2]) });
+            registrationValues.set(keys[1], args[0]);
+            registrationValues.set(keys[0], 'true');
+            registrationValues.set(keys[2], JSON.stringify(invited));
+            return 1;
+        }
+    };
+    assert.equal(await registerReferralIfUnused(registrationRedis, passthrough, 200, 100, 5000), true);
+    assert.equal(await registerReferralIfUnused(registrationRedis, passthrough, 200, 101, 6000), false);
+    assert.equal(await registerReferralIfUnused(registrationRedis, passthrough, 100, 100, 7000), false);
+    assert.equal(registrationValues.get('ref_referrer_200'), '100');
+    assert.deepEqual(JSON.parse(registrationValues.get('ref_invited_100')), [{ refereeId: '200', date: 5000 }]);
+
     console.log('referral_storage.test.js: all tests passed');
 }
 
