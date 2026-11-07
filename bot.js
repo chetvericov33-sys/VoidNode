@@ -5712,7 +5712,8 @@ async function handleCryptoWebhook(request) {
             if (!paymentRecord) return { status: 400, error: 'Unknown invoice' };
             paymentRecord = typeof paymentRecord === 'string' ? JSON.parse(paymentRecord) : paymentRecord;
 
-            if (String(invoice.status || 'paid') !== 'paid') return { status: 400, error: 'Invoice is not paid' };
+            if (String(invoice.status || '').toLowerCase() !== 'paid') return { status: 400, error: 'Invoice is not paid' };
+            if (String(paymentRecord.invoiceId || '') !== invoiceId) return { status: 400, error: 'Invoice metadata mismatch' };
             if (String(invoice.asset || '').toUpperCase() !== String(paymentRecord.asset).toUpperCase()) return { status: 400, error: 'Asset mismatch' };
             if (String(invoice.amount) !== String(paymentRecord.amount)) return { status: 400, error: 'Amount mismatch' };
 
