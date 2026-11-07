@@ -18,9 +18,10 @@ function calculateRiskBreakdown(input) {
   var stableTarget = Number(targets.USDT || 20);
   var altTarget = Number(targets.ALTS || 30);
 
-  // Factor caps: concentration 50, reserve 15, alt exposure 15,
-  // diversification 10, data quality 10. Total = 100.
-  var concentration = top <= 50 ? 0 : top <= 60 ? 20 : top <= 70 ? 30 : 50;
+  // Risk points are deterministic and additive; the final score is capped at 100.
+  // Missing valuation data receives a material uncertainty penalty because unknown
+  // balances can hide concentration and exposure outside the priced portfolio.
+  var concentration = top <= 50 ? 0 : top <= 60 ? 20 : top <= 70 ? 40 : 50;
   var reserveGap = Math.max(0, stableTarget - stable);
   var reserve = reserveGap <= 5 ? 5 : reserveGap <= 10 ? 10 : 15;
   if (reserveGap === 0) reserve = 0;
@@ -29,7 +30,7 @@ function calculateRiskBreakdown(input) {
   var altExposure = altGap === 0 ? 0 : altGap <= 10 ? 5 : altGap <= 20 ? 10 : 15;
 
   var diversification = meaningful >= 3 ? 0 : meaningful === 2 ? 5 : 10;
-  var dataQuality = coverageComplete ? 0 : 10;
+  var dataQuality = coverageComplete ? 0 : 20;
 
   var breakdown = [
     { key: 'concentration', labelRu: 'Концентрация', labelEn: 'Concentration', points: concentration,
