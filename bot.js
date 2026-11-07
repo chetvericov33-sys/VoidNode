@@ -4675,6 +4675,9 @@ async function scheduleDisconnect(chatId) {
     var stored = typeof raw === 'string' ? raw : JSON.stringify(raw);
     var pendingRecord = JSON.stringify({ userRecord: stored, scheduledAt: Date.now() });
     await setData('pending_disconnect_' + chatId, pendingRecord, 86400);
+    // Start the finalization timer immediately after persisting the pending record.
+    // Telegram delivery failures must not leave credentials pending indefinitely.
+    scheduleDisconnectFinalization(chatId, pendingRecord, stored, 10000);
     var lang = await getData('lang_' + chatId) || 'ru';
     await sendMessage(chatId, getText(lang, 'connect_undo'), {
         inline_keyboard: [
@@ -4682,7 +4685,6 @@ async function scheduleDisconnect(chatId) {
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     });
-    scheduleDisconnectFinalization(chatId, pendingRecord, stored, 10000);
 }
 
 async function undoDisconnect(chatId) {
