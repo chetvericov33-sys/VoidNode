@@ -1671,23 +1671,36 @@ async function analyzePortfolio(chatId,lang) {
     }
     if(!(total>0))return {error:getText(lang,'no_coins')};
     rows.sort(function(a,b){return b.value-a.value;}); rows.forEach(function(r){r.weight=r.value/total*100;});
-    var btc=0,stable=0,alts=0;
+    var btc=0,stable=0,alts=0,stablePegAssets=[],stablePegRisk=0;
     var stableSymbols = new Set(['USDT','USDC','BUSD','DAI','TUSD','FDUSD','USDE','USDP','PYUSD','USDD','EURC','EURT','USD1']);
+    var usdPegSymbols = new Set(['USDC','BUSD','DAI','TUSD','FDUSD','USDE','USDP','PYUSD','USDD','USD1']);
     rows.forEach(function(r){
         var symbol = String(r.symbol || '').toUpperCase();
         if (symbol === 'BTC') btc += r.weight;
-        else if (stableSymbols.has(symbol)) stable += r.weight;
-        else alts += r.weight;
+        else if (stableSymbols.has(symbol)) {
+            stable += r.weight;
+            // USDT is the quote/reference asset for CCXT */USDT prices, so its
+            // USD peg cannot be independently verified from these same prices.
+            if (usdPegSymbols.has(symbol)) {
+                var deviationPct = Math.abs(Number(r.price) - 1) * 100;
+                if (Number.isFinite(deviationPct)) {
+                    stablePegAssets.push({symbol:symbol,price:Number(r.price),deviationPct:deviationPct,weight:r.weight});
+                    if (deviationPct >= 0.5) stablePegRisk += Math.min(15, deviationPct * r.weight / 100 * 1.5);
+                }
+            }
+        } else alts += r.weight;
     });
+    stablePegRisk = Math.min(15, Math.round(stablePegRisk));
     var meaningful=rows.filter(function(r){return r.weight>=5;}),top=rows[0]?rows[0].weight:0,mode=await getData('mode_'+chatId)||'beginner';
     var targets=mode==='pro'?{BTC:40,USDT:20,ALTS:40}:{BTC:50,USDT:20,ALTS:30};
     // Deterministic, auditable Risk Score. Every point shown to the user comes from a named factor.
-    var riskModel=calculateRiskBreakdown({top:top,weights:rows.map(function(x){return x.weight;}),stable:stable,alts:alts,meaningful:meaningful.length,coverageComplete:coverageComplete,targets:targets});
+    var riskModel=calculateRiskBreakdown({top:top,weights:rows.map(function(x){return x.weight;}),stable:stable,alts:alts,meaningful:meaningful.length,coverageComplete:coverageComplete,targets:targets,stablePegRisk:stablePegRisk});
     var score=riskModel.score,drivers=riskModel.drivers;
     var riskBreakdown=riskModel.breakdown;
     var rec=[];
     if(!coverageComplete)rec.push(lang==='ru'?'Есть активы без подтверждённой цены: риск и стоимость могут быть занижены.':'Some assets have no confirmed price: value and risk may be understated.');
     if(stable<targets.USDT)rec.push(lang==='ru'?'Резерв ликвидности ниже целевых '+targets.USDT+'%.':'Liquidity reserve is below the '+targets.USDT+'% target.');
+    if(stablePegRisk>0)rec.push(lang==='ru'?'Обнаружено отклонение USD-стейблкоина от $1. Проверь ликвидность, сеть и источник цены.':'A USD stablecoin deviates from $1. Verify liquidity, chain and price source.');
     if(top>CONFIG.RISK.MAX_SINGLE_POSITION)rec.push(lang==='ru'?'Крупнейшая позиция выше 50% — главный кандидат на снижение концентрации.':'The largest position is above 50% — the main concentration candidate.');
     if(alts>targets.ALTS)rec.push(lang==='ru'?'Доля альткоинов выше профиля '+targets.ALTS+'%.':'Altcoin exposure is above your '+targets.ALTS+'% profile target.');
     if(meaningful.length<CONFIG.RISK.MIN_MEANINGFUL_POSITIONS)rec.push(lang==='ru'?'Проверь, оправдана ли текущая концентрация твоей целью и горизонтом.':'Check whether current concentration fits your goal and horizon.');
@@ -1696,7 +1709,7 @@ async function analyzePortfolio(chatId,lang) {
     var coveragePct=allPositiveAssets?Math.round((pricedAssets/allPositiveAssets)*100):0;
     var confidencePct=coverageComplete ? 100 : 0;
     var dataStatus=coveragePct===100?'COMPLETE':(coveragePct>0?'PARTIAL':'UNKNOWN');
-    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':(pricedAssets>0?'low':'unknown'),btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
+    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete?'complete':'partial',confidence:coverageComplete?'high':(pricedAssets>0?'low':'unknown'),btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,stablePegRisk:stablePegRisk,stablePegAssets:stablePegAssets,assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
     a.insight=await generateVerifiedInsight(a,lang);
     var previousSnapshot=await savePortfolioSnapshot(chatId,a); if(wallet.type!=='demo') await collectTradeSnapshot(chatId); await setData('analysis_'+chatId,JSON.stringify(a),24*60*60); await addHistory(chatId,getText(lang,'history_analyze'),'Risk '+score+'/100; value ≈ $'+total.toFixed(2));
     return {success:true,analysis:a,remaining:limit.remaining};
