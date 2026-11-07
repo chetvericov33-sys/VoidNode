@@ -6,7 +6,7 @@ function splitTelegramMessage(value, maxLength) {
     if (!text) return [];
     var chunks = [];
     while (text.length > limit) {
-        var splitAt = Math.max(text.lastIndexOf('\n', limit), text.lastIndexOf(' ', limit));
+        var splitAt = Math.max(text.lastIndexOf('\n', limit - 1), text.lastIndexOf(' ', limit - 1));
         if (splitAt < Math.floor(limit * 0.5)) splitAt = limit;
         else splitAt += 1;
         // JavaScript counts UTF-16 code units; do not separate a surrogate pair.
