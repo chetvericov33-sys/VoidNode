@@ -1671,7 +1671,14 @@ async function analyzePortfolio(chatId,lang) {
     }
     if(!(total>0))return {error:getText(lang,'no_coins')};
     rows.sort(function(a,b){return b.value-a.value;}); rows.forEach(function(r){r.weight=r.value/total*100;});
-    var btc=0,stable=0,alts=0; rows.forEach(function(r){if(r.symbol==='USDT')stable+=r.weight;else if(r.symbol==='BTC')btc+=r.weight;else alts+=r.weight;});
+    var btc=0,stable=0,alts=0;
+    var stableSymbols = new Set(['USDT','USDC','BUSD','DAI','TUSD','FDUSD','USDE','USDP','PYUSD','USDD','EURC','EURT','USD1']);
+    rows.forEach(function(r){
+        var symbol = String(r.symbol || '').toUpperCase();
+        if (symbol === 'BTC') btc += r.weight;
+        else if (stableSymbols.has(symbol)) stable += r.weight;
+        else alts += r.weight;
+    });
     var meaningful=rows.filter(function(r){return r.weight>=5;}),top=rows[0]?rows[0].weight:0,mode=await getData('mode_'+chatId)||'beginner';
     var targets=mode==='pro'?{BTC:40,USDT:20,ALTS:40}:{BTC:50,USDT:20,ALTS:30};
     // Deterministic, auditable Risk Score. Every point shown to the user comes from a named factor.
