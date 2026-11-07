@@ -98,7 +98,7 @@ async function probeRedisConnection(redis, timeoutMs = 5000) {
 
 function startLeaseHeartbeat(renew, intervalMs, onLost) {
     if (typeof renew !== 'function') throw new TypeError('Lease renewal callback is required');
-    const delay = Math.max(1000, Number(intervalMs) || 10000);
+    const delay = Math.max(10, Number(intervalMs) || 10000);
     let stopped = false;
     let healthy = true;
     let inFlight = false;
