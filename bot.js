@@ -137,7 +137,7 @@ var CONFIG = {
     MAX_ORDERS_PER_DAY: Number(process.env.MAX_ORDERS_PER_DAY || 10),
     DAILY_BRIEF_INTERVAL: Number(process.env.DAILY_BRIEF_INTERVAL || 30000),
     DEFAULT_TIMEZONE: process.env.DEFAULT_TIMEZONE || 'UTC',
-    RISK: { STABLE_TARGET: 20, MAX_SINGLE_POSITION: 50, MIN_MEANINGFUL_POSITIONS: 3, FRESH_MS: 15*60*1000, STALE_MS: 60*60*1000 },
+    RISK: { STABLE_TARGET: 20, MAX_SINGLE_POSITION: 50, MIN_MEANINGFUL_POSITIONS: 3, FRESH_MS: 15*60*1000, STALE_MS: 60*60*1000, MAX_SPREAD_PCT: 2, MIN_QUOTE_VOLUME_USDT: 10000 }
 };
 
 // ============================================================
@@ -1657,7 +1657,7 @@ async function collectTradeSnapshot(chatId){
 async function analyzePortfolio(chatId,lang) {
     var limit=await checkLimit(chatId,'analyze'); if(!limit.allowed)return {error:limit.reason};
     var wallet=await loadActiveWallet(chatId); if(!wallet)return {error:getText(lang,'analyzing_no_keys')};
-    var rows=[],total=0,unknownAssets=[],coverageComplete=true,sourceLabel=wallet.type==='demo'?'demo':'read-only',stalePriceAssets=[],agingPriceAssets=[],unverifiedPriceAssets=[],stalePriceWeight=0,agingPriceWeight=0,unverifiedPriceWeight=0;
+    var rows=[],total=0,unknownAssets=[],coverageComplete=true,sourceLabel=wallet.type==='demo'?'demo':'read-only',stalePriceAssets=[],agingPriceAssets=[],unverifiedPriceAssets=[],stalePriceWeight=0,agingPriceWeight=0,unverifiedPriceWeight=0,lowLiquidityAssets=[],lowLiquidityWeight=0,invalidMarketDataAssets=[];
     if(wallet.type==='demo'){
         var p=demoPrices(); wallet.assets.forEach(function(d){var pr=d.symbol==='USDT'?1:(p[d.symbol]||d.price||0),v=Number(d.amount)*pr;if(v>0){rows.push({symbol:d.symbol,amount:Number(d.amount),price:pr,value:v,change24h:0,priceFreshness:'simulated'});total+=v;}});
     } else {
@@ -1666,21 +1666,24 @@ async function analyzePortfolio(chatId,lang) {
             var usdt=Number(balances.USDT||0); if(usdt>0){rows.push({symbol:'USDT',amount:usdt,price:1,value:usdt,change24h:0});total+=usdt;}
             var tickers={}; try{if(typeof ex.fetchTickers==='function')tickers=await ex.fetchTickers();}catch(e){console.warn('Ticker snapshot unavailable:',e.message);}
             Object.keys(balances).forEach(function(coin){
-                var amt=Number(balances[coin]||0); if(!(amt>0)||coin==='USDT')return;
+                var amt=Number(balances[coin]); if(coin==='USDT'||!Number.isFinite(amt)||amt<=0)return;
                 var ticker=tickers[coin+'/USDT'],price=Number(ticker&&(ticker.last||ticker.close)||0);
-                if(price>0){
+                if(Number.isFinite(price)&&price>0){
                     var v=amt*price, tickerTime=Number(ticker.timestamp||0);
                     if(!(tickerTime>0)&&ticker.datetime){var parsedTime=Date.parse(ticker.datetime);if(Number.isFinite(parsedTime))tickerTime=parsedTime;}
                     var ageMs=tickerTime>0?Date.now()-tickerTime:null, freshness='unverified';
                     if(ageMs!==null&&ageMs>=0&&ageMs<=CONFIG.RISK.FRESH_MS)freshness='fresh';
                     else if(ageMs!==null&&ageMs>CONFIG.RISK.FRESH_MS&&ageMs<=CONFIG.RISK.STALE_MS)freshness='aging';
                     else if(ageMs!==null&&ageMs>CONFIG.RISK.STALE_MS)freshness='stale';
-                    rows.push({symbol:coin,amount:amt,price:price,value:v,change24h:Number(ticker.percentage||0),priceTimestamp:tickerTime>0?tickerTime:null,priceAgeMs:ageMs,priceFreshness:freshness});
+                    var bid=Number(ticker.bid),ask=Number(ticker.ask),quoteVolume=Number(ticker.quoteVolume),spreadPct=Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>=bid?((ask-bid)/((ask+bid)/2))*100:null;
+                    var lowLiquidity=(spreadPct!==null&&spreadPct>CONFIG.RISK.MAX_SPREAD_PCT)||(Number.isFinite(quoteVolume)&&quoteVolume>=0&&quoteVolume<CONFIG.RISK.MIN_QUOTE_VOLUME_USDT);
+                    rows.push({symbol:coin,amount:amt,price:price,value:v,change24h:Number.isFinite(Number(ticker.percentage))?Number(ticker.percentage):0,priceTimestamp:tickerTime>0?tickerTime:null,priceAgeMs:ageMs,priceFreshness:freshness,spreadPct:spreadPct,quoteVolume: Number.isFinite(quoteVolume)?quoteVolume:null,liquidityStatus:lowLiquidity?'low':'unverified'});
+                    if(lowLiquidity){lowLiquidityAssets.push({symbol:coin,spreadPct:spreadPct,quoteVolume:Number.isFinite(quoteVolume)?quoteVolume:null,weightValue:v});lowLiquidityWeight+=v;}
                     total+=v;
                     if(freshness==='stale'){stalePriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});stalePriceWeight+=v;}
                     else if(freshness==='aging'){agingPriceAssets.push({symbol:coin,ageMs:ageMs,weightValue:v});agingPriceWeight+=v;}
                     else if(freshness==='unverified'){unverifiedPriceAssets.push({symbol:coin,weightValue:v});unverifiedPriceWeight+=v;}
-                } else {coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt,reason:'price_unavailable'});}
+                } else {coverageComplete=false;unknownAssets.push({symbol:coin,amount:amt,reason:'invalid_or_unavailable_price'});invalidMarketDataAssets.push({symbol:coin,reason:'invalid_or_unavailable_price'});}
             });
             if(unknownAssets.length)sourceLabel='read-only / partial coverage';
         } catch(e){return {error:getText(lang,'error_exchange')};}
@@ -1712,7 +1715,9 @@ async function analyzePortfolio(chatId,lang) {
     // Deterministic, auditable Risk Score. Every point shown to the user comes from a named factor.
     var freshnessExposure=total>0?(stalePriceWeight+agingPriceWeight*0.5+unverifiedPriceWeight*0.75)/total*100:0;
     var priceFreshnessRisk=Math.min(15,Math.ceil(freshnessExposure/100*15));
-    var riskModel=calculateRiskBreakdown({top:top,weights:rows.map(function(x){return x.weight;}),stable:stable,alts:alts,meaningful:meaningful.length,coverageComplete:coverageComplete,targets:targets,stablePegRisk:stablePegRisk,priceFreshnessRisk:priceFreshnessRisk});
+    var liquidityExposure=total>0?lowLiquidityWeight/total*100:0;
+    var marketLiquidityRisk=Math.min(15,Math.ceil(liquidityExposure/100*15));
+    var riskModel=calculateRiskBreakdown({top:top,weights:rows.map(function(x){return x.weight;}),stable:stable,alts:alts,meaningful:meaningful.length,coverageComplete:coverageComplete,targets:targets,stablePegRisk:stablePegRisk,priceFreshnessRisk:priceFreshnessRisk,marketLiquidityRisk:marketLiquidityRisk});
     var score=riskModel.score,drivers=riskModel.drivers;
     var riskBreakdown=riskModel.breakdown;
     var rec=[];
@@ -1720,6 +1725,7 @@ async function analyzePortfolio(chatId,lang) {
     if(stalePriceAssets.length)rec.push(lang==='ru'?'Есть устаревшие котировки (старше '+Math.round(CONFIG.RISK.STALE_MS/60000)+' мин.): проверь оценку этих активов.':'Some quotes are stale (older than '+Math.round(CONFIG.RISK.STALE_MS/60000)+' min); verify these asset valuations.');
     if(agingPriceAssets.length)rec.push(lang==='ru'?'Часть котировок старше '+Math.round(CONFIG.RISK.FRESH_MS/60000)+' мин.: проверь их перед принятием решений.':'Some quotes are older than '+Math.round(CONFIG.RISK.FRESH_MS/60000)+' min; verify them before making decisions.');
     if(unverifiedPriceAssets.length)rec.push(lang==='ru'?'Биржа не вернула время обновления части котировок: их актуальность не подтверждена.':'The exchange did not provide timestamps for some quotes; their freshness could not be verified.');
+    if(lowLiquidityAssets.length)rec.push(lang==='ru'?'Обнаружены рынки с низким объёмом или широким спредом: оценка выхода из позиции может быть неточной.':'Some markets show low quote volume or wide spreads; estimated exit liquidity may be unreliable.');
     if(stable<targets.USDT)rec.push(lang==='ru'?'Резерв ликвидности ниже целевых '+targets.USDT+'%.':'Liquidity reserve is below the '+targets.USDT+'% target.');
     if(stablePegRisk>0)rec.push(lang==='ru'?'Обнаружено отклонение USD-стейблкоина от $1. Проверь ликвидность, сеть и источник цены.':'A USD stablecoin deviates from $1. Verify liquidity, chain and price source.');
     if(top>CONFIG.RISK.MAX_SINGLE_POSITION)rec.push(lang==='ru'?'Крупнейшая позиция выше 50% — главный кандидат на снижение концентрации.':'The largest position is above 50% — the main concentration candidate.');
@@ -1731,7 +1737,7 @@ async function analyzePortfolio(chatId,lang) {
     var confidencePct=coverageComplete ? Math.max(0,100-priceFreshnessRisk*4) : 0;
     var confidence=coverageComplete?(confidencePct>=80?'high':confidencePct>=50?'medium':'low'):(pricedAssets>0?'low':'unknown');
     var dataStatus=coveragePct===100?'COMPLETE':(coveragePct>0?'PARTIAL':'UNKNOWN');
-    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete&&priceFreshnessRisk===0?'complete':'partial',confidence:confidence,btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,stablePegRisk:stablePegRisk,stablePegAssets:stablePegAssets,priceFreshnessRisk:priceFreshnessRisk,priceFreshness:{fresh:rows.filter(function(x){return x.priceFreshness==='fresh';}).length,simulated:rows.filter(function(x){return x.priceFreshness==='simulated';}).length,aging:agingPriceAssets,stale:stalePriceAssets,unverified:unverifiedPriceAssets,weightedExposurePct:Math.round(freshnessExposure*100)/100},assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
+    var a={timestamp:Date.now(),source:wallet.type,totalUSDT:total,knownValueUSDT:total,coverageComplete:coverageComplete,coveragePct:coveragePct,confidencePct:confidencePct,dataStatus:dataStatus,unknownAssets:unknownAssets,analysisQuality:coverageComplete&&priceFreshnessRisk===0?'complete':'partial',confidence:confidence,btcPercent:btc,altPercent:alts,usdtPercent:stable,topPosition:rows[0]?{symbol:rows[0].symbol,weight:rows[0].weight,value:rows[0].value}:null,riskScore:score,riskLevel:score>=70?'critical':score>=45?'high':score>=20?'medium':'low',riskDrivers:drivers,riskBreakdown:riskBreakdown,stablePegRisk:stablePegRisk,stablePegAssets:stablePegAssets,priceFreshnessRisk:priceFreshnessRisk,marketLiquidityRisk:marketLiquidityRisk,marketLiquidity:{assets:lowLiquidityAssets,weightedExposurePct:Math.round(liquidityExposure*100)/100},invalidMarketDataAssets:invalidMarketDataAssets,priceFreshness:{fresh:rows.filter(function(x){return x.priceFreshness==='fresh';}).length,simulated:rows.filter(function(x){return x.priceFreshness==='simulated';}).length,aging:agingPriceAssets,stale:stalePriceAssets,unverified:unverifiedPriceAssets,weightedExposurePct:Math.round(freshnessExposure*100)/100},assets:rows,recommendations:rec,targetAllocation:targets,mode:mode,sourceLabel:sourceLabel,modeExplanation: mode==='pro' ? (lang==='ru' ? 'Технический режим: акцент на отклонениях от целевых долей, концентрации, резерве ликвидности, диверсификации и качестве данных.' : 'Technical mode: focus on target deviations, concentration, liquidity reserve, diversification and data quality.') : (lang==='ru' ? 'Режим новичка: простое объяснение главного риска, без перегрузки техническими терминами.' : 'Beginner mode: simple explanation of the main risk without unnecessary technical jargon.')};
     a.insight=await generateVerifiedInsight(a,lang);
     var previousSnapshot=await savePortfolioSnapshot(chatId,a); if(wallet.type!=='demo') await collectTradeSnapshot(chatId); await setData('analysis_'+chatId,JSON.stringify(a),24*60*60); await addHistory(chatId,getText(lang,'history_analyze'),'Risk '+score+'/100; value ≈ $'+total.toFixed(2));
     return {success:true,analysis:a,remaining:limit.remaining};
