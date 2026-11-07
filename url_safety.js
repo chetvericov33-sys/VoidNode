@@ -33,7 +33,8 @@ function classifyUrlSafety(input, options = {}) {
     return { status: 'SUSPICIOUS', safe: false, reason: 'URL uses an unsupported protocol or embedded credentials.' };
   }
 
-  const hostname = parsed.hostname.toLowerCase().replace(/\\.$/, '');
+  const rawHostname = parsed.hostname.toLowerCase();
+  const hostname = rawHostname.endsWith('.') ? rawHostname.slice(0, -1) : rawHostname;
   if (!hostname) {
     return { status: 'UNKNOWN', safe: false, reason: 'Hostname is missing.' };
   }
