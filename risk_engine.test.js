@@ -21,5 +21,9 @@ assert.strictEqual(depegMaterial.breakdown.find(function(x){return x.key==='stab
 const stalePrices = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,priceFreshnessRisk:15});
 assert.strictEqual(stalePrices.score - depegNone.score, 15, 'stale price risk must increase total score by its calculated points');
 assert.strictEqual(stalePrices.breakdown.find(function(x){return x.key==='price_freshness';}).points, 15, 'price freshness factor must be visible in breakdown');
+
+const lowLiquidity = calculateRiskBreakdown({top:25,stable:60,alts:15,meaningful:4,coverageComplete:true,marketLiquidityRisk:10});
+assert.strictEqual(lowLiquidity.score - depegNone.score, 10, 'market liquidity risk must increase total score');
+assert.strictEqual(lowLiquidity.breakdown.find(function(x){return x.key==='market_liquidity';}).points, 10, 'market liquidity factor must be visible');
 console.log('Risk Engine tests passed:', cases.length+'/'+cases.length);
 console.log('Audit example:', JSON.stringify(audit));
