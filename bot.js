@@ -175,7 +175,7 @@ class RedisStorage {
             }
             var data = await withTimeout(this.redis.get(key), 8000, 'Redis GET');
             if (data !== null && data !== undefined) return data;
-            return this.isCritical(key) ? null : (this.localCache.get(key) || null);
+            return this.isCritical(key) ? null : this.localCache.get(key);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             console.error('Redis get error:', error.message);
@@ -230,14 +230,19 @@ class RedisStorage {
     async atomicIncrementWithLimit(key, limit, ttlSeconds) {
         if (limit === Infinity) return { allowed: true, count: 0 };
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
-        var result = await withTimeout(this.redis.eval(
-            "local count = redis.call('INCR', KEYS[1]); " +
-            "if count == 1 and tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])); end; " +
-            "if count > tonumber(ARGV[1]) then redis.call('DECR', KEYS[1]); return {0, count - 1}; end; " +
-            "return {1, count};",
-            [key], [limit, ttlSeconds || 0]
-        ), 8000, 'Redis atomic increment');
-        return { allowed: Number(result[0]) === 1, count: Number(result[1]) };
+        try {
+            var result = await withTimeout(this.redis.eval(
+                "local count = redis.call('INCR', KEYS[1]); " +
+                "if count == 1 and tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])); end; " +
+                "if count > tonumber(ARGV[1]) then redis.call('DECR', KEYS[1]); return {0, count - 1}; end; " +
+                "return {1, count};",
+                [key], [limit, ttlSeconds || 0]
+            ), 8000, 'Redis atomic increment');
+            return { allowed: Number(result[0]) === 1, count: Number(result[1]) };
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical storage unavailable');
+        }
     }
     async incrementValue(key, amount, ttlSeconds) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
@@ -261,7 +266,7 @@ class RedisStorage {
         try {
             var result = await withTimeout(this.redis.set(key, token, { nx: true, ex: ttlSeconds }), 8000, 'Redis acquire lock');
             return result === 'OK' || result === true ? token : null;
-        } catch (e) { return null; }
+        } catch (e) { this.markUnavailable(); this.scheduleRetry(); return null; }
     }
     async activatePaidInvoice(invoiceId, chatId, planId, planRecord, paymentRecord) {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
