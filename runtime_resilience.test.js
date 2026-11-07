@@ -14,7 +14,8 @@ async function run() {
     assert.equal(cache.get('b'), false);
     cache.set('c', 'new');
     assert.equal(cache.size, 2);
-    assert.equal(cache.get('b'), null);
+    assert.equal(cache.get('a'), null);
+    assert.equal(cache.get('b'), false);
     assert.equal(cache.get('c'), 'new');
 
     cache.set('short', 'expires', 0.01);
