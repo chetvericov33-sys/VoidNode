@@ -12,6 +12,7 @@ const { Redis } = require('@upstash/redis');
 const { calculateRiskBreakdown } = require('./risk_engine');
 const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = require('./market_data');
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
+const { classifyUrlSafety } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 
 // ============================================================
@@ -3465,16 +3466,27 @@ async function handleDEXCheck(chatId, address, lang, messageId) {
 async function handleUrlCheck(chatId, url, lang, messageId) {
     await sendTyping(chatId);
     var result = await checkUrl(url);
-    var message = result.safe ?
-        getText(lang, 'scan_safe') + '\n\n' + getText(lang, 'scan_result_safe', 'Link') :
-        getText(lang, 'scan_danger') + '\n\n' + getText(lang, 'scan_result_danger', ['Link', result.reason]);
+    var message;
+    if (result.status === 'SAFE') {
+        message = getText(lang, 'scan_safe') + '\n\n' + (lang === 'ru'
+            ? 'Домен совпадает с локальным списком доверенных HTTPS-доменов. Это не гарантирует безопасность содержимого страницы.'
+            : 'The host matches the local trusted HTTPS domain list. This does not guarantee the page content is safe.');
+    } else if (result.status === 'SUSPICIOUS') {
+        message = getText(lang, 'scan_danger') + '\n\n' + getText(lang, 'scan_result_danger', ['Link', result.reason]);
+    } else {
+        message = (lang === 'ru'
+            ? '⚪ *РЕЗУЛЬТАТ НЕОПРЕДЕЛЁН*\n\nДомен не найден в локальном списке доверенных или заблокированных адресов. Это не означает, что ссылка безопасна. Не вводи пароли, seed-фразы или платёжные данные, пока не проверишь домен независимо.'
+            : '⚪ *RESULT UNKNOWN*\n\nThe domain is not in the local trusted or blocked lists. This does not mean the link is safe. Do not enter passwords, seed phrases, or payment details until you verify the domain independently.')
+            + '\n\n' + result.reason;
+    }
     var keyboard = {
         inline_keyboard: [
             [{ text: getText(lang, 'back_to_security'), callback_data: 'menu_security' }],
             [{ text: getText(lang, 'back_to_menu'), callback_data: 'back_to_menu' }]
         ]
     };
-    await sendUpdatedMessage(chatId, message, result.safe ? keyboard : buildSecurityFixKeyboard('url',result,lang), 'Markdown', messageId);
+    var resultKeyboard = result.status === 'SUSPICIOUS' ? buildSecurityFixKeyboard('url', result, lang) : keyboard;
+    await sendUpdatedMessage(chatId, message, resultKeyboard, 'Markdown', messageId);
     await addHistory(chatId, getText(lang, 'history_antiscam'), 'Link: ' + url.slice(0, 30) + '...');
 }
 
@@ -3516,24 +3528,12 @@ async function handleImpersonationCheck(chatId, update, lang, messageId) {
 }
 
 async function checkUrl(url) {
-    try {
-        var domain = new URL(url).hostname;
-        var issues = [];
-        var blacklisted = await getData('domain_blacklist_' + domain);
-        if (blacklisted) return { safe: false, reason: '🚫 Domain ' + domain + ' is blacklisted.' };
-        var knownDomains = ['binance.com', 'bybit.com', 'okx.com', 'metamask.io', 'trustwallet.com'];
-        for (var i = 0; i < knownDomains.length; i++) {
-            var known = knownDomains[i];
-            var base = known.split('.')[0];
-            if (domain.includes(base) && !domain.endsWith(known)) {
-                issues.push('🚫 Suspicious fake of ' + known + '.');
-            }
-        }
-        if (issues.length === 0) return { safe: true, reason: '✅ Link is safe.' };
-        return { safe: false, reason: issues.join('\n') };
-    } catch (error) {
-        return { safe: false, reason: '❌ Не удалось полностью проверить ссылку.' };
-    }
+    var parsed;
+    try { parsed = new URL(String(url)); }
+    catch (error) { return classifyUrlSafety(url); }
+    var domain = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    var blacklisted = await getData('domain_blacklist_' + domain);
+    return classifyUrlSafety(url, { blacklisted: !!blacklisted });
 }
 
 function checkFile(fileName) {
