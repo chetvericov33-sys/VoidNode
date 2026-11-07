@@ -14,6 +14,7 @@ function isFreshWebhookDate(value, now = Date.now(), maxAgeMs = 72 * 60 * 60 * 1
 }
 
 function parseCryptoInvoiceId(value) {
+    if (typeof value === 'number' && (!Number.isSafeInteger(value) || value <= 0)) return null;
     const id = String(value == null ? '' : value);
     return /^\d{1,20}$/.test(id) && !/^0+$/.test(id) ? id : null;
 }
