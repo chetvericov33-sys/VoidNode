@@ -25,6 +25,16 @@ async function fetchWithTimeout(url, options = {}, ms, label) {
     }
 }
 
+async function probeRedisConnection(redis, timeoutMs = 5000) {
+    if (!redis || typeof redis.ping !== 'function') return false;
+    try {
+        const result = await withTimeout(redis.ping(), timeoutMs, 'Redis health check');
+        return result === 'PONG' || result === 'pong' || result === true;
+    } catch (error) {
+        return false;
+    }
+}
+
 class BoundedTTLCache {
     constructor(options = {}) {
         this.maxEntries = Math.max(1, Number(options.maxEntries) || 1000);
@@ -64,4 +74,4 @@ class BoundedTTLCache {
     }
 }
 
-module.exports = { withTimeout, fetchWithTimeout, BoundedTTLCache };
+module.exports = { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache };
