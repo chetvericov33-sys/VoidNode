@@ -40,8 +40,13 @@ function classifyUrlSafety(input, options = {}) {
   }
 
   const trusted = options.trustedDomains || TRUSTED_DOMAINS;
-  if (parsed.protocol === 'https:' && trusted.some(domain => hostname === domain || hostname.endsWith('.' + domain))) {
+  if (parsed.protocol === 'https:' && trusted.some(domain => hostname === domain)) {
     return { status: 'SAFE', safe: true, reason: 'HTTPS host matches the configured trusted-domain allowlist.' };
+  }
+
+  const trustedBrandSubdomain = BRAND_DOMAINS.some(domain => hostname.endsWith('.' + domain));
+  if (trustedBrandSubdomain) {
+    return { status: 'UNKNOWN', safe: false, reason: 'This is a subdomain of a protected brand; only the exact configured host is allowlisted.' };
   }
 
   const labels = hostname.split('.');
@@ -50,7 +55,7 @@ function classifyUrlSafety(input, options = {}) {
     return labels.some(label => label.includes(brand)) || hostname.includes(brand);
   });
   if (brandMatch) {
-    return { status: 'SUSPICIOUS', safe: false, reason: 'Hostname resembles a protected brand but is not on its trusted domain.' };
+    return { status: 'SUSPICIOUS', safe: false, reason: 'Hostname resembles a protected brand but is not its exact trusted domain.' };
   }
 
   return { status: 'UNKNOWN', safe: false, reason: 'No reliable reputation evidence is available for this domain.' };
