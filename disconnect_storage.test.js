@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const {
     scanKeysByPrefix,
+    forEachKeyByPrefix,
     createPendingDisconnectIfUserMatches,
     completeDisconnectIfMatches,
     restoreDisconnectIfMatches,
@@ -96,7 +97,13 @@ async function run() {
         'pending_disconnect_1', 'pending_disconnect_2'
     ]);
 
-    await assert.rejects(
+
+    const visitedPages = [];
+    await forEachKeyByPrefix(redis, passthroughTimeout, 'pending_disconnect_', async pageKeys => {
+        visitedPages.push(pageKeys.slice());
+    });
+    assert.deepEqual(visitedPages, [['pending_disconnect_1'], ['pending_disconnect_2']]);
+\n    await assert.rejects(
         deletePendingDisconnectIfMatches(redis, async () => { throw new Error('timeout'); }, 42, 'anything'),
         /timeout/
     );
