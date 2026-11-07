@@ -5,7 +5,8 @@ function isValidTelegramUpdateId(value) {
 }
 
 function isFreshWebhookDate(value, now = Date.now(), maxAgeMs = 72 * 60 * 60 * 1000, maxFutureSkewMs = 5 * 60 * 1000) {
-    if (typeof value !== 'string' || !value.trim()) return true;
+    if (value === undefined || value === null) return true;
+    if (typeof value !== 'string' || !value.trim()) return false;
     const timestamp = Date.parse(value);
     if (!Number.isFinite(timestamp)) return false;
     const age = now - timestamp;
