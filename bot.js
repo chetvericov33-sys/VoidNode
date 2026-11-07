@@ -16,6 +16,7 @@ const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
 const { scanKeysByPrefix, forEachKeyByPrefix, createPendingDisconnectIfUserMatches, completeDisconnectIfMatches, restoreDisconnectIfMatches, replaceUserAndClearPending, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parseCryptoWebhookPayload, parsePaymentChatId, validateCryptoPaidInvoice } = require('./webhook_safety');
+const { activateReferralBonusIfUnprocessed } = require('./referral_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -154,7 +155,8 @@ class RedisStorage {
         this.criticalPrefixes = [
             'user_', 'plan_', 'usage_', 'panic_', 'panic_price_',
             'payment_', 'payment_processed_', 'order_', 'orders_', 'kill_switch_', 'state_', 'alert_', 'last_update_',
-            'prefs_', 'briefing_', 'ai_history_', 'pending_disconnect_', 'telegram_update_done_'
+            'prefs_', 'briefing_', 'ai_history_', 'pending_disconnect_', 'telegram_update_done_',
+            'ref_code_', 'ref_code_to_user_', 'ref_used_', 'ref_referrer_', 'ref_invited_', 'ref_bonus_'
         ];
         console.log('✅ Redis storage initialized');
     }
@@ -325,6 +327,19 @@ class RedisStorage {
             this.scheduleRetry();
             console.error('Atomic payment activation error:', error.message);
             throw new Error('Critical payment storage unavailable');
+        }
+    }
+    async activateReferralBonus(invoiceId, refereeId, planId, bonusDays) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await activateReferralBonusIfUnprocessed(
+                this.redis, withTimeout, invoiceId, refereeId, planId, bonusDays
+            );
+        } catch (error) {
+            this.markUnavailable();
+            this.scheduleRetry();
+            console.error('Atomic referral bonus error:', error.message);
+            throw new Error('Critical referral storage unavailable');
         }
     }
     async releaseLock(key, token) {
@@ -3682,38 +3697,10 @@ class ReferralSystem {
         return referrerId;
     }
 
-    async processPlanActivation(refereeId, planId) {
-        const referralKey = 'ref_referrer_' + refereeId;
-        const referrerId = await this.kv.get(referralKey);
-        if (!referrerId) return null;
-
+    async processPlanActivation(refereeId, planId, invoiceId) {
         const bonusDays = this.rewards[planId] || 0;
-        if (bonusDays === 0) return null;
-
-        const planKey = 'plan_' + referrerId;
-        let planData = await this.kv.get(planKey);
-        planData = planData ? JSON.parse(planData) : null;
-
-        if (!planData) return null;
-
-        const newExpires = new Date(planData.expires);
-        newExpires.setDate(newExpires.getDate() + bonusDays);
-        planData.expires = newExpires.getTime();
-
-        await this.kv.put(planKey, JSON.stringify(planData));
-        
-        const bonusKey = 'ref_bonus_' + referrerId;
-        let bonuses = await this.kv.get(bonusKey);
-        bonuses = bonuses ? JSON.parse(bonuses) : [];
-        bonuses.push({
-            from: refereeId,
-            plan: planId,
-            days: bonusDays,
-            date: Date.now()
-        });
-        await this.kv.put(bonusKey, JSON.stringify(bonuses));
-
-        return { referrerId, bonusDays, newExpires: planData.expires };
+        if (!bonusDays || !invoiceId) return null;
+        return this.kv.activateReferralBonus(String(invoiceId), refereeId, planId, bonusDays);
     }
 
     async getReferralStats(chatId) {
@@ -5960,7 +5947,7 @@ async function handleCryptoWebhook(request) {
             var plan = PLANS[planId];
         if (plan) {
             try {
-                var bonusResult = await REFERRAL.processPlanActivation(chatId, planId);
+                var bonusResult = await REFERRAL.processPlanActivation(chatId, planId, invoiceId);
                 if (bonusResult) {
                     var referrerLang = await getData('lang_' + bonusResult.referrerId) || 'ru';
                     var bonusMessage = '🎁 ' + (referrerLang === 'ru'
