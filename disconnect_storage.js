@@ -36,6 +36,21 @@ async function createPendingDisconnectIfUserMatches(redis, withTimeout, chatId, 
     return Number(result) === 1;
 }
 
+async function replaceUserAndClearPending(redis, withTimeout, chatId, userRaw) {
+    const script = "redis.call('SET', KEYS[1], ARGV[1]); " +
+        "redis.call('DEL', KEYS[2]); return 1";
+    const result = await withTimeout(
+        redis.eval(
+            script,
+            ['user_' + chatId, 'pending_disconnect_' + chatId],
+            [userRaw]
+        ),
+        8000,
+        'Atomic exchange reconnect'
+    );
+    return Number(result) === 1;
+}
+
 async function deletePendingDisconnectIfMatches(redis, withTimeout, chatId, pendingRaw) {
     const script = "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end; " +
         "return redis.call('DEL', KEYS[1])";
