@@ -14,7 +14,7 @@ const { normalizeBalanceEntries, validateSpotTicker, assessMarketLiquidity } = r
 const { classifyEtherscanVerification, createContractCheckFailure } = require('./contract_check');
 const { classifyUrlSafety, inspectUrlRedirects, getUrlAlertLevel } = require('./url_safety');
 const { withTimeout, fetchWithTimeout, probeRedisConnection, BoundedTTLCache } = require('./runtime_resilience');
-const { deletePendingDisconnectIfMatches } = require('./disconnect_storage');
+const { scanKeysByPrefix, createPendingDisconnectIfUserMatches, deletePendingDisconnectIfMatches } = require('./disconnect_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 
 // ============================================================
@@ -229,8 +229,8 @@ class RedisStorage {
         if (prefix === undefined) prefix = '';
         try {
             if (!this.isRedisAvailable) throw new Error('Redis unavailable');
-            var keys = await withTimeout(this.redis.keys(prefix + '*'), 8000, 'Redis KEYS');
-            if (!Array.isArray(keys)) throw new Error('Redis KEYS returned invalid data');
+            var keys = await scanKeysByPrefix(this.redis, withTimeout, prefix);
+            if (!Array.isArray(keys)) throw new Error('Redis SCAN returned invalid data');
             return keys.map(function(k) { return { name: k }; });
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
@@ -342,6 +342,15 @@ class RedisStorage {
         if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
         try {
             return await deletePendingDisconnectIfMatches(this.redis, withTimeout, chatId, pendingRaw);
+        } catch (error) {
+            this.markUnavailable(); this.scheduleRetry();
+            throw new Error('Critical credential storage unavailable');
+        }
+    }
+    async createPendingDisconnectIfUserMatches(chatId, expectedUserRaw, pendingRaw) {
+        if (!this.isRedisAvailable) throw new Error('Critical Redis storage unavailable');
+        try {
+            return await createPendingDisconnectIfUserMatches(this.redis, withTimeout, chatId, expectedUserRaw, pendingRaw);
         } catch (error) {
             this.markUnavailable(); this.scheduleRetry();
             throw new Error('Critical credential storage unavailable');
@@ -4687,9 +4696,14 @@ async function scheduleDisconnect(chatId) {
     }
     var stored = typeof raw === 'string' ? raw : JSON.stringify(raw);
     var pendingRecord = JSON.stringify({ userRecord: stored, scheduledAt: Date.now() });
-    // Keep the pending operation durable until atomic completion or undo.
-    // A finite TTL could expire during a prolonged Redis outage and strand user credentials.
-    await setData('pending_disconnect_' + chatId, pendingRecord);
+    // Create the pending operation only if the user record has not changed since it was read.
+    // This prevents a concurrent reconnect from leaving a stale pending request behind.
+    var scheduled = await VOID_KV.createPendingDisconnectIfUserMatches(chatId, stored, pendingRecord);
+    if (!scheduled) {
+        await sendMessage(chatId, 'ℹ️ Подключение изменилось параллельно. Повтори отключение.');
+        return;
+    }
+    // The pending operation has no TTL: it remains recoverable after storage outages or restarts.
     // Start the finalization timer immediately after persisting the pending record.
     // Telegram delivery failures must not leave credentials pending indefinitely.
     scheduleDisconnectFinalization(chatId, pendingRecord, stored, 10000);
