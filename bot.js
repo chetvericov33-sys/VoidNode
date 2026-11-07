@@ -17,6 +17,7 @@ const { calculateRiskBreakdown } = require('./risk_engine');
 
 const BOT_VERSION = '1.8.0';
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 const CRYPTOBOT_WEBHOOK_PATH_SECRET = process.env.CRYPTOBOT_WEBHOOK_PATH_SECRET;
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
@@ -93,6 +94,10 @@ function redactSecret(value, visible = 4) {
     return `${s.slice(0,visible)}***${s.slice(-visible)}`;
 }
 if (!BOT_TOKEN) { console.error('❌ BOT_TOKEN not found'); process.exit(1); }
+if (!TELEGRAM_WEBHOOK_SECRET || !/^[A-Za-z0-9_-]{1,256}$/.test(TELEGRAM_WEBHOOK_SECRET)) {
+    console.error('❌ TELEGRAM_WEBHOOK_SECRET is required and must be 1-256 characters (A-Z, a-z, 0-9, _ or -). Refusing to start.');
+    process.exit(1);
+}
 if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length < 32) {
     console.error('❌ ENCRYPTION_KEY is required and must be at least 32 characters. Refusing to start.');
     process.exit(1);
@@ -4532,7 +4537,7 @@ async function handleCallback(update) {
     if (callback.from.id !== chatId && callback.message.chat.type === 'private') return;
     var data = String(callback.data || '').slice(0, 128);
     var lang = await getData('lang_' + chatId) || 'ru';
-    var sensitiveCallback = /^(panic_convert|action_disconnect|undo_disconnect|plan_|menu_connect|settings_|lang_|mode_)/.test(data);
+    var sensitiveCallback = /^(panic_convert|action_disconnect|undo_disconnect|plan_|menu_connect|settings_|lang_|mode_|onboard_connect|wizard_exchange_|wizard_send_keys)/.test(data);
     if (sensitiveCallback && callback.message.chat.type !== 'private') { await answerCallback(callback.id); await sendMessage(chatId, '🔒 Эта функция доступна только в личном чате с Void Node.'); return; }
 
     await answerCallback(callback.id);
@@ -4808,9 +4813,15 @@ async function handleMessage(update) {
     console.log('💬 Message received from ' + chatId + ' (length=' + String(text).length + ')');
     try { lang = await getData('lang_' + chatId) || 'ru'; } catch (e) { console.error('Initial lang read failed:', e.message); }
     try { state = await getData('state_' + chatId) || 'idle'; } catch (e) { console.error('Initial state read failed:', e.message); }
+    if (update.message.chat.type !== 'private' && state === 'waiting_for_keys') {
+        await setState(chatId, 'idle');
+        await deleteData('connect_exchange_' + chatId);
+        await sendMessage(chatId, '🔒 Подключение биржи и отправка API-ключей доступны только в личном чате с Void Node.');
+        return;
+    }
     try {
         var cleanText = sanitizeInput(text);
-        console.log('🧭 Message stage: sanitized text=' + JSON.stringify(cleanText));
+        console.log('🧭 Message stage: input sanitized (length=' + String(cleanText.length) + ')');
         var isForwarded = update.message.forward_from || update.message.forward_from_chat || update.message.forward_date;
 
         // GLOBAL COMMANDS: never allow an active state or AI mode to trap the user.
@@ -5782,8 +5793,12 @@ app.get('/health', function(req, res) {
 });
 
 app.post('/webhook', async function(req, res) {
-    // Telegram webhook intentionally has no mandatory secret-token gate.
-    // This matches the original deployment contract and avoids 401 loops.
+    var receivedSecret = req.get('X-Telegram-Bot-Api-Secret-Token');
+    var expectedSecret = Buffer.from(TELEGRAM_WEBHOOK_SECRET, 'utf8');
+    var providedSecret = Buffer.from(String(receivedSecret || ''), 'utf8');
+    if (providedSecret.length !== expectedSecret.length || !crypto.timingSafeEqual(providedSecret, expectedSecret)) {
+        return res.sendStatus(401);
+    }
     console.log('📩 Webhook called!');
     try {
         var update = req.body;
@@ -5822,7 +5837,7 @@ async function configureTelegramWebhook() {
         var response = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/setWebhook', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message', 'callback_query'] })
+            body: JSON.stringify({ url: webhookUrl, secret_token: TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['message', 'callback_query'] })
         });
         var data = await response.json();
         console.log('📡 Telegram webhook configured:', JSON.stringify(data), 'URL=' + webhookUrl);
