@@ -4390,9 +4390,7 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var response;
-                try {
-                    response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+                var response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4409,10 +4407,7 @@ class AIContext {
                         max_tokens: 1000,
                         temperature: 0.2
                     })
-                    }, 25000, 'OpenRouter chat completion');
-                } finally {
-                    // fetchWithTimeout consumes and bounds the response before returning.
-                }
+                }, 25000, 'OpenRouter chat completion');
 
                 var rawBody = await response.text();
                 var data = null;
