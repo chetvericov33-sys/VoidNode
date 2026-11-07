@@ -20,6 +20,7 @@ const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 const { isMarketOrNewsQuestion, appendNewsDisclosure, appendNewsUnavailableNotice, formatNewsDisclosure } = require('./news_disclosure');
 const { filterRelevantCryptoNews } = require('./news_relevance');
+const { requestOpenRouterCompletion } = require('./ai_completion');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -4500,57 +4501,22 @@ class AIContext {
         if (HAS_OPENROUTER) {
             try {
                 var prompt = this.buildPrompt(chatId, question, lang);
-                var response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
-                        'HTTP-Referer': 'https://t.me/' + BOT_USERNAME,
-                        'X-Title': 'Void Node Bot'
-                    },
-                    body: JSON.stringify({
-                        model: CURRENT_AI_MODEL,
-                        messages: [
-                            { role: 'system', content: this.getSystemPrompt(lang) },
-                            { role: 'user', content: prompt }
-                        ],
-                        max_tokens: 1000,
-                        temperature: 0.2
-                    })
-                }, 25000, 'OpenRouter chat completion');
-
-                var rawBody = await response.text();
-                var data = null;
-                try { data = rawBody ? JSON.parse(rawBody) : null; } catch (parseError) {
-                    console.error('OpenRouter returned non-JSON response:', response.status, rawBody.slice(0, 500));
-                }
-
-                if (!response.ok || !data || data.error) {
-                    var apiError = data && data.error ? data.error : {};
-                    console.error('OpenRouter error:', {
-                        status: response.status,
-                        code: apiError.code || null,
-                        message: apiError.message || response.statusText || 'Invalid API response'
-                    });
-                    return {
-                        error: isRu
-                            ? '⚠️ ИИ-сервис временно недоступен. Попробуй повторить запрос позже. Лимит не будет списан повторно.'
-                            : '⚠️ The AI service is temporarily unavailable. Please try again later. Your request will not be charged twice.'
-                    };
-                }
-
-                var answer = data && data.choices && data.choices[0] &&
-                    data.choices[0].message && data.choices[0].message.content;
-                if (typeof answer !== 'string' || !answer.trim()) {
-                    console.error('OpenRouter returned an empty completion:', response.status, data && data.model);
-                    return {
-                        error: isRu
-                            ? '⚠️ ИИ вернул пустой ответ. Попробуй повторить запрос.'
-                            : '⚠️ The AI returned an empty response. Please try again.'
-                    };
-                }
-
-                console.log('🧠 OpenRouter model used:', data.model || CURRENT_AI_MODEL);
+                var prompt = this.buildPrompt(chatId, question, lang);
+                var completion = await requestOpenRouterCompletion({
+                    fetchWithTimeout: fetchWithTimeout,
+                    apiKey: OPENROUTER_API_KEY,
+                    primaryModel: CURRENT_AI_MODEL,
+                    fallbackModels: String(process.env.OPENROUTER_FALLBACK_MODELS || '')
+                        .split(',').map(function(model) { return model.trim(); }).filter(Boolean),
+                    messages: [
+                        { role: 'system', content: this.getSystemPrompt(lang) },
+                        { role: 'user', content: prompt }
+                    ],
+                    maxTokens: 1000,
+                    timeoutMs: 18000
+                });
+                var answer = completion.answer;
+                console.log('🧠 OpenRouter model used:', completion.model, 'attempts:', completion.attempts);
                 var finalAnswer = answer.trim();
                 if (isMarketOrNewsQuestion(question)) {
                     finalAnswer = context.lastNews && Array.isArray(context.lastNews.articles) && context.lastNews.articles.length
