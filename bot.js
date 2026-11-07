@@ -19,6 +19,7 @@ const { isValidTelegramUpdateId, isFreshWebhookDate, parseCryptoInvoiceId, parse
 const { activateReferralBonusIfUnprocessed, registerReferralIfUnused } = require('./referral_storage');
 const { createReadOnlyExchangeConfig, validateExchangeId, enforceReadOnlyExchange } = require('./exchange_safety');
 const { isMarketOrNewsQuestion, appendNewsDisclosure, appendNewsUnavailableNotice, formatNewsDisclosure } = require('./news_disclosure');
+const { filterRelevantCryptoNews } = require('./news_relevance');
 
 // ============================================================
 // 0. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
@@ -3843,7 +3844,7 @@ class NewsManager {
 
     async getPersonalizedNews(chatId, lang, forceUpdate) {
         if (forceUpdate === undefined) forceUpdate = false;
-        var cacheKey = 'news_cache_' + chatId;
+        var cacheKey = 'news_cache_v2_' + chatId;
         var now = Date.now();
         var lastUpdate = this.lastUpdate.get(chatId) || 0;
         if (!forceUpdate && now - lastUpdate < this.updateInterval) {
@@ -3962,7 +3963,7 @@ class NewsManager {
         var newsPromises = topAssets.map(async function(asset) {
             try {
                 var query = asset.symbol;
-                var cacheKey = 'news_asset_' + query + '_' + (isRu ? 'ru' : 'en');
+                var cacheKey = 'news_asset_v2_' + query + '_' + (isRu ? 'ru' : 'en');
                 var cached = await getData(cacheKey);
                 if (cached) {
                     var parsed = typeof cached === 'string' ? JSON.parse(cached) : cached;
@@ -3973,7 +3974,7 @@ class NewsManager {
                 var data = await response.json();
                 var articles = [];
                 if (data.status === 'ok' && data.articles) {
-                    articles = data.articles;
+                    articles = filterRelevantCryptoNews(data.articles);
                     await setData(cacheKey, JSON.stringify({ articles: articles, timestamp: Date.now() }), 300);
                 }
                 return articles;
@@ -4025,7 +4026,7 @@ class NewsManager {
             count: topArticles.length,
             totalAssets: topAssets.length
         };
-        await setData('news_cache_' + chatId, JSON.stringify(result), 900);
+        await setData('news_cache_v2_' + chatId, JSON.stringify(result), 900);
         return result;
     }
 }
