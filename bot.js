@@ -4466,7 +4466,7 @@ class AIContext {
                         { role: 'system', content: this.getSystemPrompt(lang) },
                         { role: 'user', content: prompt }
                     ],
-                    maxTokens: 1600,
+                    maxTokens: 3000,
                     temperature: 0.45,
                     timeoutMs: 25000
                 });

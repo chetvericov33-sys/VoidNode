@@ -10,6 +10,16 @@ function response(status, body) {
     assert.strictEqual(extractText([{type:'text',text:'hello '},{type:'text',text:'world'}]), 'hello world');
     assert.strictEqual(extractText(null), '');
 
+    var requestedMaxTokens;
+    await requestOpenRouterCompletion({
+        apiKey:'test', primaryModel:'provider/model-limit', fallbackModels:[], maxTokens:3000,
+        messages:[], fetchWithTimeout: async function(url, opts) {
+            requestedMaxTokens = JSON.parse(opts.body).max_tokens;
+            return response(200,{model:'provider/model-limit',choices:[{message:{content:'Enough detail'},finish_reason:'stop'}]});
+        }
+    });
+    assert.strictEqual(requestedMaxTokens,3000,'AI output token ceiling must be explicitly configured');
+
     var calls = [];
     var result = await requestOpenRouterCompletion({
         apiKey:'test', primaryModel:'openrouter/free', fallbackModels:[],
