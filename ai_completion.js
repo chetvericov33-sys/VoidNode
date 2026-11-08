@@ -34,7 +34,7 @@ function parseResponse(response) {
             empty.finishReason = finishReason;
             throw empty;
         }
-        return { answer: answer, model: data.model || null };
+        return { answer: answer, model: data.model || null, finishReason: choice && choice.finish_reason ? String(choice.finish_reason) : 'unknown' };
     });
 }
 
@@ -78,7 +78,7 @@ async function requestOpenRouterCompletion(options) {
                 })
             }, options.timeoutMs || 18000, 'OpenRouter chat completion (' + model + ')');
             var parsed = await parseResponse(response);
-            return { answer: parsed.answer, model: parsed.model || model, attempts: i + 1 };
+            return { answer: parsed.answer, model: parsed.model || model, finishReason: parsed.finishReason, attempts: i + 1 };
         } catch (error) {
             lastError = error;
             console.warn('OpenRouter attempt failed:', {
