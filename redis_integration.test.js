@@ -46,6 +46,9 @@ function ok(condition, message) { assert.ok(condition, message); }
 
 async function main() {
     assert.equal(redis.ping(), 'PONG', 'Redis service must respond to PING');
+    if (process.env.REDIS_TEST_ALLOW_FLUSHDB !== '1') {
+        throw new Error('Refusing destructive FLUSHDB: set REDIS_TEST_ALLOW_FLUSHDB=1 only for an isolated disposable Redis instance');
+    }
     command(['FLUSHDB']);
 
     // Disconnect lifecycle: compare-and-set, undo, finalization, and reconnect.
