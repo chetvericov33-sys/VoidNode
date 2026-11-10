@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - chore/hardening-tests-node24
   pull_request:
     branches:
       - main
