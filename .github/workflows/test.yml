@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - fix/security-hardening-phase-1
+      - chore/hardening-tests-node24
   pull_request:
     branches:
       - main
@@ -32,7 +32,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - name: Install Redis CLI
         run: |
@@ -46,4 +46,5 @@ jobs:
         env:
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
+          REDIS_TEST_ALLOW_FLUSHDB: '1'
         run: npm run test:integration:redis

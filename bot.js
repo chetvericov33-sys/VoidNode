@@ -48,30 +48,7 @@ const DEMO_START_USDT = Number(process.env.DEMO_START_USDT || 10000);
 // ============================================================
 // INLINE SECURITY MODULES — single-file release
 // ============================================================
-const net = require('net');
-
-function isPrivateIp(ip) {
-    if (net.isIPv4(ip)) {
-        const [a,b,c,d] = ip.split('.').map(Number);
-        return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 0;
-    }
-    if (net.isIPv6(ip)) {
-        const x = ip.toLowerCase();
-        return x === '::1' || x === '::' || x.startsWith('fc') || x.startsWith('fd') || x.startsWith('fe80:') || x.startsWith('::ffff:10.') || x.startsWith('::ffff:192.168.');
-    }
-    return false;
-}
-function validateUrl(input) {
-    try {
-        const url = new URL(String(input));
-        if (!['http:','https:'].includes(url.protocol)) return {ok:false, reason:'protocol'};
-        if (url.username || url.password) return {ok:false, reason:'userinfo'};
-        if (url.port && !['80','443'].includes(url.port)) return {ok:false, reason:'port'};
-        const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
-        if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || isPrivateIp(hostname)) return {ok:false, reason:'private-host'};
-        return {ok:true, url};
-    } catch { return {ok:false, reason:'syntax'}; }
-}
+const { isPrivateIp, validateUrl } = require('./url_guard');
 function keyFromSecret(secret) {
     if (typeof secret !== 'string' || secret.length < 32) throw new Error('ENCRYPTION_KEY must be at least 32 characters');
     return crypto.createHash('sha256').update(secret, 'utf8').digest();
