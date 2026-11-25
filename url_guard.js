@@ -56,6 +56,10 @@ function isPrivateIp(input) {
     if (top3 !== 1n) return true; // Only global-unicast 2000::/3 is eligible.
     const prefix32 = value >> 96n;
     if (prefix32 === 0x20010db8n || prefix32 === 0x20010000n) return true; // Documentation and Teredo.
+    // IANA special-purpose IPv6 ranges: benchmarking (2001:2::/48) and ORCHIDv1 (2001:10::/28).
+    if ((value >> 80n) === 0x200100020000n) return true;
+    const prefix28 = value >> 100n;
+    if (prefix28 >= 0x2001000n && prefix28 <= 0x2001fffn) return true;
     if ((value >> 112n) === 0x2002n) return true; // 6to4 embeds IPv4 addresses.
     return false;
 }
